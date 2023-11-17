@@ -1,0 +1,5 @@
+This is a test text file.
+0123456789
+THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG
+the quick brown fox jumps over th lazy dog
+!@#$%^&*()_+-=;':",./<>?`~

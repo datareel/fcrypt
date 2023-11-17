@@ -1,0 +1,139 @@
+#######################
+#### Start of File ####
+#######################
+# --------------------------------------------------------------- 
+# Makefile Contents: Makefile for command line builds
+# C/C++ Compiler Used: MSVC 6.3 SP5 and Visual C++ .NET
+# --------------------------------------------------------------- 
+# Define a name for the executable
+PROJECT = fcrypt
+
+# Setup my path to the DataReel library
+GCODE_LIB_DIR = ../../../../3plibs/datareel
+
+# Setup path to ZLIB
+ZCODE_LIB_DIR = ../../../../3plibs/zlib
+
+# Setup path to AES library
+AES_LIB_DIR = ../../../../3plibs/aes
+
+GCODE_INCLUDE_PATH = $(GCODE_LIB_DIR)/include
+ZCODE_INCLUDE_PATH = $(ZCODE_LIB_DIR)/include
+AES_INCLUDE_PATH = $(AES_LIB_DIR)/include
+OBJ_EXT = .obj
+EXE_EXT = .exe 
+PATHSEP = /
+
+ADD_INC_PATHS = -I$(GCODE_INCLUDE_PATH) -I$(ZCODE_INCLUDE_PATH) \
+-I$(AES_INCLUDE_PATH) -I../include -I../../include
+
+64BIT_DEFMACS = -D__64_BIT_DATABASE_ENGINE__
+DEBUG_DEFMACS = -D__MSVC_DEBUG__
+ANSI_DEFMACS = -D__USE_ANSI_CPP__
+CPP_DEFMACS = -D__USE_CPP_IOSTREAM__
+DISPLAY_DEFMACS = -D__CONSOLE__
+FILESYS_DEFMACS = -D__NTFS__
+UNICODE_DEMACS = -D__HAS_UNICODE__
+
+AES_DEFMACS =
+ZLIB_DEFMACS = 
+#COMPRESS_DEFMACS = -D__COMPRESSION_OFF__
+#DEMO_DEFAMCS = -D__DEMO_VERSION__
+
+# Testing only
+#TEST_DEFMACS = -D__COMPILE_DATE_TIME__
+
+# Define macros specific to the gxcode library
+DEFMACS = /D__WIN32__ /D__X86__ /D__MSVC__ /D__HAS__BEGINTHREADEX__ \
+$(64BIT_DEFMACS) $(ANSI_DEFMACS) $(BTREE_DEFMACS) $(CPP_DEFMACS) \
+$(DEBUG_DEFMACS) $(DEVCACHE_DEFMACS) $(DISPLAY_DEFMACS) \
+$(FILESYS_DEFMACS) $(TESTCODE_DEFMACS) $(PS_DEFMACS) $(HTM_DEFMACS) \
+$(TXT_DEFMACS) $(COMPILER_DEFMACS) $(DATABASE_DEFMACS) \
+$(UNICODE_DEMACS) $(DLL_DEFMACS) $(TEST_DEFMACS) $(DEMO_DEFAMCS) \
+$(COMPRESS_DEFMACS) $(AES_DEFMACS) $(ZLIB_DEFMACS)
+
+# Define macros for compiler and linker
+CC = cl
+CPP = cl
+LINKER = link
+
+# Define compiler and linker flags macros
+DEBUG_FLAGS = /Zi /MDd /Zm1000
+RELEASE_FLAGS = /MD
+#BUILD_FLAGS = $(DEBUG_FLAGS)
+BUILD_FLAGS = $(RELEASE_FLAGS)
+COMPILE_FLAGS = /W3 /GX /GR $(BUILD_FLAGS) $(ADD_INC_PATHS) $(DEFMACS)
+COMPILE_ONLY = /c
+LINKER_FLAGS = 
+
+# Additional libraries
+LIBRARIES = wsock32.lib setargv.obj # Expands wildcard characters
+
+# Set the project dependencies  
+# ===============================================================
+!include $(AES_LIB_DIR)/env/aesdeps.mak
+!include $(ZCODE_LIB_DIR)/env/zlibdeps.mak
+!include $(GCODE_LIB_DIR)/env/glibdeps.mak
+# ===============================================================
+
+# Compile the files and build the executable
+# ===============================================================
+all:	$(PROJECT)$(EXE_EXT)
+
+!include $(AES_LIB_DIR)/env/aesobjs.mak
+!include $(ZCODE_LIB_DIR)/env/zlibobjs.mak
+!include $(GCODE_LIB_DIR)/env/glibobjs.mak
+!include ../project.mak
+
+$(PROJECT)$(EXE_EXT):	$(OBJECTS) 
+	$(LINKER) $(LINK_FLAGS) $(OBJECTS) $(LIBRARIES) \
+	$(LINK_LIBS) /OUT:$@ 
+# ===============================================================
+
+# Remove OBJS, debug files, and executable after running nmake 
+# ===============================================================
+clean:
+	@echo Removing all .SBR files from working directory...
+	if exist *.sbr del *.sbr  
+
+	@echo Removing all .VCW files from working directory...
+	if exist *.vcw del *.vcw 
+
+	@echo Removing all .PDB files from working directory...
+	if exist *.pdb del *.pdb 
+
+	@echo Removing all .WSP files from working directory...
+	if exist *.wsp del *.wsp 
+
+	@echo Removing all .BSC files from working directory...
+	if exist *.bsc del *.bsc 
+
+	@echo Removing all .SBT files from working directory...
+	if exist *.sbt del *.sbt 
+
+	@echo Removing all .ILK files from working directory...
+	if exist *.ilk del *.ilk 
+
+	@echo Removing all .IDB files from working directory...
+	if exist *.idb del *.idb 
+
+	@echo Removing all .MDP files from working directory...
+	if exist *.mdp del *.mdp 
+
+	@echo Removing all .PCH files from working directory...
+	if exist *.pch del *.pch 
+
+	@echo Removing all .NCB files from working directory...
+	if exist *.ncb del *.ncb 
+
+	@echo Removing all .OBJ files from working directory...
+	if exist *.obj del *.obj 
+
+	@echo Removing the EXECUTABLE file from working directory...
+	if exist $(PROJECT).exe del $(PROJECT).exe 
+# --------------------------------------------------------------- 
+#####################
+#### End of File ####
+#####################
+
+
