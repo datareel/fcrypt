@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/18/2023
+// Date Last Modified: 11/19/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -70,6 +70,7 @@ CryptPasswordHdr CommandLinePassword;
 int use_input_arg_secret = 0;
 int use_input_arg_key_file = 0;
 gxString input_arg_key_file;
+MemoryBuffer key;
 
 // ----------------------------------------------------------- // 
 // Interactive user function prototypes
@@ -105,9 +106,6 @@ void ClearInputStream(istream &s)
 
 void DisplayVersion()
 {
-  // TODO: Add grind name function  option
-  // TODO: Add ungrind name function
-
   cout << "\n" << flush;
   cout << clientcfg->program_name.c_str() 
        << " version " << clientcfg->version_str.c_str();
@@ -125,37 +123,29 @@ void HelpMessage()
   cout << "\n" << flush;
   cout << "Usage: " << clientcfg->executable_name.c_str() << " [switches] " 
        << "filename" << "\n" << flush;
-  cout << "Switches: -? = Display this help message and exit." 
-       << "\n" << flush;  
+  cout << "Switches: -? = Display this help message and exit." << "\n" << flush;  
   cout << "          -0 = No encryption for testing only." << "\n" << flush;
   cout << "          -3 = 256-bit encryption (default)." << "\n" << flush;
-  cout << "          -b[size] = Specify file buffer size in bytes" 
-       << "\n" << flush;
-  cout << "          -c[num] = Specify number of cache buckets" 
-       << "\n" << flush;
-  cout << "          -d[name] = Specify output DIR for enc file(s)" 
-       << "\n" << flush;
-  cout << "          -D[name] = Specify and make output DIR" 
-       << "\n" << flush;
-  cout << "          -f[name] = Specify output file and DIR name" 
-       << "\n" << flush;
-  cout << "          -g = Generate hashed output file names" 
-       << "\n" << flush;
+  cout << "          -b[size] = Specify file buffer size in bytes" << "\n" << flush;
+  cout << "          -c[num] = Specify number of cache buckets" << "\n" << flush;
+  cout << "          -d[name] = Specify output DIR for enc file(s)" << "\n" << flush;
+  cout << "          -D[name] = Specify and make output DIR" << "\n" << flush;
+  cout << "          -f[name] = Specify output file and DIR name" << "\n" << flush;
+  cout << "          -g = Generate hashed output file names" << "\n" << flush;
+  cout << "          -k = Specify a key to use for encryption" << "\n" << flush;
   cout << "          -o = Overwrite existing enc file(s)" << "\n" << flush;
   cout << "          -p = Input a encrypt secret" << "\n" << flush;
   cout << "          -r = Remove unencrypted source file(s)" << "\n" << flush;
-  cout << "          -R = Encrypt DIR including all files and subdirectories" 
-       << "\n" << flush;
-  cout << "          -v = Enable verbose messages to the console" 
-       << "\n" << flush;
-  cout << "          -x[ext] = Specify enc file(s) dot extension" 
-       << "\n" << flush;
+  cout << "          -R = Encrypt DIR including all files and subdirectories" << "\n" << flush;
+  cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
+  cout << "          -x[ext] = Specify enc file(s) dot extension" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
 int ProcessArgs(char *arg)
 {
   gxString sbuf;
+  gxString ebuf;
   switch(arg[1]) {
     case 'b':
       buf_size = (gxsPort_t)atoi(arg+2); 
@@ -261,11 +251,16 @@ int ProcessArgs(char *arg)
       break;
 
     case 'k':
-      // TODO: Implement key decrypt
       input_arg_key_file = arg+2;
       if(!futils_exists(input_arg_key_file.c_str())) {
 	cout << "\n" << flush;
 	cout << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cout << "\n" << flush;
+	return 0;
+      }
+      if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
+	cout << "\n" << flush;
+	cout << "ERROR: " << ebuf.c_str() << "\n" << flush;
 	cout << "\n" << flush;
 	return 0;
       }
@@ -617,7 +612,7 @@ int main(int argc, char **argv)
   // Set the program information
   clientcfg->executable_name = "fcrypt";
   clientcfg->program_name = "File Encrypt";
-  clientcfg->version_str = "2023.101";
+  clientcfg->version_str = "2023.102";
 
   if(argc < 2) {
     HelpMessage();
@@ -719,43 +714,48 @@ int main(int argc, char **argv)
   CryptPasswordHdr cp;
   CryptPasswordHdr tmp_cp;
 
-  if(CommandLinePassword.password.is_null()) {
-    cout << "Password: " << flush;
-    if(!consoleGetString(cp.password, 1)) {
-      cout << "Invalid entry!" << "\n" << flush;
-      return 1;
-    }
-    cout << "\n" << flush;
-    if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
-      cout << "Password does not meet length requirement" 
-	   << "\n" << flush;
-      cout << "Password must be at least " << AES_MIN_SECRET_LEN 
-	   << " characters long" << "\n" << flush;
-      return 1;
-    }
-    cout << "Retype password: " << flush;
-    if(!consoleGetString(cp.cbuf, 1)) {
-      cout << "Invalid entry!" << "\n" << flush;
-      return 1;
-    }
-    cout << "\n" << flush;
-    if(cp.password != cp.cbuf) {
-      cout << "Passwords do not match" << "\n" << flush;
-      return 1;
-    }
+  if(use_input_arg_key_file) {
+    cout << "Using key file for encryption" << "\n" << flush;
   }
   else {
-    cp.password = CommandLinePassword.password;
-    CommandLinePassword.Reset();
-    if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
-      cout << "Password does not meet length requirement" 
-	   << "\n" << flush;
-      cout << "Password must be at least " << AES_MIN_SECRET_LEN 
-	   << " characters long" << "\n" << flush;
-      return 1;
+    if(CommandLinePassword.password.is_null()) {
+      cout << "Password: " << flush;
+      if(!consoleGetString(cp.password, 1)) {
+	cout << "Invalid entry!" << "\n" << flush;
+	return 1;
+      }
+      cout << "\n" << flush;
+      if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
+	cout << "Password does not meet length requirement" 
+	     << "\n" << flush;
+	cout << "Password must be at least " << AES_MIN_SECRET_LEN 
+	     << " characters long" << "\n" << flush;
+	return 1;
+      }
+      cout << "Retype password: " << flush;
+      if(!consoleGetString(cp.cbuf, 1)) {
+	cout << "Invalid entry!" << "\n" << flush;
+	return 1;
+      }
+      cout << "\n" << flush;
+      if(cp.password != cp.cbuf) {
+	cout << "Passwords do not match" << "\n" << flush;
+	return 1;
+      }
+    }
+    else {
+      cp.password = CommandLinePassword.password;
+      CommandLinePassword.Reset();
+      if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
+	cout << "Password does not meet length requirement" 
+	     << "\n" << flush;
+	cout << "Password must be at least " << AES_MIN_SECRET_LEN 
+	     << " characters long" << "\n" << flush;
+	return 1;
+      }
     }
   }
-
+  
   gxListNode<gxString> *ptr = file_list.GetHead();
   tmp_cp = cp;
   rv = err = 0;
@@ -787,7 +787,12 @@ int main(int argc, char **argv)
       cout << "Encrypting: " << ptr->data.c_str() << "\n" << flush;
     }
     if(mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
-    rv = fc.EncryptFile(ptr->data.c_str(), cp.password);
+
+    if(use_input_arg_key_file) {
+      fc.use_key = 1;
+      fc.key = key;
+    }
+    rv = fc.EncryptFile(ptr->data.c_str(), cp.password); // If a key is set the password will be ignored
     cp = tmp_cp;
     if(!rv) {
       cout << "File encryption failed" << "\n" << flush;
@@ -847,37 +852,42 @@ int CryptFile()
     return  0;
   }
 
-  if(CommandLinePassword.password.is_null()) {
-    cout << "Password: " << flush;
-    if(!consoleGetString(cp.password, 1)) {
+  if(use_input_arg_key_file) {
+    cout << "Using key file for encryption" << "\n" << flush;
+  }
+  else {
+    if(CommandLinePassword.password.is_null()) {
+      cout << "Password: " << flush;
+      if(!consoleGetString(cp.password, 1)) {
+	cout << "Invalid entry!" << "\n" << flush;
+	return  0;
+      }
+      cout << "\n" << flush;
+    }
+    else {
+      cp.password = CommandLinePassword.password;
+      CommandLinePassword.Reset();
+    }
+    
+    if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
+      cout << "Password does not meet length requirement" 
+	   << "\n" << flush;
+      cout << "Password must be at least " << AES_MIN_SECRET_LEN 
+	   << " characters long" << "\n" << flush;
+      return  0;
+    }
+    cout << "Retype password: " << flush;
+    if(!consoleGetString(cp.cbuf, 1)) {
       cout << "Invalid entry!" << "\n" << flush;
       return  0;
     }
-  cout << "\n" << flush;
+    cout << "\n" << flush;
+    if(cp.password != cp.cbuf) {
+      cout << "Passwords do not match" << "\n" << flush;
+      return  0;
+    }
   }
-  else {
-    cp.password = CommandLinePassword.password;
-    CommandLinePassword.Reset();
-  }
-
-  if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
-    cout << "Password does not meet length requirement" 
-	 << "\n" << flush;
-    cout << "Password must be at least " << AES_MIN_SECRET_LEN 
-	 << " characters long" << "\n" << flush;
-    return  0;
-  }
-  cout << "Retype password: " << flush;
-  if(!consoleGetString(cp.cbuf, 1)) {
-    cout << "Invalid entry!" << "\n" << flush;
-    return  0;
-  }
-  cout << "\n" << flush;
-  if(cp.password != cp.cbuf) {
-    cout << "Passwords do not match" << "\n" << flush;
-    return  0;
-  }
-
+  
   FCryptCache fc(num_buckets);
   fc.mode = mode;
   fc.SetOverWrite(overwrite);
@@ -904,7 +914,12 @@ int CryptFile()
     cout << "Encrypting: " << fname.c_str() << "\n" << flush;
   }
   if(mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n" << flush;
-  int rv = fc.EncryptFile(fname.c_str(), cp.password);
+
+  if(use_input_arg_key_file) {
+    fc.use_key = 1;
+    fc.key = key;
+  }
+  int rv = fc.EncryptFile(fname.c_str(), cp.password); // If a key is set the password will be ignored
   if(!rv) {
     cout << "File encryption failed" << "\n" << flush;
     cout << fc.err.c_str() << "\n" << flush;

@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/17/2023
+// Date Last Modified: 11/20/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -60,6 +60,7 @@ CryptPasswordHdr CommandLinePassword;
 int use_input_arg_secret = 0;
 int use_input_arg_key_file = 0;
 gxString input_arg_key_file;
+MemoryBuffer key;
 
 void DisplayVersion()
 {
@@ -80,22 +81,16 @@ void HelpMessage()
   cout << "\n" << flush;
   cout << "Usage: " << clientcfg->executable_name.c_str() << " [switches] " 
        << "filename.enc" << "\n" << flush;
-  cout << "Switches: -? = Display this help message and exit." 
-       << "\n" << flush;
-  cout << "          -c[num] = Specify number of cache buckets" 
-       << "\n" << flush;
-  cout << "          -d[name] = Specify output DIR for enc file(s)" 
-       << "\n" << flush;
-  cout << "          -D[name] = Specify and make output DIR" 
-       << "\n" << flush;
-  cout << "          -l = List output file name(s) in enc file(s)" 
-       << "\n" << flush;
+  cout << "Switches: -? = Display this help message and exit." << "\n" << flush;
+  cout << "          -c[num] = Specify number of cache buckets" << "\n" << flush;
+  cout << "          -d[name] = Specify output DIR for enc file(s)" << "\n" << flush;
+  cout << "          -D[name] = Specify and make output DIR" << "\n" << flush;
+  cout << "          -k = Specify a key to use for decryption" << "\n" << flush;
+  cout << "          -l = List output file name(s) in enc file(s)" << "\n" << flush;
   cout << "          -p = Input a decrypt secret" << "\n" << flush;
   cout << "          -r = Remove encrypted source file" << "\n" << flush;
-  cout << "          -R = Decrypt DIR including all files and subdirectories" 
-       << "\n" << flush;
-  cout << "          -v = Enable verbose messages to the console" 
-       << "\n" << flush;
+  cout << "          -R = Decrypt DIR including all files and subdirectories" << "\n" << flush;
+  cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -103,7 +98,8 @@ int ProcessArgs(char *arg)
 {
   gxString sbuf;
   CryptPasswordHdr cp;
-
+  gxString ebuf;
+  
   switch(arg[1]) {
     case 'c': 
       num_buckets = (gxsPort_t)atoi(arg+2); 
@@ -180,11 +176,16 @@ int ProcessArgs(char *arg)
       break;
 
     case 'k':
-      // TODO: Implement key decrypt
       input_arg_key_file = arg+2;
       if(!futils_exists(input_arg_key_file.c_str())) {
 	cout << "\n" << flush;
 	cout << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cout << "\n" << flush;
+	return 0;
+      }
+      if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
+	cout << "\n" << flush;
+	cout << "ERROR: " << ebuf.c_str() << "\n" << flush;
 	cout << "\n" << flush;
 	return 0;
       }
@@ -222,6 +223,10 @@ int ListFileNames(CryptPasswordHdr &cp)
     gxString sbuf;
     gxUINT32 version;
     cout << "Encrypted name: " << ptr->data.c_str() << "\n" << flush;
+    if(use_input_arg_key_file) {
+      fc.use_key = 1;
+      fc.key = key;
+    }
     if(!fc.DecryptOnlyTheFileName(ptr->data.c_str(), cp.password, version, sbuf)) {
       cout << "File name decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
@@ -252,7 +257,7 @@ int main(int argc, char **argv)
   // Set the program information
   clientcfg->executable_name = "fdecrypt";
   clientcfg->program_name = "File Decrypt";
-  clientcfg->version_str = "2023.101";
+  clientcfg->version_str = "2023.102";
 
   if(argc < 2) {
     HelpMessage();
@@ -336,19 +341,24 @@ int main(int argc, char **argv)
 
   CryptPasswordHdr cp;
 
-  if(CommandLinePassword.password.is_null()) {
-    cout << "Password: " << flush;
-    if(!consoleGetString(cp.password, 1)) {
-      cout << "Invalid entry!" << "\n" << flush;
-      return 1;
-    }
-    cout << "\n" << flush;
+  if(use_input_arg_key_file) {
+    cout << "Using key file for encryption" << "\n" << flush;
   }
   else {
-    cp.password = CommandLinePassword.password;
-    CommandLinePassword.Reset();
+    if(CommandLinePassword.password.is_null()) {
+      cout << "Password: " << flush;
+      if(!consoleGetString(cp.password, 1)) {
+	cout << "Invalid entry!" << "\n" << flush;
+	return 1;
+      }
+      cout << "\n" << flush;
+    }
+    else {
+      cp.password = CommandLinePassword.password;
+      CommandLinePassword.Reset();
+    }
   }
-
+  
   // List the file names and return
   if(list_file_names) return ListFileNames(cp);
 
@@ -363,7 +373,12 @@ int main(int argc, char **argv)
     gxString sbuf;
     gxUINT32 version;
     cout << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
-    if(!fc.DecryptFile(ptr->data.c_str(), cp.password, version)) {
+
+    if(use_input_arg_key_file) {
+      fc.use_key = 1;
+      fc.key = key;
+    }
+    if(!fc.DecryptFile(ptr->data.c_str(), cp.password, version)) { // If a key is set the password will be ignored
       cout << "File decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
       err = ExitMessage();

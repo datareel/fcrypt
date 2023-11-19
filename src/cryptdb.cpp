@@ -52,6 +52,7 @@ FCryptCache::FCryptCache(unsigned CacheSize) : cache(CacheSize)
   crypt_stream = 1;
   gen_file_names = 0;
   ERROR_LEVEL = 0;
+  use_key = 0;
 }
 
 void FCryptCache::GenFileNames()
@@ -158,9 +159,15 @@ int FCryptCache::EncryptFile(const char *fname, const gxString &password)
     return 0;
   }
 
-  memmove(aesdb.b.secret, password.c_str(), password.length());
-  aesdb.b.secret_len = password.length();
-
+  if(use_key) {
+    memmove(aesdb.b.secret, key.m_buf(), key.length());
+    aesdb.b.secret_len = key.length();
+  }
+  else {
+    memmove(aesdb.b.secret, password.c_str(), password.length());
+    aesdb.b.secret_len = password.length();
+  }
+  
   gxDeviceTypes o_device = gxDEVICE_DISK_FILE; // Output device
   gxDeviceTypes i_device = gxDEVICE_NULL;      // No input buffering
 
@@ -326,9 +333,9 @@ int FCryptCache::OpenOutputFile()
       while(futils_exists(ofname.c_str())) {
 	sbuf << clear << (++i);
 	ofname.ReplaceAt(offset, sbuf);
+	if(ofname[ofname.length()-4] != '.') ofname.InsertAt((ofname.length()-3), ".");   
       }
     }
-    if(ofname[ofname.length()-3] != '.') ofname.InsertAt((ofname.length()-3), "."); 
   }
   
   // Adding a file header with meta data
@@ -355,7 +362,13 @@ int FCryptCache::OpenOutputFile()
   char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
   memmove(crypt_buf, enc_header, sizeof(enc_header));
 
-  rv =  AES_Encrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length(), mode);
+  if(use_key) {
+    rv = AES_Encrypt(crypt_buf, &len, (char *)key.m_buf(), key.length(), mode);
+  }
+  else {
+    rv =  AES_Encrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length(), mode);
+  }
+
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = rv;
     err << clear << "File header crypt error " << AES_err_string(rv);
@@ -408,7 +421,8 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT
   bytes_wrote = (FAU_t)0;
   bytes_read = (FAU_t)0;
   crypt_stream = 0;
-
+  int rv;
+  
   if(!cache) {
     ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
@@ -425,9 +439,15 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT
     return 0;
   }
 
-  memmove(aesdb.b.secret, password.c_str(), password.length());
-  aesdb.b.secret_len = password.length();
-
+  if(use_key) {
+    memmove(aesdb.b.secret, key.m_buf(), key.length());
+    aesdb.b.secret_len = key.length();
+  }
+  else {
+    memmove(aesdb.b.secret, password.c_str(), password.length());
+    aesdb.b.secret_len = password.length();
+  }
+    
   // Read the encrypted file header
   unsigned read_len = AES_MAX_INPUT_BUF_LEN + AES_file_enctryption_overhead();
   char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
@@ -441,7 +461,13 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT
   }
   unsigned len = infile.df_gcount();
 
-  int rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length());
+  if(use_key) {
+    rv =  AES_Decrypt(crypt_buf, &len, (char *)key.m_buf(), key.length());
+  }
+  else {
+    rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length());
+  }
+
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
@@ -457,7 +483,6 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT
 
   // Select the correct file decrypt version
   if(!TestVersion(hdr, version)) return 0;
-
   
   if(hdr.name_len > gxUINT32(infile.df_Length()-(sizeof(gxUINT32)*3))) {
     ERROR_LEVEL = -1;
@@ -541,7 +566,8 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &passw
   bytes_wrote = (FAU_t)0;
   bytes_read = (FAU_t)0;
   crypt_stream = 0;
-
+  int rv;
+  
   crypt_file_name.Clear();
 
   if(!cache) {
@@ -560,22 +586,52 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &passw
     return 0;
   }
 
+  if(use_key) {
+    memmove(aesdb.b.secret, key.m_buf(), key.length());
+    aesdb.b.secret_len = key.length();
+  }
+  else {
+    memmove(aesdb.b.secret, password.c_str(), password.length());
+    aesdb.b.secret_len = password.length();
+  }
+
+  // Read the encrypted file header
+  unsigned read_len = AES_MAX_INPUT_BUF_LEN + AES_file_enctryption_overhead();
+  char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
+
   CryptFileHdr hdr, null_hdr;
-  if(infile.df_Read(&hdr, (sizeof(gxUINT32)*4)) != 
+  if(infile.df_Read(crypt_buf, read_len) != 
      DiskFileB::df_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Error reading file header";
     return 0;
   }
+  unsigned len = infile.df_gcount();
 
-  // Select the correct file decrypt version
-  if(!TestVersion(hdr, version)) return 0;
+  if(use_key) {
+    rv =  AES_Decrypt(crypt_buf, &len, (char *)key.m_buf(), key.length());
+  }
+  else {
+    rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length());
+  }
+  
+  if(rv != AES_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
+    return 0;
+  }
+  memmove(&hdr, crypt_buf, sizeof(hdr));
+
   
   if(hdr.checkword != null_hdr.checkword) {
     ERROR_LEVEL = -1;
     err << clear << "Corrupt file bad checkword";
     return 0;
   }
+
+  // Select the correct file decrypt version
+  if(!TestVersion(hdr, version)) return 0;
+  
   if(hdr.name_len > gxUINT32(infile.df_Length()-(sizeof(gxUINT32)*3))) {
     ERROR_LEVEL = -1;
     err << clear << "Incomplete or corrupt file";
@@ -587,28 +643,10 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &passw
     return 0;
   }
 
-  char nbuf[AES_MAX_NAME_LEN];
-  memset(nbuf, 0, AES_MAX_NAME_LEN);
-
-  if(infile.df_Read(&nbuf, hdr.name_len) != 
-     DiskFileB::df_NO_ERROR) {
-    ERROR_LEVEL = -1;
-    err << clear << "Error reading encrypted file name";
-    return 0;
-  }
-
-  unsigned len = hdr.name_len;
-  int rv =  AES_Decrypt(nbuf, &len, (char *)cp.password.GetSPtr(), cp.password.length());
-  if(rv != AES_NO_ERROR) {
-    ERROR_LEVEL = -1;
-    err << clear << "Decrypt file name error " << " " << AES_err_string(rv);
-    return 0;
-  }
-
   mode = (char)hdr.mode;
 
   // Set the unencrypted file name
-  crypt_file_name.SetString(nbuf, len);
+  crypt_file_name.SetString(hdr.fname, hdr.name_len);
 
   cp.password.Clear(1);
   CloseInputFile();
@@ -834,6 +872,39 @@ int cryptdb_getdircontents(gxString &path, gxString &err,
     num_dirs += td;
   }
   return 1;
+}
+
+int read_key_file(const char *fname, MemoryBuffer &key, gxString &err, int expected_key_len)
+// Read in key file contents to key object and return in reference. 
+{
+  FILE *fp;
+  fp = fopen(fname, "rb");
+  if(!fp) {
+    err << clear << "Error opening key file " << fname;
+    return -1;
+  }
+
+  char read_buf[1024];
+  unsigned bytes_read = fread((unsigned char *)read_buf, 1, sizeof(read_buf), fp);
+  if(bytes_read <= 0) {
+    fclose(fp);
+    err << clear << "Error reading from key file " << fname;
+    return -1;
+  }
+
+  fclose(fp);
+  
+  if(expected_key_len > 0) {
+    if(expected_key_len < bytes_read) {
+      err << clear << "Bad input key length";
+      return -1;
+    }
+  }
+  
+  key.Clear();
+  key.Load(read_buf, bytes_read);
+
+  return 0;
 }
 // ----------------------------------------------------------- // 
 // ------------------------------- //

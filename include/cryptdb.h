@@ -101,7 +101,7 @@ class GXDLCODE_API FCryptCache : public gxDeviceCache
 {
 public:
   FCryptCache(unsigned CacheSize = 1024);
-  ~FCryptCache() { }
+  ~FCryptCache() { key.Clear(1); }
 
 public: // Encrypt functions
   int EncryptFile(const char *fname, const gxString &password);
@@ -170,10 +170,13 @@ public:
   gxString err;
   CryptPasswordHdr cp;
   AESStreamCrypt aesdb;
+  MemoryBuffer key;
+  int use_key;
 };
 
 // Standalone functions
 // -------------------------------------------------------------
+int read_key_file(const char *fname, MemoryBuffer &key, gxString &err, int expected_key_len = 0);
 int cryptdb_gethomedir(gxString &home_dir);
 int cryptdb_makeabspath(gxString &path);
 int cryptdb_getdircontents(gxString &path, gxString &err, 
