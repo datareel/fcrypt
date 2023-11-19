@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/16/2023
+// Date Last Modified: 11/18/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -51,6 +51,7 @@ FCryptCache::FCryptCache(unsigned CacheSize) : cache(CacheSize)
   bytes_read = (FAU_t)0;
   crypt_stream = 1;
   gen_file_names = 0;
+  ERROR_LEVEL = 0;
 }
 
 void FCryptCache::GenFileNames()
@@ -68,6 +69,7 @@ void FCryptCache::Read(void *buf, unsigned Bytes, gxDeviceTypes dev)
   switch(dev) {
     case gxDEVICE_DISK_FILE:
       if(!infile) { 
+	ERROR_LEVEL = -1;
 	err << clear << filename << " file not ready for reading";
 	ready_for_reading = 0; 
 	return; 
@@ -77,6 +79,7 @@ void FCryptCache::Read(void *buf, unsigned Bytes, gxDeviceTypes dev)
       }
       infile.df_Read((char *)buf, Bytes);
       if(infile.df_GetError() != DiskFileB::df_NO_ERROR) {
+	ERROR_LEVEL = -1;
 	err << clear << "Fatal read error " << filename;
 	ready_for_reading = 0; 
 	return;
@@ -87,20 +90,21 @@ void FCryptCache::Read(void *buf, unsigned Bytes, gxDeviceTypes dev)
       break;
   }
 }
-  
+
+int count = 0;
+
 void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev) 
 {
   int rv = AES_NO_ERROR;
-  char *fbuf = new char[Bytes+1024];
+  char fbuf[1024];
   if(!fbuf) {
+    ERROR_LEVEL = -1;
     err << clear << "File write error system out of memory";
     return;
   }
 
-  // For testing without encrypting 
-  // aesdb.b.mode = 0;
-  
   unsigned buf_len;
+  unsigned i;
   
   // Encrypt the file buffer
   memmove(fbuf, buf, Bytes);
@@ -114,48 +118,21 @@ void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev)
     rv = aesdb.Decrypt(fbuf, &buf_len);
     Bytes = buf_len;
   }
-  
+
   if(rv != AES_NO_ERROR) {
-    err << clear << "File buf crypt error, " << AES_err_string(rv);
-    memset(fbuf, 0, Bytes);
-    delete fbuf;
+    ERROR_LEVEL = rv;
+    err << clear << "File buf crypt error " << AES_err_string(rv);
     return;
   }
 
-  switch(dev) {
-    case gxDEVICE_CONSOLE:
-#if defined (__CONSOLE__)
-      GXSTD::cout.write((char *)buf, Bytes);
-      bytes_wrote += Bytes;
-#endif
-      break;
+  outfile.df_Write(fbuf, Bytes);
+  if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Fatal file buf write error " << ofname;
+    return;
+  } 
+  bytes_wrote += Bytes;
 
-    case gxDEVICE_DISK_FILE:
-      if(!outfile) { 
-	err << clear << ofname << " file not ready for writing";
-	ready_for_writing = 0; 
-	delete fbuf;
-	return; 
-      }
-      else { 
-	ready_for_writing = 1; 
-      }
-
-      outfile.df_Write(fbuf, Bytes);
-      if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
-	err << clear << "Fatal file buf write error " << ofname;
-	delete fbuf;
-	return;
-      } 
-      bytes_wrote += Bytes;
-      break;
-      
-    default:
-      break;
-  }
-
-  memset(fbuf, 0, Bytes);
-  delete fbuf;
 }
 
 int FCryptCache::EncryptFile(const char *fname, const gxString &password)
@@ -168,6 +145,7 @@ int FCryptCache::EncryptFile(const char *fname, const gxString &password)
   crypt_stream = 1;
 
   if(!cache) {
+    ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
     cp.password.Clear(1);
     return 0;
@@ -190,6 +168,7 @@ int FCryptCache::EncryptFile(const char *fname, const gxString &password)
   gxDeviceCachePtr p(cache, o_device, i_device); 
   if(!LoadFile(p)) {  // Load the file into the cache 
     if(!err.is_null()) {
+      ERROR_LEVEL = -1;
       err << clear << "Error encrypting " << filename;
     }
     cp.password.Clear(1);
@@ -203,6 +182,7 @@ int FCryptCache::EncryptFile(const char *fname, const gxString &password)
 
   if(bytes_read != infile.df_Length()) {
     if(!err.is_null()) {
+      ERROR_LEVEL = -1;
       err << clear << "Error encrypting " << filename;
     }
     CloseInputFile();
@@ -216,63 +196,27 @@ int FCryptCache::EncryptFile(const char *fname, const gxString &password)
 int FCryptCache::LoadFile(gxDeviceCachePtr p)
 // Load a file from disk into the device cache.
 {
-  infile.df_Rewind();
-  char *fbuf = new char[buf_size+1024];
-  if(!fbuf) {
-    err << clear << "Out of system memory" << "\n";
-    return 0;
-  }
+  char read_buf[AES_PLAINTEXT_BUF_SIZE];
+  
+  unsigned read_len = AES_MAX_INPUT_BUF_LEN;
+  if(crypt_stream == 0) read_len += AES_file_enctryption_overhead();
+
+  //  infile.df_Rewind();
 
   while(!infile.df_EOF()) {
-    if(infile.df_Read(fbuf, buf_size) != DiskFileB::df_NO_ERROR) {
+    if(infile.df_Read(read_buf, read_len) != DiskFileB::df_NO_ERROR) {
       if(infile.df_GetError() != DiskFileB::df_EOF_ERROR) {
 	err << clear << "Fatal read error " << filename.c_str();
-	delete fbuf;
+	ERROR_LEVEL = -1;
 	return 0;
       }
     }
-    p->Load(fbuf, infile.df_gcount());
+    p->Load(read_buf, infile.df_gcount());
     bytes_read += infile.df_gcount();
   }
 
-  delete fbuf;
   return 1;
 }
-
-int FCryptCache::LoadCryptFile(gxDeviceCachePtr p)
-// Load encrypted file from disk into the device cache.
-{
-  unsigned char HMAC[32];
-  MemoryBuffer buf(buf_size);
-  unsigned len;
-  int rv;
-
-  while(!infile.df_EOF()) {
-    FAU_t bytes_left = infile.df_Length()-infile.df_Tell();
-    if(bytes_left < (FAU_t)32) {
-	err << clear << "Invalid MAC value";
-	return 0;
-    }
-
-    if((FAU_t)buf_size > bytes_left) {
-      len = (unsigned)bytes_left;
-      buf.resize(len);
-    } 
-    else {
-      len = buf_size;
-    }
-
-    if(infile.df_Read(buf.m_buf(), len) != DiskFileB::df_NO_ERROR) {
-      err << clear << "Fatal file buf read error";
-      return 0;
-    }
-    p->Load(buf.m_buf(), len);
-    bytes_read += len;
-  }
-
-  return 1;
-}
-
 
 int FCryptCache::OpenInputFile(const char *fname)
 // Open the file if it exists. Returns false
@@ -280,17 +224,20 @@ int FCryptCache::OpenInputFile(const char *fname)
 // not exist.
 {
   if(!fname) {
+    ERROR_LEVEL = -1;
     err << clear << "Null input file name";
     return 0;
   }
   filename.Clear();
   if(infile.df_Open(fname, DiskFileB::df_READONLY) != 
      DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
     err << clear << "Error opening " << fname;
     return 0;
   }
   filename = fname;
   if(infile.df_Length() == (FAU_t)0) {
+    ERROR_LEVEL = -1;
     err << clear << "Zero file length " << fname;
     CloseInputFile();
     return 0;
@@ -303,15 +250,17 @@ int FCryptCache::OpenOutputFile()
 // it. Returns false if the file cannot be opened.
 {
   if(filename.is_null()) {
+    ERROR_LEVEL = -1;
     err << clear << "No input file is open";
     return 0;
   }
   ofname = filename;
-
+  
   if((ofname[ofname.length()-3] == '.') ||
      ofname[ofname.length()-4] == '.') {
     ofname.DeleteAfterLastIncluding(".");
   }
+
   ofname << en_dot_ext;
 
   if(gen_file_names) {
@@ -340,6 +289,7 @@ int FCryptCache::OpenOutputFile()
     // Check to see if the output DIR exists
     if(futils_exists(output_dir_name.c_str())) {
       if(!futils_isdirectory(output_dir_name.c_str())) {
+	ERROR_LEVEL = -1;
 	err << clear << "Output DIR is a file name " << output_dir_name;
 	return 0;
       }
@@ -348,6 +298,7 @@ int FCryptCache::OpenOutputFile()
     // If the output DIR does not exist try to make the DIR
     if(!futils_exists(output_dir_name.c_str())) {
       if(futils_mkdir(output_dir_name.c_str()) != 0) {
+	ERROR_LEVEL = -1;
 	err << clear << "Error making output DIR " << output_dir_name;
 	return 0;
       }
@@ -377,42 +328,55 @@ int FCryptCache::OpenOutputFile()
 	ofname.ReplaceAt(offset, sbuf);
       }
     }
+    if(ofname[ofname.length()-3] != '.') ofname.InsertAt((ofname.length()-3), "."); 
   }
-  char nbuf[AES_MAX_NAME_LEN];
+  
+  // Adding a file header with meta data
+  char enc_header[AES_MAX_INPUT_BUF_LEN];
+  AES_fillrand((unsigned char *)enc_header, sizeof(enc_header));
+ 
+  // Init the file header
   CryptFileHdr hdr;
-  memmove(nbuf, filename.GetSPtr(), filename.length());
-  unsigned len = filename.length();
-
-  rv =  AES_Encrypt(nbuf, &len, (char *)cp.password.GetSPtr(), 
-		    cp.password.length(), mode);
-  if(rv != AES_NO_ERROR) {
-    err << clear << "HDR crypt error, " << AES_err_string(rv);
+  hdr.mode = mode;
+  hdr.name_len = filename.length();
+  if(hdr.name_len > AES_MAX_NAME_LEN) {
+    ERROR_LEVEL = -1;
+    err << clear << "File name greater than maximum length " << AES_MAX_NAME_LEN;
     return 0;
   }
-  hdr.mode = mode;
-  hdr.name_len = len;
-  hdr.fname = nbuf;
+  memmove(hdr.fname, filename.GetSPtr(), filename.length());
+
+  // Encrypt the file header
+  // Put the header in file block that will be written at the top of the file
+  memmove(enc_header, &hdr, sizeof(hdr));
+  unsigned len = sizeof(enc_header);
+  
+  // Create a temp buffer to encrypt the file block with header
+  char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
+  memmove(crypt_buf, enc_header, sizeof(enc_header));
+
+  rv =  AES_Encrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length(), mode);
+  if(rv != AES_NO_ERROR) {
+    ERROR_LEVEL = rv;
+    err << clear << "File header crypt error " << AES_err_string(rv);
+    return 0;
+  }
 
   if(outfile.df_Create(ofname.c_str()) != DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
     err << clear << "Error opening " << ofname;
     return 0;
   }
 
-  outfile.df_Write(&hdr, (sizeof(gxUINT32)*4));
+  // Write the file header to disk
+  outfile.df_Write(crypt_buf, len);
   if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
-    err << clear << "Fatal HDR write error " << ofname;
+    ERROR_LEVEL = -1;
+    err << clear << "Error writing header to file " << ofname;
     CloseOutputFile();
     return 0;
   } 
-  bytes_wrote += sizeof(gxUINT32)*4;
-
-  outfile.df_Write(hdr.fname, hdr.name_len);
-  if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
-    err << clear << "Fatal HDR write error " << ofname;
-    CloseOutputFile();
-    return 0;
-  } 
-  bytes_wrote += hdr.name_len;
+  bytes_wrote += len;
 
   return 1;
 }
@@ -423,15 +387,12 @@ int FCryptCache::TestVersion(CryptFileHdr hdr, gxUINT32 &version)
 
   // Select the correct file decrypt version
   switch((int)hdr.version) {
-    case 1002: // Current version
-      version = (gxUINT32)1002;
+    case 2023102: // Current version
+      version = (gxUINT32)2023102;
       break;
-    case 1001: // Version 1.0 - 1.1
-      CloseInputFile();
-      version = (gxUINT32)1001;
-      return 0;
     default:
       version = (gxUINT32)0;
+      ERROR_LEVEL = -1;
       err << clear << "Bad file version";
       return 0;
   }
@@ -439,8 +400,7 @@ int FCryptCache::TestVersion(CryptFileHdr hdr, gxUINT32 &version)
   return 1;
 }
 
-int FCryptCache::DecryptFile(const char *fname, const gxString &password,
-			     gxUINT32 &version)
+int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT32 &version)
 {
   err.Clear();
   filename.Clear();
@@ -450,6 +410,7 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password,
   crypt_stream = 0;
 
   if(!cache) {
+    ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
     cp.password.Clear(1);
     return 0;
@@ -459,6 +420,7 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password,
   if(!OpenInputFile(fname)) return 0;
 
   if(infile.df_Length() < (sizeof(gxUINT32)*4)) {
+    ERROR_LEVEL = -1;
     err << clear << "Bad file length";
     return 0;
   }
@@ -466,52 +428,53 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password,
   memmove(aesdb.b.secret, password.c_str(), password.length());
   aesdb.b.secret_len = password.length();
 
+  // Read the encrypted file header
+  unsigned read_len = AES_MAX_INPUT_BUF_LEN + AES_file_enctryption_overhead();
+  char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
+
   CryptFileHdr hdr, null_hdr;
-  if(infile.df_Read(&hdr, (sizeof(gxUINT32)*4)) != 
+  if(infile.df_Read(crypt_buf, read_len) != 
      DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
     err << clear << "Error reading file header";
+    return 0;
+  }
+  unsigned len = infile.df_gcount();
+
+  int rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length());
+  if(rv != AES_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
+    return 0;
+  }
+  memmove(&hdr, crypt_buf, sizeof(hdr));
+
+  if(hdr.checkword != null_hdr.checkword) {
+    ERROR_LEVEL = -1;
+    err << clear << "Corrupt file bad checkword";
     return 0;
   }
 
   // Select the correct file decrypt version
   if(!TestVersion(hdr, version)) return 0;
+
   
-  if(hdr.checkword != null_hdr.checkword) {
-    err << clear << "Corrupt file bad checkword";
-    return 0;
-  }
   if(hdr.name_len > gxUINT32(infile.df_Length()-(sizeof(gxUINT32)*3))) {
+    ERROR_LEVEL = -1;
     err << clear << "Incomplete or corrupt file";
     return 0;
   }
   if(hdr.name_len > AES_MAX_NAME_LEN) {
+    ERROR_LEVEL = -1;
     err << clear << "Invalid file header";
     return 0;
   }
 
-  char nbuf[AES_MAX_NAME_LEN];
-  memset(nbuf, 0, AES_MAX_NAME_LEN);
-
-  if(infile.df_Read(&nbuf, hdr.name_len) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading encrypted file name";
-    return 0;
-  }
-
-  unsigned len = hdr.name_len;
-  int rv =  AES_Decrypt(nbuf, &len, (char *)cp.password.GetSPtr(), 
-			cp.password.length());
-  if(rv != AES_NO_ERROR) {
-    err << clear << "Decrypt file name error, " << "\n"
-	<< AES_err_string(rv);
-    return 0;
-  }
-
   mode = (char)hdr.mode;
-
+  
   gxString sbuf;
-  ofname.SetString(nbuf, len);
-
+  ofname.SetString(hdr.fname, hdr.name_len);
+    
   if(!output_dir_name.is_null()) {
 #if defined (__WIN32__) 
     futils_makeDOSpath(output_dir_name.c_str());
@@ -533,6 +496,7 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password,
     // Check to see if the output DIR exists
     if(!futils_exists(output_dir_name.c_str())) {
       if(futils_mkdir(output_dir_name.c_str()) != 0) {
+	ERROR_LEVEL = -1;
 	err << clear << "Error making DIR " << output_dir_name;
 	return 0;
       }
@@ -541,6 +505,7 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password,
 
   MemoryBuffer mbuf;
   if(outfile.df_Create(ofname.c_str()) != DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
     err << clear << "Error opening " << ofname;
     return 0;
   }
@@ -550,8 +515,9 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password,
 
   // Setup a pointer to the cache buckets
   gxDeviceCachePtr p(cache, o_device, i_device); 
-  if(!LoadCryptFile(p)) {  // Load the file into the cache 
+  if(!LoadFile(p)) {  // Load the file into the cache 
     if(!err.is_null()) {
+      ERROR_LEVEL = -1;
       err << clear << "Error decrypting " << filename;
     }
     cp.password.Clear(1);
@@ -566,8 +532,8 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password,
   return 1;
 }
 
-int FCryptCache::DecryptFileName(const char *fname, const gxString &password,
-				 gxUINT32 &version, gxString &crypt_file_name)
+int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &password,
+					gxUINT32 &version, gxString &crypt_file_name)
 {
   err.Clear();
   filename.Clear();
@@ -579,6 +545,7 @@ int FCryptCache::DecryptFileName(const char *fname, const gxString &password,
   crypt_file_name.Clear();
 
   if(!cache) {
+    ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
     cp.password.Clear(1);
     return 0;
@@ -588,6 +555,7 @@ int FCryptCache::DecryptFileName(const char *fname, const gxString &password,
   if(!OpenInputFile(fname)) return 0;
 
   if(infile.df_Length() < (sizeof(gxUINT32)*4)) {
+    ERROR_LEVEL = -1;
     err << clear << "Bad file length";
     return 0;
   }
@@ -595,6 +563,7 @@ int FCryptCache::DecryptFileName(const char *fname, const gxString &password,
   CryptFileHdr hdr, null_hdr;
   if(infile.df_Read(&hdr, (sizeof(gxUINT32)*4)) != 
      DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
     err << clear << "Error reading file header";
     return 0;
   }
@@ -603,14 +572,17 @@ int FCryptCache::DecryptFileName(const char *fname, const gxString &password,
   if(!TestVersion(hdr, version)) return 0;
   
   if(hdr.checkword != null_hdr.checkword) {
+    ERROR_LEVEL = -1;
     err << clear << "Corrupt file bad checkword";
     return 0;
   }
   if(hdr.name_len > gxUINT32(infile.df_Length()-(sizeof(gxUINT32)*3))) {
+    ERROR_LEVEL = -1;
     err << clear << "Incomplete or corrupt file";
     return 0;
   }
   if(hdr.name_len > AES_MAX_NAME_LEN) {
+    ERROR_LEVEL = -1;
     err << clear << "Invalid file header";
     return 0;
   }
@@ -620,33 +592,16 @@ int FCryptCache::DecryptFileName(const char *fname, const gxString &password,
 
   if(infile.df_Read(&nbuf, hdr.name_len) != 
      DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
     err << clear << "Error reading encrypted file name";
     return 0;
   }
 
   unsigned len = hdr.name_len;
-  int rv =  AES_Decrypt(nbuf, &len, (char *)cp.password.GetSPtr(), 
-			cp.password.length());
+  int rv =  AES_Decrypt(nbuf, &len, (char *)cp.password.GetSPtr(), cp.password.length());
   if(rv != AES_NO_ERROR) {
-    err << clear << "Decrypt file name error, " << "\n"
-	<< AES_err_string(rv);
-    return 0;
-  }
-
-  unsigned char salt[8], verifier[16];
-  if(infile.df_Read(&buf_size, sizeof(buf_size)) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading embedded buf size";
-    return 0;
-  }
-  if(infile.df_Read(salt, 8) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading embedded salt";
-    return 0;
-  }
-  if(infile.df_Read(verifier, 16) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading embedded verifier";
+    ERROR_LEVEL = -1;
+    err << clear << "Decrypt file name error " << " " << AES_err_string(rv);
     return 0;
   }
 
@@ -654,182 +609,6 @@ int FCryptCache::DecryptFileName(const char *fname, const gxString &password,
 
   // Set the unencrypted file name
   crypt_file_name.SetString(nbuf, len);
-
-  cp.password.Clear(1);
-  CloseInputFile();
-  return 1;
-}
-
-int FCryptCache::EncryptFile(const char *fname,
-			     const MemoryBuffer &buf,
-			     const gxString &password)
-{
-  err.Clear();
-  filename.Clear();
-  ofname.Clear();
-  bytes_wrote = (FAU_t)0;
-  bytes_read = (FAU_t)0;
-  crypt_stream = 1;
-
-  if(!cache) {
-    err << clear << "No cache buffers available";
-    cp.password.Clear(1);
-    return 0;
-  }
-
-  // Set the a dummy input file name
-  filename = fname;
-
-  // Set the buffer size
-  buf_size = buf.length();
-
-  cp.password = password; 
-  if(!OpenOutputFile()) {
-    cp.password.Clear(1);
-    return 0;
-  }
-
-  gxDeviceTypes o_device = gxDEVICE_DISK_FILE; // Output device
-  gxDeviceTypes i_device = gxDEVICE_NULL;      // No input buffering
-
-  // Setup a pointer to the cache buckets
-  gxDeviceCachePtr p(cache, o_device, i_device); 
-  p->Load(buf.m_buf(), buf_size);
-  bytes_read += buf_size;
-  Flush(); // Ensure all the buckets a written to the output device
-
-  cp.password.Clear(1);
-  CloseOutputFile();
-
-  return 1;
-}
-
-int FCryptCache::DecryptFile(const char *fname, MemoryBuffer &buf,
-			     const gxString &password, gxUINT32 &version)
-{
-  buf.Clear();
-  err.Clear();
-  filename.Clear();
-  ofname.Clear();
-  bytes_wrote = (FAU_t)0;
-  bytes_read = (FAU_t)0;
-  crypt_stream = 0;
-
-  if(!cache) {
-    err << clear << "No cache buffers available";
-    cp.password.Clear(1);
-    return 0;
-  }
-
-  if(!OpenInputFile(fname)) return 0;
-  cp.password = password; 
-
-  if(infile.df_Length() < (sizeof(gxUINT32)*4)) {
-    err << clear << "Bad file length";
-    return 0;
-  }
-
-  CryptFileHdr hdr, null_hdr;
-  if(infile.df_Read(&hdr, (sizeof(gxUINT32)*4)) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading file header";
-    return 0;
-  }
-
-  // Select the correct file decrypt version
-  if(!TestVersion(hdr, version)) return 0;
-
-  if(hdr.checkword != null_hdr.checkword) {
-    err << clear << "Corrupt file bad checkword";
-    return 0;
-  }
-  if(hdr.name_len > gxUINT32(infile.df_Length()-(sizeof(gxUINT32)*3))) {
-    err << clear << "Incomplete or corrupt file";
-    return 0;
-  }
-  if(hdr.name_len > AES_MAX_NAME_LEN) {
-    err << clear << "Invalid file header";
-    return 0;
-  }
-
-  char nbuf[AES_MAX_NAME_LEN];
-  memset(nbuf, 0, AES_MAX_NAME_LEN);
-
-  if(infile.df_Read(&nbuf, hdr.name_len) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading encrypted file name";
-    return 0;
-  }
-
-  unsigned len = hdr.name_len;
-  int rv =  AES_Decrypt(nbuf, &len, (char *)cp.password.GetSPtr(), 
-			cp.password.length());
-  if(rv != AES_NO_ERROR) {
-    err << clear << "Decrypt file name error, " << "\n"
-	<< AES_err_string(rv);
-    return 0;
-  }
-
-  unsigned char salt[8], verifier[16];
-  if(infile.df_Read(&buf_size, sizeof(buf_size)) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading embedded buf size";
-    return 0;
-  }
-  buf.resize(buf_size);
-
-  if(infile.df_Read(salt, 8) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading embedded salt";
-    return 0;
-  }
-  if(infile.df_Read(verifier, 16) != 
-     DiskFileB::df_NO_ERROR) {
-    err << clear << "Error reading embedded verifier";
-    return 0;
-  }
-
-  mode = (char)hdr.mode;
-
-  unsigned char HMAC[32];
-
-  while(!infile.df_EOF()) {
-    FAU_t bytes_left = infile.df_Length()-infile.df_Tell();
-
-    if(bytes_left == (FAU_t)32) { // Read MAC
-      if(infile.df_Read(HMAC, 32) != DiskFileB::df_NO_ERROR) {
-	err << clear << "Fatal file MAC read error";
-	return 0;
-      }
-      break;
-    }
-
-    if(bytes_left < (FAU_t)32) {
-	err << clear << "Invalid MAC value";
-	return 0;
-    }
-
-    if((FAU_t)buf_size > bytes_left) {
-      len = (unsigned)bytes_left-32;
-      buf.resize(len);
-    } 
-    else {
-      len = buf_size;
-    }
-    if(infile.df_Read(buf.m_buf(), len) != DiskFileB::df_NO_ERROR) {
-      err << clear << "Fatal file buf read error";
-      return 0;
-    }
-
-    unsigned buf_len = buf.length();
-    rv = aesdb.Decrypt(buf, &buf_len);
-    if(rv != AES_NO_ERROR) {
-      err << clear << "File buf crypt error, " << AES_err_string(rv);
-      return 0;
-    }
-
-    bytes_read += len;
-  }
 
   cp.password.Clear(1);
   CloseInputFile();

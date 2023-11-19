@@ -53,11 +53,11 @@ Encryption routes generate encryption certificates and authenticate users.
 struct GXDLCODE_API CryptFileHdr
 {
   CryptFileHdr() {
-    version = 1002;
+    version = 2023102;
     checkword = 0xFEFE; 
     name_len = (gxUINT32)0;
-    fname = 0;
-    mode = gxAuthRealmAES256;
+    memset(fname, 0, sizeof(fname));
+    mode = 3;
   }
   ~CryptFileHdr() { }
 
@@ -65,29 +65,10 @@ struct GXDLCODE_API CryptFileHdr
   gxUINT32 checkword; // Header checkword
   gxUINT32 mode;      // Encryption mode
                       // 0 = No encryption
-                      // 1 = AES 128-bit encryption 
-                      // 2 = AES 192-bit encryption 
                       // 3 = AES 256-bit encryption 
-                      // 4 = BlowFish encryption 
-                      // 5 = TwoFish encryption 
-                      // 6 = MD5 hash
-                      // 7 = Base64 encoding
-                      // 8 = EDS encryption
 
   gxUINT32 name_len; // Variable length of encrypted file name or DIR list
-  char *fname;       // Encrypted file name or DIR list
-};
-
-struct GXDLCODE_API CryptBlockHdr
-{
-  CryptBlockHdr() {
-    buf_len = (gxUINT32)0;
-    buf = 0;
-  }
-  ~CryptBlockHdr() { }
-
-  gxUINT32 buf_len;
-  char *buf;
+  char fname[256];  // Name of the file that was encrypted or DIR list
 };
 
 struct GXDLCODE_API CryptPasswordHdr
@@ -124,23 +105,17 @@ public:
 
 public: // Encrypt functions
   int EncryptFile(const char *fname, const gxString &password);
-  int EncryptFile(const char *fname, const MemoryBuffer &buf, 
-		  const gxString &password);
 
 public: // Decrypt fucntions
-  int DecryptFile(const char *fname, const gxString &password,
-		  gxUINT32 &version);
-  int DecryptFile(const char *fname, MemoryBuffer &buf,
-		  const gxString &password, gxUINT32 &version);
-  int DecryptFileName(const char *fname, const gxString &password,
-		      gxUINT32 &version, gxString &crypt_file_name);
+  int DecryptFile(const char *fname, const gxString &password, gxUINT32 &version);
+  int DecryptOnlyTheFileName(const char *fname, const gxString &password,
+			     gxUINT32 &version, gxString &crypt_file_name);
 
 public: // Helper functions
   void Flush() { cache.Flush(); } // Flush the cache buckets
   unsigned BucketsInUse() { return cache.BucketsInUse(); }
   char *OutFileName() { return ofname.c_str(); }
   char *InFileName() { return filename.c_str(); }
-  void SetMode(char m) { mode = m; }
   void SetOverWrite(int m) { overwrite = m; }
   void SetBufSize(__ULWORD__ m) { buf_size = m; }
   void SetDotExt(const char *s) { en_dot_ext = s; }
@@ -160,7 +135,6 @@ private: // Internal processing functions
   int OpenInputFile(const char *fname);
   int OpenOutputFile();
   int LoadFile(gxDeviceCachePtr p);
-  int LoadCryptFile(gxDeviceCachePtr p);
   int TestVersion(CryptFileHdr hdr, gxUINT32 &version);
 
 private: // Base class interface
@@ -175,7 +149,6 @@ private: // Device cache
   gxDeviceBucketCache cache;
   gxUINT32 buf_size;
   int overwrite;
-  char mode;
   gxString filename;
   gxString ofname;
   gxString en_dot_ext;
@@ -192,6 +165,8 @@ public: // Functions used to get the current device cache
   DiskFileB *GetInFile() { return &infile; }
 
 public:
+  int ERROR_LEVEL;
+  char mode;
   gxString err;
   CryptPasswordHdr cp;
   AESStreamCrypt aesdb;

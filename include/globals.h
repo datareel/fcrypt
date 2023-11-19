@@ -244,8 +244,6 @@ const char *UnsentTableDef();
 const char *UnsentKeyDef();
 int touch(const char *file, time_t tm);
 int ValidateBoolValue(char &c, char default_value);
-int CryptPassword(gxString &password, unsigned char *pbuf, unsigned &plen);
-int DecryptPassword(gxString &password, unsigned char *pbuf, unsigned plen);
 // --------------------------------------------------------------
 
 // --------------------------------------------------------------

@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/16/2023
+// Date Last Modified: 11/17/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -57,9 +57,9 @@ int list_file_names = 0;
 int recurse = 0;
 int use_abs_path = 0;
 CryptPasswordHdr CommandLinePassword;
-
-// Function declarations
-int FDecryptVersion1001(const char *fn, CryptPasswordHdr &cp);
+int use_input_arg_secret = 0;
+int use_input_arg_key_file = 0;
+gxString input_arg_key_file;
 
 void DisplayVersion()
 {
@@ -90,6 +90,7 @@ void HelpMessage()
        << "\n" << flush;
   cout << "          -l = List output file name(s) in enc file(s)" 
        << "\n" << flush;
+  cout << "          -p = Input a decrypt secret" << "\n" << flush;
   cout << "          -r = Remove encrypted source file" << "\n" << flush;
   cout << "          -R = Decrypt DIR including all files and subdirectories" 
        << "\n" << flush;
@@ -172,11 +173,24 @@ int ProcessArgs(char *arg)
 	return 0;
       }
       break;
-      
-    case '-':
+
+    case 'p':
       CommandLinePassword.password = arg+2;
+      use_input_arg_secret = 1;
       break;
 
+    case 'k':
+      // TODO: Implement key decrypt
+      input_arg_key_file = arg+2;
+      if(!futils_exists(input_arg_key_file.c_str())) {
+	cout << "\n" << flush;
+	cout << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cout << "\n" << flush;
+	return 0;
+      }
+      use_input_arg_key_file  = 1;
+      break;
+      
     default:
       cout << "\n" << flush;
       cout << "Unknown switch " << arg << "\n" << flush;
@@ -208,15 +222,20 @@ int ListFileNames(CryptPasswordHdr &cp)
     gxString sbuf;
     gxUINT32 version;
     cout << "Encrypted name: " << ptr->data.c_str() << "\n" << flush;
-    if(!fc.DecryptFileName(ptr->data.c_str(), cp.password, version,
-			   sbuf)) {
+    if(!fc.DecryptOnlyTheFileName(ptr->data.c_str(), cp.password, version, sbuf)) {
       cout << "File name decrypt failed" << "\n" << flush;
-      debug_message << clear << fc.err;
+      debug_message << clear << "ERROR: " << fc.err;
       err = ExitMessage();
       ptr = ptr->next;
       continue;
     }
-
+    if(fc.ERROR_LEVEL != 0) { // Check the ERROR level from the file caching ops
+      cout << "File decrypt failed" << "\n" << flush;
+      debug_message << clear << "ERROR: " << fc.err;
+      err = ExitMessage();
+      ptr = ptr->next;
+      continue;
+    }
     cout << "Decrypted name: " << sbuf.c_str() << "\n" << flush;
     ptr = ptr->next;
   }
@@ -265,10 +284,6 @@ int main(int argc, char **argv)
 	  if(!ProcessArgs(arg)) return 1; // Exit if argument is not valid
 	}
 	else { 
-	  // Process the command line string after last - argument
-	  // num_files++;
-	  // fn = arg;
-	  // file_list.Add(fn);
 	  fn = arg;
 	  if(futils_isdirectory(fn.c_str())) {
 	    if(recurse) {
@@ -349,37 +364,19 @@ int main(int argc, char **argv)
     gxUINT32 version;
     cout << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
     if(!fc.DecryptFile(ptr->data.c_str(), cp.password, version)) {
-      if(version == (gxUINT32)1001) { // Version 1.0 - 1.1
-	cout << "Switching to version 1.0/1.1 compatibility mode" 
-	     << "\n" << flush;
-	rv = FDecryptVersion1001(ptr->data.c_str(), cp);
-	if(rv != 0) {
-	  cout << "File decrypt failed" << "\n" << flush;
-	  debug_message << clear << fc.err;
-	  err = ExitMessage();
-	}
-	else {
-	  cout << "File decrypt successful" << "\n" << flush;
-	  sbuf << clear << wn << fc.BytesWrote();
-	  cout << "Wrote " << sbuf.c_str() << " bytes to "
-	       << fc.OutFileName() << "\n" << flush;
-	  if(remove_src_file) {
-	    if(futils_remove(ptr->data.c_str()) != 0) {
-	      cout << "Error removing " << ptr->data.c_str() << " source file"
-		   << "\n" << flush;
-	    }
-	  }
-	}
-	ptr = ptr->next;
-	continue;
-      }
       cout << "File decrypt failed" << "\n" << flush;
-      debug_message << clear << fc.err;
+      debug_message << clear << "ERROR: " << fc.err;
       err = ExitMessage();
       ptr = ptr->next;
       continue;
     }
-
+    if(fc.ERROR_LEVEL != 0) { // Check the ERROR level from the file caching ops
+      cout << "File decrypt failed" << "\n" << flush;
+      debug_message << clear << "ERROR: " << fc.err;
+      err = ExitMessage();
+      ptr = ptr->next;
+      continue;
+    }
     cout << "File decrypt successful" << "\n" << flush;
     sbuf << clear << wn << fc.BytesWrote();
     cout << "Wrote " << sbuf.c_str() << " bytes to "
@@ -406,145 +403,6 @@ int main(int argc, char **argv)
   }
 
   return err;
-}
-
-int FDecryptVersion1001(const char *fn, CryptPasswordHdr &cp)
-{
-  const int def_buf_size = 4096;
-  const int buf_overhead = 1024;
-  const int max_fname_length = 1024;
-
-  gxString fname(fn);
-  DiskFileB infile;
-  if(infile.df_Open(fname.c_str(), DiskFileB::df_READONLY) != 
-     DiskFileB::df_NO_ERROR) {
-    return 1;
-  }
-  if(infile.df_Length() == (FAU_t)0) {
-    debug_message << clear << "Zero length file";
-    return ExitMessage();
-  }
-  if(infile.df_Length() < (sizeof(gxUINT32)*4)) {
-    debug_message << clear << "Bad file length";
-    return ExitMessage();
-  }
-
-  CryptFileHdr hdr, null_hdr;
-  if(infile.df_Read(&hdr, (sizeof(gxUINT32)*4)) != 
-     DiskFileB::df_NO_ERROR) {
-    debug_message << clear << "Error reading file header";
-    return ExitMessage();
-  }
-
-  if(hdr.checkword != null_hdr.checkword) {
-    debug_message << clear << "Corrupt file bad checkword";
-    return ExitMessage();
-  }
-  if(hdr.name_len > gxUINT32(infile.df_Length()-(sizeof(gxUINT32)*3))) {
-    debug_message << clear << "Incomplete or corrupt file";
-    return ExitMessage();
-  }
-  if(hdr.name_len > max_fname_length) {
-    debug_message << clear << "Invalid file header";
-    return ExitMessage();
-  }
-
-  char nbuf[max_fname_length];
-  memset(nbuf, 0, max_fname_length);
-
-  if(infile.df_Read(&nbuf, hdr.name_len) != 
-     DiskFileB::df_NO_ERROR) {
-    debug_message << clear << "Error reading embedded file name";
-    return ExitMessage();
-  }
-
-  unsigned len = 0;
-  // TODO:
-  /*
-  len = hdr.name_len;
-  int rv =  AES_Decode(nbuf, &len, (char *)cp.password.GetSPtr(), 
-		   cp.password.length());
-  if(rv != AES_NO_ERROR) {
-    debug_message << clear << "Error decrypting file header " << "\n"
-		  << AES_err_string(rv);
-    return ExitMessage();
-  }
-  */
-  
-  gxString ofname, sbuf;
-  ofname.SetString(nbuf, len);
-
-  if(!output_dir_name.is_null()) {
-#if defined (__WIN32__) 
-    futils_makeDOSpath(output_dir_name.c_str());
-    if(output_dir_name[output_dir_name.length()-1] != '\\') {
-      output_dir_name << '\\';
-    }
-#else
-    if(output_dir_name[output_dir_name.length()-1] != '/') {
-      output_dir_name << '/';
-    }
-#endif
-    output_dir_name << ofname;
-    ofname = output_dir_name;
-  }
-
-  MemoryBuffer mbuf;
-
-  DiskFileB outfile(ofname.c_str(), DiskFileB::df_READWRITE, 
-		    DiskFileB::df_CREATE);
-  if(!outfile) {
-    cout << "Cannot open output file" << "\n" << flush;
-    return 1;
-  }
-
-  FAU_t byte_count = (FAU_t)0;
-  while(!infile.df_EOF()) {
-    CryptBlockHdr bhdr;
-    if(infile.df_Read(&bhdr.buf_len, sizeof(gxUINT32)) 
-       != DiskFileB::df_NO_ERROR) {
-      debug_message << clear << "Error reading block header";
-      return ExitMessage();
-    }
-    if(bhdr.buf_len > gxUINT32(infile.df_Length()-infile.df_Tell())) {
-      debug_message << clear << "Bad encrypted file block";
-      return ExitMessage();
-    }
-
-    char *fbuf = new char[bhdr.buf_len];
-    if(!fbuf) {
-      cout << "Memory allocation error" << "\n";
-      return 1;
-    }
-    len = bhdr.buf_len;
-    infile.df_Read(fbuf, len);
-
-    // TODO
-    /*
-    rv =  AES_Decode(fbuf, &len, (char *)cp.password.GetSPtr(), 
-		     cp.password.length());
-    if(rv != AES_NO_ERROR) {
-      debug_message << clear << "Error decrypting file buffer " << "\n"
-		    << AES_err_string(rv);
-      delete fbuf;
-      return ExitMessage();
-    }
-    */
-    
-    byte_count += len;
-    outfile.df_Write(fbuf, len);
-    delete fbuf; fbuf = 0;
-    if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
-      cout << "Error writing to output file" << "\n" << flush;
-      return 1;
-    }    
-  }
-
-  cout << "File decrypt successful" << "\n" << flush;
-  sbuf << clear << wn << byte_count;
-  cout << "Wrote " << sbuf.c_str() << " bytes to file" << "\n" << flush;
-  cout << ofname.c_str() << "\n" << flush;
-  return 0;
 }
 // ----------------------------------------------------------- // 
 // ------------------------------- //

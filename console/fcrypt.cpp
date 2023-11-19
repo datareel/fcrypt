@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/16/2023
+// Date Last Modified: 11/18/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -67,6 +67,9 @@ int gen_file_names = 0;
 int recurse = 0;
 int use_abs_path = 0;
 CryptPasswordHdr CommandLinePassword;
+int use_input_arg_secret = 0;
+int use_input_arg_key_file = 0;
+gxString input_arg_key_file;
 
 // ----------------------------------------------------------- // 
 // Interactive user function prototypes
@@ -124,8 +127,7 @@ void HelpMessage()
        << "filename" << "\n" << flush;
   cout << "Switches: -? = Display this help message and exit." 
        << "\n" << flush;  
-  cout << "          -1 = 128-bit encryption." << "\n" << flush;
-  cout << "          -2 = 192-bit encryption." << "\n" << flush;
+  cout << "          -0 = No encryption for testing only." << "\n" << flush;
   cout << "          -3 = 256-bit encryption (default)." << "\n" << flush;
   cout << "          -b[size] = Specify file buffer size in bytes" 
        << "\n" << flush;
@@ -140,6 +142,7 @@ void HelpMessage()
   cout << "          -g = Generate hashed output file names" 
        << "\n" << flush;
   cout << "          -o = Overwrite existing enc file(s)" << "\n" << flush;
+  cout << "          -p = Input a encrypt secret" << "\n" << flush;
   cout << "          -r = Remove unencrypted source file(s)" << "\n" << flush;
   cout << "          -R = Encrypt DIR including all files and subdirectories" 
        << "\n" << flush;
@@ -201,8 +204,9 @@ int ProcessArgs(char *arg)
       }
       break;
 
-    case '-':
+    case 'p':
       CommandLinePassword.password = arg+2;
+      use_input_arg_secret = 1;
       break;
 
     case 'f':
@@ -232,12 +236,8 @@ int ProcessArgs(char *arg)
       }
       break;
 
-    case '1': 
-      mode = 1;
-      break;
-
-    case '2': 
-      mode = 2;
+    case '0': 
+      mode = 0;
       break;
 
     case '3': 
@@ -260,6 +260,18 @@ int ProcessArgs(char *arg)
       clientcfg->verbose_mode = 1;
       break;
 
+    case 'k':
+      // TODO: Implement key decrypt
+      input_arg_key_file = arg+2;
+      if(!futils_exists(input_arg_key_file.c_str())) {
+	cout << "\n" << flush;
+	cout << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cout << "\n" << flush;
+	return 0;
+      }
+      use_input_arg_key_file  = 1;
+      break;
+      
     case 'h': case 'H': case '?':
       HelpMessage();
       return 0;
@@ -750,7 +762,7 @@ int main(int argc, char **argv)
 
   while(ptr) {
     FCryptCache fc(num_buckets);
-    fc.SetMode(mode);
+    fc.mode = mode;
     fc.SetOverWrite(overwrite);
     fc.SetBufSize(buf_size);
     fc.SetDotExt(en_dot_ext.c_str());
@@ -774,7 +786,7 @@ int main(int argc, char **argv)
     else {
       cout << "Encrypting: " << ptr->data.c_str() << "\n" << flush;
     }
-
+    if(mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
     rv = fc.EncryptFile(ptr->data.c_str(), cp.password);
     cp = tmp_cp;
     if(!rv) {
@@ -867,7 +879,7 @@ int CryptFile()
   }
 
   FCryptCache fc(num_buckets);
-  fc.SetMode(mode);
+  fc.mode = mode;
   fc.SetOverWrite(overwrite);
   fc.SetBufSize(buf_size);
   fc.SetDotExt(en_dot_ext.c_str());
@@ -891,7 +903,7 @@ int CryptFile()
   else {
     cout << "Encrypting: " << fname.c_str() << "\n" << flush;
   }
-
+  if(mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n" << flush;
   int rv = fc.EncryptFile(fname.c_str(), cp.password);
   if(!rv) {
     cout << "File encryption failed" << "\n" << flush;

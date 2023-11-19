@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/16/2023
+// Date Last Modified: 11/18/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -64,6 +64,8 @@ const unsigned int AES_CIPHER_STREAM_BUF_SIZE = 2048;
 const unsigned int AES_MAX_NAME_LEN = 1024;
 const unsigned int AES_MAX_VERIFIER_LEN = 16;
 const unsigned int AES_MAX_MODE_LEN = 4;
+const unsigned int AES_INPUT_BUF_LEN = 512;
+const unsigned int AES_MAX_INPUT_BUF_LEN = 768;
 
 // Enmerations
 enum {
@@ -166,6 +168,7 @@ public:
 
 // Standalone functions
 const char *AES_err_string(int err); 
+unsigned int AES_file_enctryption_overhead();
 int AES_fillrand(unsigned char *buf, unsigned int len);
 int AES_derive_key(const unsigned char secret[], unsigned int secret_len,
 		   const unsigned char salt[], unsigned int salt_len,

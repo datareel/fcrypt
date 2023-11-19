@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/16/2023
+// Date Last Modified: 11/18/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -82,6 +82,17 @@ const char *AES_err_strings[NUM_AES_ERRORS] =
  "Clib exception error code 55033", // AES_ERROR_SALT_INIT_FAILED
  "Clib exception error code 55034"  // AES_ERROR_NULL_POINTER
 };
+
+unsigned int AES_file_enctryption_overhead()
+{
+  unsigned enctryption_overhead = 0;
+  enctryption_overhead += AES_MAX_MODE_LEN;
+  enctryption_overhead += AES_MAX_SALT_LEN;
+  enctryption_overhead += AES_MAX_VERIFIER_LEN;
+  enctryption_overhead += AES_CBC_BLOCK_SIZE;
+  enctryption_overhead += AES_MAX_HMAC_LEN;
+  return enctryption_overhead;
+}
 
 // Standalone functions
 const char *AES_err_string(int err) 
@@ -210,7 +221,7 @@ int AES_encrypt(const unsigned char key[], const unsigned char iv[],
     return AES_ERROR_EVP_ENCRYPT_CIPHER_UPDATE;
   }
 
-  if(c_len >= ciphertext_len) {
+  if(c_len > ciphertext_len) {
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_BUFFER_OVERFLOW;
   }
@@ -267,11 +278,11 @@ int AES_decrypt(const unsigned char key[], const unsigned char iv[],
     return AES_ERROR_EVP_DECRYPT_CIPHER_UPDATE;
   }
 
-  if(p_len >= plaintext_len) {
+  if(p_len > plaintext_len) {
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_BUFFER_OVERFLOW;
   }
-  
+
   // If padding is enabled (the default) then EVP_EncryptFinal_ex() encrypts the final data
   if(!EVP_CipherFinal_ex(ctx, plaintext+p_len, &f_len)){
     EVP_CIPHER_CTX_free(ctx);
@@ -511,6 +522,7 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
   if(*(buf_len) < (offset+r_HMAC_len)) {
     return AES_ERROR_BUFFER_OVERFLOW;
   }
+
   memmove(r_HMAC, (buf+offset), r_HMAC_len);
   if(memcmp(HMAC, r_HMAC, r_HMAC_len) != 0) {
     delete new_buf;
