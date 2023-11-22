@@ -15,7 +15,7 @@ C_CONFIG_DEP = $(APPINC_PATH)c_config.h $(APPINC_PATH)globals.h \
 	$(APPINC_PATH)c_thread.h
 
 C_THREAD_DEP = $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
-	$(APPINC_PATH)c_config.h $(APPINC_PATH)cryptdb.h
+	$(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h
 
 PROJECT_DEP = $(C_THREAD_DEP) ../fcrypt.h
 # ===============================================================

@@ -50,7 +50,7 @@ LINKER = ld
 COMPILE_FLAGS= -Wall $(ADD_INC_PATHS) $(DEFMACS) -fpermissive
 COMPILE_ONLY = -c
 OUTPUT = -o
-LINKER_FLAGS = -lpthread -lcurses -ltermcap -lm -lssl -lcrypto
+LINKER_FLAGS = -lpthread -lm -lssl -lcrypto
 
 # Set the project dependencies  
 # ===============================================================

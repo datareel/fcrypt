@@ -66,7 +66,7 @@ gxString output_dir_name;
 int gen_file_names = 0;
 int recurse = 0;
 int use_abs_path = 0;
-CryptPasswordHdr CommandLinePassword;
+CryptSecretHdr CommandLinePassword;
 int use_input_arg_secret = 0;
 int use_input_arg_key_file = 0;
 gxString input_arg_key_file;
@@ -195,7 +195,7 @@ int ProcessArgs(char *arg)
       break;
 
     case 'p':
-      CommandLinePassword.password = arg+2;
+      CommandLinePassword.secret.Load(arg+2, strlen(arg+2));
       use_input_arg_secret = 1;
       break;
 
@@ -264,6 +264,7 @@ int ProcessArgs(char *arg)
 	cout << "\n" << flush;
 	return 0;
       }
+      CommandLinePassword.secret = key;
       use_input_arg_key_file  = 1;
       break;
       
@@ -609,6 +610,8 @@ int main(int argc, char **argv)
   InitLeakTest();
 #endif
 
+  AES_openssl_init();
+  
   // Set the program information
   clientcfg->executable_name = "fcrypt";
   clientcfg->program_name = "File Encrypt";
@@ -711,48 +714,57 @@ int main(int argc, char **argv)
   DisplayVersion();
   cout << "\n" << flush;
 
-  CryptPasswordHdr cp;
-  CryptPasswordHdr tmp_cp;
-
+  CryptSecretHdr cp;
+  CryptSecretHdr tmp_cp;
+  gxString password, password2;
+  
   if(use_input_arg_key_file) {
     cout << "Using key file for encryption" << "\n" << flush;
   }
-  else {
-    if(CommandLinePassword.password.is_null()) {
-      cout << "Password: " << flush;
-      if(!consoleGetString(cp.password, 1)) {
-	cout << "Invalid entry!" << "\n" << flush;
-	return 1;
-      }
-      cout << "\n" << flush;
-      if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
-	cout << "Password does not meet length requirement" 
-	     << "\n" << flush;
-	cout << "Password must be at least " << AES_MIN_SECRET_LEN 
-	     << " characters long" << "\n" << flush;
-	return 1;
-      }
-      cout << "Retype password: " << flush;
-      if(!consoleGetString(cp.cbuf, 1)) {
-	cout << "Invalid entry!" << "\n" << flush;
-	return 1;
-      }
-      cout << "\n" << flush;
-      if(cp.password != cp.cbuf) {
-	cout << "Passwords do not match" << "\n" << flush;
-	return 1;
-      }
+
+  if(CommandLinePassword.secret.is_null()) {
+    cout << "Password: " << flush;
+    if(!consoleGetString(password, 1)) {
+      password.Clear(1);
+      cout << "Invalid entry!" << "\n" << flush;
+      return 1;
     }
-    else {
-      cp.password = CommandLinePassword.password;
-      CommandLinePassword.Reset();
-      if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
-	cout << "Password does not meet length requirement" 
-	     << "\n" << flush;
-	cout << "Password must be at least " << AES_MIN_SECRET_LEN 
-	     << " characters long" << "\n" << flush;
-	return 1;
-      }
+    cout << "\n" << flush;
+    if((int)password.length() < AES_MIN_SECRET_LEN) {
+      cout << "Password does not meet length requirement" 
+	   << "\n" << flush;
+      cout << "Password must be at least " << AES_MIN_SECRET_LEN 
+	   << " characters long" << "\n" << flush;
+      password.Clear(1);
+      return 1;
+    }
+    cout << "Retype password: " << flush;
+    if(!consoleGetString(password2, 1)) {
+      password.Clear(1);
+      password2.Clear(1);
+      cout << "Invalid entry!" << "\n" << flush;
+      return 1;
+    }
+    cout << "\n" << flush;
+    if(password != password2) {
+      password.Clear(1);
+      password2.Clear(1);
+      cout << "Passwords do not match" << "\n" << flush;
+      return 1;
+    }
+    cp.secret.Load(password.c_str(), password.length());
+    password.Clear(1);
+    password2.Clear(1);
+  }
+  else {
+    cp.secret = CommandLinePassword.secret;
+    CommandLinePassword.Reset();
+    if((int)cp.secret.length() < AES_MIN_SECRET_LEN) {
+      cout << "Password does not meet length requirement" 
+	   << "\n" << flush;
+      cout << "Password must be at least " << AES_MIN_SECRET_LEN 
+	   << " characters long" << "\n" << flush;
+      return 1;
     }
   }
   
@@ -788,11 +800,7 @@ int main(int argc, char **argv)
     }
     if(mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
 
-    if(use_input_arg_key_file) {
-      fc.use_key = 1;
-      fc.key = key;
-    }
-    rv = fc.EncryptFile(ptr->data.c_str(), cp.password); // If a key is set the password will be ignored
+    rv = fc.EncryptFile(ptr->data.c_str(), cp.secret);
     cp = tmp_cp;
     if(!rv) {
       cout << "File encryption failed" << "\n" << flush;
@@ -836,8 +844,8 @@ int main(int argc, char **argv)
 // ----------------------------------------------------------- // 
 int CryptFile()
 {
-  CryptPasswordHdr cp;
-  CryptPasswordHdr tmp_cp;
+  CryptSecretHdr cp;
+  CryptSecretHdr tmp_cp;
 
   gxString fname;
   cout << "\n" << flush;
@@ -852,42 +860,48 @@ int CryptFile()
     return  0;
   }
 
-  if(use_input_arg_key_file) {
-    cout << "Using key file for encryption" << "\n" << flush;
-  }
-  else {
-    if(CommandLinePassword.password.is_null()) {
-      cout << "Password: " << flush;
-      if(!consoleGetString(cp.password, 1)) {
-	cout << "Invalid entry!" << "\n" << flush;
-	return  0;
-      }
-      cout << "\n" << flush;
-    }
-    else {
-      cp.password = CommandLinePassword.password;
-      CommandLinePassword.Reset();
-    }
-    
-    if((int)cp.password.length() < AES_MIN_SECRET_LEN) {
-      cout << "Password does not meet length requirement" 
-	   << "\n" << flush;
-      cout << "Password must be at least " << AES_MIN_SECRET_LEN 
-	   << " characters long" << "\n" << flush;
-      return  0;
-    }
-    cout << "Retype password: " << flush;
-    if(!consoleGetString(cp.cbuf, 1)) {
+  gxString password, password2;
+  
+  if(CommandLinePassword.secret.is_null()) {
+    cout << "Password: " << flush;
+    if(!consoleGetString(password, 1)) {
+      password.Clear(1);
       cout << "Invalid entry!" << "\n" << flush;
       return  0;
     }
     cout << "\n" << flush;
-    if(cp.password != cp.cbuf) {
-      cout << "Passwords do not match" << "\n" << flush;
+
+    cout << "Retype password: " << flush;
+    if(!consoleGetString(password2, 1)) {
+      password.Clear(1);
+      password2.Clear(1);
+      cout << "Invalid entry!" << "\n" << flush;
       return  0;
     }
+    cout << "\n" << flush;
+    if(password != password2) {
+      password.Clear(1);
+      password2.Clear(1);
+      cout << "Passwords do not match" << "\n" << flush;
+    return  0;
+    }
+    cp.secret.Load(password.c_str(), password.length());
+    password.Clear(1);
+    password2.Clear(1);
+  }
+  else {
+    cp.secret = CommandLinePassword.secret;
+    CommandLinePassword.Reset();
   }
   
+  if((int)cp.secret.length() < AES_MIN_SECRET_LEN) {
+    cout << "Password does not meet length requirement" 
+	 << "\n" << flush;
+    cout << "Password must be at least " << AES_MIN_SECRET_LEN 
+	 << " characters long" << "\n" << flush;
+      return  0;
+  }
+    
   FCryptCache fc(num_buckets);
   fc.mode = mode;
   fc.SetOverWrite(overwrite);
@@ -915,11 +929,7 @@ int CryptFile()
   }
   if(mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n" << flush;
 
-  if(use_input_arg_key_file) {
-    fc.use_key = 1;
-    fc.key = key;
-  }
-  int rv = fc.EncryptFile(fname.c_str(), cp.password); // If a key is set the password will be ignored
+  int rv = fc.EncryptFile(fname.c_str(), cp.secret);
   if(!rv) {
     cout << "File encryption failed" << "\n" << flush;
     cout << fc.err.c_str() << "\n" << flush;

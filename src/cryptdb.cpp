@@ -52,7 +52,6 @@ FCryptCache::FCryptCache(unsigned CacheSize) : cache(CacheSize)
   crypt_stream = 1;
   gen_file_names = 0;
   ERROR_LEVEL = 0;
-  use_key = 0;
 }
 
 void FCryptCache::GenFileNames()
@@ -136,7 +135,7 @@ void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev)
 
 }
 
-int FCryptCache::EncryptFile(const char *fname, const gxString &password)
+int FCryptCache::EncryptFile(const char *fname, const MemoryBuffer &secret)
 {
   err.Clear();
   filename.Clear();
@@ -148,25 +147,19 @@ int FCryptCache::EncryptFile(const char *fname, const gxString &password)
   if(!cache) {
     ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
-    cp.password.Clear(1);
+    cp.secret.Clear(1);
     return 0;
   }
 
   if(!OpenInputFile(fname)) return 0;
-  cp.password = password; 
+  cp.secret = secret; 
   if(!OpenOutputFile()) {
-    cp.password.Clear(1);
+    cp.secret.Clear(1);
     return 0;
   }
-
-  if(use_key) {
-    memmove(aesdb.b.secret, key.m_buf(), key.length());
-    aesdb.b.secret_len = key.length();
-  }
-  else {
-    memmove(aesdb.b.secret, password.c_str(), password.length());
-    aesdb.b.secret_len = password.length();
-  }
+  
+  memmove(aesdb.b.secret, secret.m_buf(), secret.length());
+  aesdb.b.secret_len = secret.length();
   
   gxDeviceTypes o_device = gxDEVICE_DISK_FILE; // Output device
   gxDeviceTypes i_device = gxDEVICE_NULL;      // No input buffering
@@ -178,13 +171,13 @@ int FCryptCache::EncryptFile(const char *fname, const gxString &password)
       ERROR_LEVEL = -1;
       err << clear << "Error encrypting " << filename;
     }
-    cp.password.Clear(1);
+    cp.secret.Clear(1);
     CloseInputFile();
     return 0;
   }
   Flush(); // Ensure all the buckets a written to the output device
   
-  cp.password.Clear(1);
+  cp.secret.Clear(1);
   CloseOutputFile();
 
   if(bytes_read != infile.df_Length()) {
@@ -362,13 +355,7 @@ int FCryptCache::OpenOutputFile()
   char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
   memmove(crypt_buf, enc_header, sizeof(enc_header));
 
-  if(use_key) {
-    rv = AES_Encrypt(crypt_buf, &len, (char *)key.m_buf(), key.length(), mode);
-  }
-  else {
-    rv =  AES_Encrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length(), mode);
-  }
-
+  rv =  AES_Encrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length(), mode);
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = rv;
     err << clear << "File header crypt error " << AES_err_string(rv);
@@ -413,7 +400,7 @@ int FCryptCache::TestVersion(CryptFileHdr hdr, gxUINT32 &version)
   return 1;
 }
 
-int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT32 &version)
+int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUINT32 &version)
 {
   err.Clear();
   filename.Clear();
@@ -426,11 +413,11 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT
   if(!cache) {
     ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
-    cp.password.Clear(1);
+    cp.secret.Clear(1);
     return 0;
   }
 
-  cp.password = password; 
+  cp.secret = secret; 
   if(!OpenInputFile(fname)) return 0;
 
   if(infile.df_Length() < (sizeof(gxUINT32)*4)) {
@@ -439,14 +426,9 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT
     return 0;
   }
 
-  if(use_key) {
-    memmove(aesdb.b.secret, key.m_buf(), key.length());
-    aesdb.b.secret_len = key.length();
-  }
-  else {
-    memmove(aesdb.b.secret, password.c_str(), password.length());
-    aesdb.b.secret_len = password.length();
-  }
+  
+  memmove(aesdb.b.secret, secret.m_buf(), secret.length());
+  aesdb.b.secret_len = secret.length();
     
   // Read the encrypted file header
   unsigned read_len = AES_MAX_INPUT_BUF_LEN + AES_file_enctryption_overhead();
@@ -461,13 +443,7 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT
   }
   unsigned len = infile.df_gcount();
 
-  if(use_key) {
-    rv =  AES_Decrypt(crypt_buf, &len, (char *)key.m_buf(), key.length());
-  }
-  else {
-    rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length());
-  }
-
+  rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length());
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
@@ -545,19 +521,19 @@ int FCryptCache::DecryptFile(const char *fname, const gxString &password, gxUINT
       ERROR_LEVEL = -1;
       err << clear << "Error decrypting " << filename;
     }
-    cp.password.Clear(1);
+    cp.secret.Clear(1);
     CloseInputFile();
     return 0;
   }
 
   Flush(); // Ensure all the buckets a written to the output device
-  cp.password.Clear(1);
+  cp.secret.Clear(1);
   CloseOutputFile();
   CloseInputFile();
   return 1;
 }
 
-int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &password,
+int FCryptCache::DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &secret,
 					gxUINT32 &version, gxString &crypt_file_name)
 {
   err.Clear();
@@ -573,11 +549,11 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &passw
   if(!cache) {
     ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
-    cp.password.Clear(1);
+    cp.secret.Clear(1);
     return 0;
   }
 
-  cp.password = password; 
+  cp.secret = secret; 
   if(!OpenInputFile(fname)) return 0;
 
   if(infile.df_Length() < (sizeof(gxUINT32)*4)) {
@@ -586,14 +562,8 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &passw
     return 0;
   }
 
-  if(use_key) {
-    memmove(aesdb.b.secret, key.m_buf(), key.length());
-    aesdb.b.secret_len = key.length();
-  }
-  else {
-    memmove(aesdb.b.secret, password.c_str(), password.length());
-    aesdb.b.secret_len = password.length();
-  }
+  memmove(aesdb.b.secret, secret.m_buf(), secret.length());
+  aesdb.b.secret_len = secret.length();
 
   // Read the encrypted file header
   unsigned read_len = AES_MAX_INPUT_BUF_LEN + AES_file_enctryption_overhead();
@@ -608,13 +578,7 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &passw
   }
   unsigned len = infile.df_gcount();
 
-  if(use_key) {
-    rv =  AES_Decrypt(crypt_buf, &len, (char *)key.m_buf(), key.length());
-  }
-  else {
-    rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.password.GetSPtr(), cp.password.length());
-  }
-  
+  rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length());
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
@@ -648,7 +612,7 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const gxString &passw
   // Set the unencrypted file name
   crypt_file_name.SetString(hdr.fname, hdr.name_len);
 
-  cp.password.Clear(1);
+  cp.secret.Clear(1);
   CloseInputFile();
   return 1;
 }
@@ -874,9 +838,13 @@ int cryptdb_getdircontents(gxString &path, gxString &err,
   return 1;
 }
 
+#include <iostream>
+
 int read_key_file(const char *fname, MemoryBuffer &key, gxString &err, int expected_key_len)
 // Read in key file contents to key object and return in reference. 
 {
+  key.Clear(1);
+  
   FILE *fp;
   fp = fopen(fname, "rb");
   if(!fp) {
@@ -885,29 +853,40 @@ int read_key_file(const char *fname, MemoryBuffer &key, gxString &err, int expec
   }
 
   char read_buf[1024];
-  unsigned bytes_read = fread((unsigned char *)read_buf, 1, sizeof(read_buf), fp);
-  if(bytes_read <= 0) {
-    fclose(fp);
-    err << clear << "Error reading from key file " << fname;
+  unsigned input_bytes_read = 0;
+  
+  while(!feof(fp)) {
+    memset(read_buf, 0, sizeof(read_buf));
+    input_bytes_read = fread((unsigned char *)read_buf, 1, sizeof(read_buf), fp);
+    if(input_bytes_read < 0) {
+      fclose(fp);
+      err << clear << "Error reading from key file " << fname;
+      return -1;
+    }
+    key.Cat(read_buf, input_bytes_read);
+  }
+  
+  memset(read_buf, 0, sizeof(read_buf));  
+  fclose(fp);
+
+  if(key.length() > AES_MAX_SECRET_LEN) {
+    err << clear << "Input key length long. Max key length is " << AES_MAX_SECRET_LEN << " input key len is " << key.length();
+    key.Clear(1);
     return -1;
   }
 
-  fclose(fp);
   
   if(expected_key_len > 0) {
-    if(expected_key_len < bytes_read) {
-      err << clear << "Bad input key length";
+    if(expected_key_len < key.length()) {
+      err << clear << "Bad input key length " << " expecting " << expected_key_len << " input key len is " << key.length();
+      key.Clear(1);
       return -1;
     }
   }
   
-  key.Clear();
-  key.Load(read_buf, bytes_read);
-
   return 0;
 }
 // ----------------------------------------------------------- // 
 // ------------------------------- //
 // --------- End of File --------- //
 // ------------------------------- //
-

@@ -56,7 +56,7 @@ gxString output_dir_name;
 int list_file_names = 0;
 int recurse = 0;
 int use_abs_path = 0;
-CryptPasswordHdr CommandLinePassword;
+CryptSecretHdr CommandLinePassword;
 int use_input_arg_secret = 0;
 int use_input_arg_key_file = 0;
 gxString input_arg_key_file;
@@ -97,7 +97,7 @@ void HelpMessage()
 int ProcessArgs(char *arg)
 {
   gxString sbuf;
-  CryptPasswordHdr cp;
+  CryptSecretHdr cp;
   gxString ebuf;
   
   switch(arg[1]) {
@@ -171,7 +171,7 @@ int ProcessArgs(char *arg)
       break;
 
     case 'p':
-      CommandLinePassword.password = arg+2;
+      CommandLinePassword.secret.Load(arg+2, strlen(arg+2));
       use_input_arg_secret = 1;
       break;
 
@@ -189,6 +189,7 @@ int ProcessArgs(char *arg)
 	cout << "\n" << flush;
 	return 0;
       }
+      CommandLinePassword.secret = key;
       use_input_arg_key_file  = 1;
       break;
       
@@ -213,7 +214,7 @@ int ExitMessage()
   return 1;
 }
 
-int ListFileNames(CryptPasswordHdr &cp) 
+int ListFileNames(CryptSecretHdr &cp) 
 {
   gxListNode<gxString> *ptr = file_list.GetHead();
   int err = 0;
@@ -223,11 +224,7 @@ int ListFileNames(CryptPasswordHdr &cp)
     gxString sbuf;
     gxUINT32 version;
     cout << "Encrypted name: " << ptr->data.c_str() << "\n" << flush;
-    if(use_input_arg_key_file) {
-      fc.use_key = 1;
-      fc.key = key;
-    }
-    if(!fc.DecryptOnlyTheFileName(ptr->data.c_str(), cp.password, version, sbuf)) {
+    if(!fc.DecryptOnlyTheFileName(ptr->data.c_str(), cp.secret, version, sbuf)) {
       cout << "File name decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
       err = ExitMessage();
@@ -254,6 +251,8 @@ int main(int argc, char **argv)
   InitLeakTest();
 #endif
 
+  AES_openssl_init();
+  
   // Set the program information
   clientcfg->executable_name = "fdecrypt";
   clientcfg->program_name = "File Decrypt";
@@ -339,24 +338,27 @@ int main(int argc, char **argv)
   DisplayVersion();
   cout << "\n" << flush;
 
-  CryptPasswordHdr cp;
-
+  CryptSecretHdr cp;
+  gxString password;
+  
   if(use_input_arg_key_file) {
     cout << "Using key file for encryption" << "\n" << flush;
   }
+  
+  if(CommandLinePassword.secret.is_null()) {
+    cout << "Password: " << flush;
+    if(!consoleGetString(password, 1)) {
+      password.Clear(1);
+      cout << "Invalid entry!" << "\n" << flush;
+      return 1;
+    }
+    cp.secret.Load(password.c_str(), password.length());
+    password.Clear(1);
+    cout << "\n" << flush;
+  }
   else {
-    if(CommandLinePassword.password.is_null()) {
-      cout << "Password: " << flush;
-      if(!consoleGetString(cp.password, 1)) {
-	cout << "Invalid entry!" << "\n" << flush;
-	return 1;
-      }
-      cout << "\n" << flush;
-    }
-    else {
-      cp.password = CommandLinePassword.password;
-      CommandLinePassword.Reset();
-    }
+    cp.secret = CommandLinePassword.secret;
+    CommandLinePassword.Reset();
   }
   
   // List the file names and return
@@ -374,11 +376,7 @@ int main(int argc, char **argv)
     gxUINT32 version;
     cout << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
 
-    if(use_input_arg_key_file) {
-      fc.use_key = 1;
-      fc.key = key;
-    }
-    if(!fc.DecryptFile(ptr->data.c_str(), cp.password, version)) { // If a key is set the password will be ignored
+    if(!fc.DecryptFile(ptr->data.c_str(), cp.secret, version)) {
       cout << "File decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
       err = ExitMessage();

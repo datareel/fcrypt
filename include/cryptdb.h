@@ -71,29 +71,29 @@ struct GXDLCODE_API CryptFileHdr
   char fname[256];  // Name of the file that was encrypted or DIR list
 };
 
-struct GXDLCODE_API CryptPasswordHdr
+struct GXDLCODE_API CryptSecretHdr
 {
-  CryptPasswordHdr() { }
-  ~CryptPasswordHdr() { Reset(); }
-  CryptPasswordHdr(const CryptPasswordHdr &ob) { Copy(ob); }
-  CryptPasswordHdr &operator=(const CryptPasswordHdr &ob) {
+  CryptSecretHdr() { }
+  ~CryptSecretHdr() { Reset(); }
+  CryptSecretHdr(const CryptSecretHdr &ob) { Copy(ob); }
+  CryptSecretHdr &operator=(const CryptSecretHdr &ob) {
     if(&ob == this) return *this;
     Copy(ob);
     return *this;
   }
 
   void Reset() {
-    password.Clear(1);
+    secret.Clear(1);
     cbuf.Clear(1);
   }
-  void Copy(const CryptPasswordHdr &ob) {
+  void Copy(const CryptSecretHdr &ob) {
     Reset();
-    password = ob.password;
+    secret = ob.secret;
     cbuf = ob.cbuf;
   }
 
-  gxString password;
-  gxString cbuf;
+  MemoryBuffer secret;
+  MemoryBuffer cbuf;
 };
 
 // Cached file encryption class
@@ -101,14 +101,14 @@ class GXDLCODE_API FCryptCache : public gxDeviceCache
 {
 public:
   FCryptCache(unsigned CacheSize = 1024);
-  ~FCryptCache() { key.Clear(1); }
+  ~FCryptCache() { }
 
 public: // Encrypt functions
-  int EncryptFile(const char *fname, const gxString &password);
+  int EncryptFile(const char *fname, const MemoryBuffer &secret);
 
 public: // Decrypt fucntions
-  int DecryptFile(const char *fname, const gxString &password, gxUINT32 &version);
-  int DecryptOnlyTheFileName(const char *fname, const gxString &password,
+  int DecryptFile(const char *fname, const MemoryBuffer &secret, gxUINT32 &version);
+  int DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &secret,
 			     gxUINT32 &version, gxString &crypt_file_name);
 
 public: // Helper functions
@@ -168,10 +168,8 @@ public:
   int ERROR_LEVEL;
   char mode;
   gxString err;
-  CryptPasswordHdr cp;
+  CryptSecretHdr cp;
   AESStreamCrypt aesdb;
-  MemoryBuffer key;
-  int use_key;
 };
 
 // Standalone functions

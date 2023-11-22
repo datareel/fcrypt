@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/18/2023
+// Date Last Modified: 11/20/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -48,7 +48,7 @@ const char *AES_err_strings[NUM_AES_ERRORS] =
   // NOTE: For security reasons all exceptions are represented by number error codes
  "Clib exception error code 55000", // AES_NO_ERROR
  "Clib exception error code 55001", // AES_INVALID_ERROR,
- "Clib exception error code 55002", // AES_ERROR_SECRET_LENGTH
+ "Clib exception error code 55002", // AES_ERROR_SECRET_MIN_LENGTH
  "Clib exception error code 55003", // AES_ERROR_OUT_OF_MEMORY
  "Clib exception error code 55004", // AES_ERROR_BAD_SECRET
  "Clib exception error code 55005", // AES_ERROR_AUTH_FAILED
@@ -82,6 +82,12 @@ const char *AES_err_strings[NUM_AES_ERRORS] =
  "Clib exception error code 55033", // AES_ERROR_SALT_INIT_FAILED
  "Clib exception error code 55034"  // AES_ERROR_NULL_POINTER
 };
+
+int AES_openssl_init()
+{
+  OpenSSL_add_all_algorithms();
+  return 0;
+}
 
 unsigned int AES_file_enctryption_overhead()
 {
@@ -121,7 +127,7 @@ int AES_derive_key(const unsigned char secret[], unsigned int secret_len,
 		   unsigned int key_iterations)
 // Derive the key and initialization vector from a secret and salt
 {
-  if(secret_len < AES_MIN_SECRET_LEN) return AES_ERROR_SECRET_LENGTH;
+  if(secret_len < AES_MIN_SECRET_LEN) return AES_ERROR_SECRET_MIN_LENGTH;
   if(salt_len > AES_MAX_SALT_LEN) return AES_ERROR_SALT_MAX_LENGTH;
   if(key_len > AES_MAX_KEY_LEN) return AES_ERROR_KEY_MAX_LENGTH; 
   if(iv_len > AES_MAX_IV_LEN) return AES_ERROR_KEY_MAX_LENGTH; 
@@ -336,9 +342,9 @@ int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
     *(buf_len) = len;
     return AES_NO_ERROR;
   }
-  
-  if(secret_len < 8) return AES_ERROR_SECRET_LENGTH;
-  if(secret_len > 128) return AES_ERROR_SECRET_MAX_LENGTH;
+
+  if(secret_len < AES_MIN_SECRET_LEN) return AES_ERROR_SECRET_MIN_LENGTH;
+  if(secret_len > AES_MAX_SECRET_LEN) return AES_ERROR_SECRET_MAX_LENGTH;
 
   // Make a copy of the plaintext contents current passed in the buf variable
   char *new_buf = new char[len];
@@ -470,8 +476,8 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
     return AES_NO_ERROR;
   }
   
-  if(secret_len < 8) return AES_ERROR_SECRET_LENGTH;
-  if(secret_len > 128) return AES_ERROR_SECRET_MAX_LENGTH;
+  if(secret_len < AES_MIN_SECRET_LEN) return AES_ERROR_SECRET_MIN_LENGTH;
+  if(secret_len > AES_MAX_SECRET_LEN) return AES_ERROR_SECRET_MAX_LENGTH;
   
    // Recover the salt
   if(*(buf_len) < SALT_len) {

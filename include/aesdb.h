@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/18/2023
+// Date Last Modified: 11/20/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -50,7 +50,7 @@ authenticate users.
 // Constants
 const unsigned int AES_DEF_ITERATIONS = 1000;
 const unsigned int AES_MIN_SECRET_LEN = 8;
-const unsigned int AES_MAX_SECRET_LEN = 128;
+const unsigned int AES_MAX_SECRET_LEN = 65536;
 const unsigned int AES_MIN_KEY_LEN = 32;
 const unsigned int AES_MAX_KEY_LEN = EVP_MAX_KEY_LENGTH;
 const unsigned int AES_MAX_IV_LEN = EVP_MAX_IV_LENGTH;
@@ -71,7 +71,7 @@ const unsigned int AES_MAX_INPUT_BUF_LEN = 768;
 enum {
   AES_NO_ERROR = 0,
   AES_INVALID_ERROR,
-  AES_ERROR_SECRET_LENGTH,
+  AES_ERROR_SECRET_MIN_LENGTH,
   AES_ERROR_OUT_OF_MEMORY,
   AES_ERROR_BAD_SECRET,
   AES_ERROR_AUTH_FAILED,
@@ -120,7 +120,7 @@ struct AES_buf_t { // AES encrypted/decrypted buffer type
   // data is being processed. 
   void Clear();
   
-  void Reset(int all = 0) { 
+  void Reset(int all = 0) {
     mode = -1; // Default to 256-bit encryption key
     key_iterations =  AES_DEF_ITERATIONS;
     if(all) Clear();
@@ -169,6 +169,7 @@ public:
 // Standalone functions
 const char *AES_err_string(int err); 
 unsigned int AES_file_enctryption_overhead();
+int AES_openssl_init();
 int AES_fillrand(unsigned char *buf, unsigned int len);
 int AES_derive_key(const unsigned char secret[], unsigned int secret_len,
 		   const unsigned char salt[], unsigned int salt_len,
