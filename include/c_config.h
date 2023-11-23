@@ -43,67 +43,9 @@ struct  ClientConfig {
   ~ClientConfig();
 
   // Helper functions
-  void set_dirs(const gxString &top_dir);
   void reset_all();
 
-  gxString client_name; // Hostname assigned to this client
-  gxString cfg_file;    // Name of client configuration file
   int verbose_mode;     // Enable console messages
-  int confirm_prompt;   // Confirm delete and remove operations
-  int more_prompt;      // Prompt user to continue for long lists
-
-  // Client DIRs
-  gxString home_dir;
-
-  // Client auth variables
-  gxString username; // User name client logged in with
-  MemoryBuffer password; // Encrypted password
-  gxClientStatsHeader user_profile; // User profile received from server
-
-  int is_open; // True is client is connect
-
-  // Client configuration variables
-  gxsPort_t smtp_port;   // Client's file system access port number
-  gxsPort_t ipc_port;  // Client's IPC port        
-
-  // Message display synchronization interface
-  gxMutex display_lock;     // Mutex object used to lock the display
-  gxCondition display_cond; // Condition variable used with the display lock
-  int display_is_locked;    // Display lock boolean predicate
-
-  // Logfile synchronization interface
-  gxMutex client_log_lock;
-  gxCondition client_log_cond;
-  int client_log_is_locked;
-
-  // Retry variables
-  int display_thread_retries;
-  int client_log_thread_retries;
-
-  // Client directories and files
-  gxString work_dir; 
-  gxString client_log_file;
-
-  // Logging variables
-  int log_client_messages;
-  LogFile *client_log;
-
-  // Control variables
-  int up2date; // Enable/disable cached copies
-  int stop_transfer; // Stop file uploads and downloads
- 
-  // Platform dependent variables
-  gxString path_sep;
-  char path_sepc;
-
-  // Timeout varaibles
-  int server_read_timeout; // Client side timeouts for server reads
-
-  // Auth Variables
-  gxWarningBanner banner;
-  gxAuthHeader auth_header;
-  int password_set;
-  int login_retries;
   
   // Program inforamtion
   gxString executable_name;
@@ -121,7 +63,7 @@ struct  ClientConfig {
   gxString support_email;
 
   // Command history
-  gxString history[gxOP_HISTORY_LEN];
+  gxString history[OP_HISTORY_LEN];
   int curr_command;
   int next_command;
   int prev_command;

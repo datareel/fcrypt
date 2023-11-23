@@ -428,7 +428,7 @@ int InteraciveMode()
     clientcfg->history[clientcfg->curr_command].FilterChar('\r');
     clientcfg->history[clientcfg->curr_command].FilterChar('\n');
     clientcfg->curr_command++;
-    if(clientcfg->curr_command > (gxOP_HISTORY_LEN-1)) {
+    if(clientcfg->curr_command > (OP_HISTORY_LEN-1)) {
       clientcfg->curr_command = 0;
     }
 
