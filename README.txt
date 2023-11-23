@@ -4,7 +4,20 @@ This source code is used to build the fcrypt and fecrypt utilities
 that are used to encrypt existing files using the AES CBC 256 bit
 encryption algorithm based on the OpenSSL implementation.
 
-To build the utilites for Linux:
+In the distribution example programs used for OpenSSL development and
+testing are under the following directory: 
+
+openssl_examples
+
+Example programs for the AES encryption routines are under the
+following directory: 
+
+aesdb_examples
+
+The fcrypt and fdecrypt programs provide a comprehensive symmetric
+encryption tool kit for encrypting and decrypting files.  
+
+To build the fcrypt and fdecrypt programs for Linux:
 
 $ mkdir -pv ${HOME}/git
 $ cd ${HOME}/git
