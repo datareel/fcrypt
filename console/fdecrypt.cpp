@@ -49,7 +49,7 @@ using namespace std; // Use unqualified names for Standard C++ library
 // Globals
 gxString debug_message;
 int debug_mode = 0;
-int num_buckets = 255;
+int num_buckets = 1024;
 gxList<gxString> file_list;
 int remove_src_file = 0;
 gxString output_dir_name;
@@ -61,6 +61,7 @@ int use_input_arg_secret = 0;
 int use_input_arg_key_file = 0;
 gxString input_arg_key_file;
 MemoryBuffer key;
+unsigned key_iterations =  AES_DEF_ITERATIONS;
 
 void DisplayVersion()
 {
@@ -85,13 +86,65 @@ void HelpMessage()
   cout << "          -c[num] = Specify number of cache buckets" << "\n" << flush;
   cout << "          -d[name] = Specify output DIR for enc file(s)" << "\n" << flush;
   cout << "          -D[name] = Specify and make output DIR" << "\n" << flush;
-  cout << "          -k = Specify a key to use for decryption" << "\n" << flush;
+  cout << "          -k = Supply a key used to decrypt" << "\n" << flush;
   cout << "          -l = List output file name(s) in enc file(s)" << "\n" << flush;
-  cout << "          -p = Input a decrypt secret" << "\n" << flush;
+  cout << "          -p = Supply a password used to decrypt" << "\n" << flush;
   cout << "          -r = Remove encrypted source file" << "\n" << flush;
   cout << "          -R = Decrypt DIR including all files and subdirectories" << "\n" << flush;
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
+  cout << "\n" << flush;
+  cout << "          --iter=num to set the number of derived key iterations" << "\n" << flush;
   cout << "\n"; // End of list
+}
+
+int ProcessDashDashArg(gxString &arg)
+{
+  gxString sbuf, equal_arg;
+  int has_valid_args = 0;
+  
+  if(arg.Find("=") != -1) {
+    // Look for equal arguments
+    // --log-file="/var/log/my_service.log"
+    equal_arg = arg;
+    equal_arg.DeleteBeforeIncluding("=");
+    arg.DeleteAfterIncluding("=");
+    equal_arg.TrimLeading(' '); equal_arg.TrimTrailing(' ');
+    equal_arg.TrimLeading('\"'); equal_arg.TrimTrailing('\"');
+    equal_arg.TrimLeading('\''); equal_arg.TrimTrailing('\'');
+  }
+
+  arg.ToLower();
+
+  // Process all -- arguments here
+  if(arg == "help") {
+    HelpMessage();
+    return 0; // Signal program to exit
+  }
+  if(arg == "?") {
+    HelpMessage();
+    return 0; // Signal program to exit
+  }
+
+  if((arg == "version") || (arg == "ver")) {
+    DisplayVersion();
+    return 0; // Signal program to exit
+  }
+
+  if(arg == "iter") {
+    if(equal_arg.is_null()) {
+      cout << "ERROR: The --iter switch requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(equal_arg.Atoi() <= 0) {
+      cout << "ERROR: Invalid value passed to the --iter switch" << "\n" << flush;
+      return 0;
+    }
+    key_iterations = equal_arg.Atoi();
+    has_valid_args = 1;
+  }
+  
+  arg.Clear();
+  return has_valid_args;
 }
 
 int ProcessArgs(char *arg)
@@ -192,7 +245,14 @@ int ProcessArgs(char *arg)
       CommandLinePassword.secret = key;
       use_input_arg_key_file  = 1;
       break;
-      
+
+    case '-':
+      sbuf = arg+2; 
+      // Add all -- prepend filters here
+      sbuf.TrimLeading('-');
+      if(!ProcessDashDashArg(sbuf)) return 0;
+      break;
+
     default:
       cout << "\n" << flush;
       cout << "Unknown switch " << arg << "\n" << flush;
@@ -217,24 +277,24 @@ int ExitMessage()
 int ListFileNames(CryptSecretHdr &cp) 
 {
   gxListNode<gxString> *ptr = file_list.GetHead();
-  int err = 0;
 
   while(ptr) {
     FCryptCache fc(num_buckets);
+    fc.key_iterations = key_iterations;
     gxString sbuf;
     gxUINT32 version;
     cout << "Encrypted name: " << ptr->data.c_str() << "\n" << flush;
     if(!fc.DecryptOnlyTheFileName(ptr->data.c_str(), cp.secret, version, sbuf)) {
       cout << "File name decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
-      err = ExitMessage();
+      ExitMessage();
       ptr = ptr->next;
       continue;
     }
     if(fc.ERROR_LEVEL != 0) { // Check the ERROR level from the file caching ops
       cout << "File decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
-      err = ExitMessage();
+      ExitMessage();
       ptr = ptr->next;
       continue;
     }
@@ -268,7 +328,7 @@ int main(int argc, char **argv)
   char *arg = argv[narg = 1];
   gxString fn;
   int num_files = 0;
-  int rv, err;
+  int err;
   gxString err_str;
   int num_dirs = 0;
 
@@ -365,10 +425,11 @@ int main(int argc, char **argv)
   if(list_file_names) return ListFileNames(cp);
 
   gxListNode<gxString> *ptr = file_list.GetHead();
-  rv = err = 0;
+  err = 0;
 
   while(ptr) {
     FCryptCache fc(num_buckets);
+    fc.key_iterations = key_iterations;
     if(!output_dir_name.is_null()) {
       fc.SetDir(output_dir_name.c_str());
     }

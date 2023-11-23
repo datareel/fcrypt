@@ -179,15 +179,15 @@ int AES_derive_key(const unsigned char secret[], unsigned int secret_len,
 int AES_HMAC(const unsigned char key[], unsigned int key_len,
 	     const unsigned char data[], unsigned int data_len,
 	     unsigned char hash[], unsigned int hash_len);
-int AES_encrypt(const unsigned char key[], const unsigned char iv[],
-		const unsigned char plaintext[], unsigned int plaintext_len, 
-		unsigned char ciphertext[], unsigned int ciphertext_len,
-		unsigned *encrypted_data_len,
-		int cipher_block_size = AES_CBC_BLOCK_SIZE);
-int AES_decrypt(const unsigned char key[], const unsigned char iv[],
-		const unsigned char ciphertext[], unsigned int ciphertext_len,
-		unsigned char plaintext[], unsigned int plaintext_len, 
-		unsigned *unencrypted_data_len);
+int AES_256_CBC_encrypt(const unsigned char key[], const unsigned char iv[],
+			const unsigned char plaintext[], unsigned int plaintext_len, 
+			unsigned char ciphertext[], unsigned int ciphertext_len,
+			unsigned *encrypted_data_len,
+			int cipher_block_size = AES_CBC_BLOCK_SIZE);
+int AES_256_CBC_decrypt(const unsigned char key[], const unsigned char iv[],
+			const unsigned char ciphertext[], unsigned int ciphertext_len,
+			unsigned char plaintext[], unsigned int plaintext_len, 
+			unsigned *unencrypted_data_len);
 int AES_init_salt(unsigned char *salt, unsigned int salt_len);
 int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], unsigned secret_len,
 		unsigned char SALT[], unsigned int SALT_len,
@@ -205,8 +205,10 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 		unsigned char IV[], unsigned int IV_len,
 		unsigned char VERIFIER[], unsigned VERIFIER_len,
 		unsigned char r_HMAC[], unsigned r_HMAC_len,
+		int mode = -1,
 		unsigned int key_iterations = AES_DEF_ITERATIONS);
 int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], unsigned secret_len,
+		int mode = -1,
 		unsigned int key_iterations = AES_DEF_ITERATIONS);
 int AES_encrypt_buf(AES_buf_t *b);
 int AES_decrypt_buf(AES_buf_t *b);

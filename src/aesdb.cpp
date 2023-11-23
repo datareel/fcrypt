@@ -180,11 +180,11 @@ int AES_HMAC(const unsigned char key[], unsigned int key_len,
   return AES_NO_ERROR;
 }
 
-int AES_encrypt(const unsigned char key[], const unsigned char iv[],
-		const unsigned char plaintext[], unsigned int plaintext_len, 
-		unsigned char ciphertext[], unsigned int ciphertext_len,
-		unsigned *encrypted_data_len,
-		int cipher_block_size)
+int AES_256_CBC_encrypt(const unsigned char key[], const unsigned char iv[],
+			const unsigned char plaintext[], unsigned int plaintext_len, 
+			unsigned char ciphertext[], unsigned int ciphertext_len,
+			unsigned *encrypted_data_len,
+			int cipher_block_size)
 {
   if(plaintext_len == 0) return AES_NO_ERROR;
 
@@ -243,10 +243,10 @@ int AES_encrypt(const unsigned char key[], const unsigned char iv[],
   return AES_NO_ERROR;
 }
 
-int AES_decrypt(const unsigned char key[], const unsigned char iv[],
-		const unsigned char ciphertext[], unsigned int ciphertext_len,
-		unsigned char plaintext[], unsigned int plaintext_len, 
-		unsigned *unencrypted_data_len)
+int AES_256_CBC_decrypt(const unsigned char key[], const unsigned char iv[],
+			const unsigned char ciphertext[], unsigned int ciphertext_len,
+			unsigned char plaintext[], unsigned int plaintext_len, 
+			unsigned *unencrypted_data_len)
 {
   if(ciphertext_len == 0) return AES_NO_ERROR;
 
@@ -326,8 +326,9 @@ int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
   // HMAC     = 32 bytes
   
   // Mode 0 = Plain text, no encryption (debugging only)
-  // All others using = 256-bit AES
-  
+  // For now all others using = 256-bit AES
+  // Other cipher modes will be added in the future
+
   unsigned len = *(buf_len);
   if(len == 0) return AES_NO_ERROR;
 
@@ -335,11 +336,6 @@ int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
   AES_fillrand(MODE, sizeof(MODE));
 
   if(mode == 0) { // Signal non-encrypted buffer and return
-    memset(MODE, 0, sizeof(MODE));
-    memmove((buf+sizeof(MODE)), buf, len);
-    memmove(buf, MODE, sizeof(MODE));
-    len+=sizeof(MODE);
-    *(buf_len) = len;
     return AES_NO_ERROR;
   }
 
@@ -377,7 +373,7 @@ int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 
   unsigned encrypted_data_len = 0;
   unsigned char ciphertext[AES_CIPHERTEXT_BUF_SIZE];
-  rv = AES_encrypt(KEY, IV, (const unsigned char*)new_buf, len, ciphertext, sizeof(ciphertext), &encrypted_data_len);
+  rv = AES_256_CBC_encrypt(KEY, IV, (const unsigned char*)new_buf, len, ciphertext, sizeof(ciphertext), &encrypted_data_len);
   if(rv != AES_NO_ERROR) {
     delete new_buf;
     return rv;
@@ -438,6 +434,7 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 		unsigned char IV[], unsigned int IV_len,
 		unsigned char VERIFIER[], unsigned VERIFIER_len,
 		unsigned char r_HMAC[], unsigned r_HMAC_len,
+		int mode,
 		unsigned int key_iterations)
 // Decrypt a specified buffer of size "buf_len" with a secret key/password/passphrase
 // ranging from 8 bytes to 128 bytes. Returns 0 if successful or a non-zero value to
@@ -446,7 +443,11 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
   unsigned len = *(buf_len);
   if(len == 0) return AES_NO_ERROR;
 
-  
+  // Check the mode setting passed to this function
+  if(mode == 0) { // Signal non-encrypted buffer and return
+    return AES_NO_ERROR;
+  }
+
   unsigned char MODE[AES_MAX_MODE_LEN];
   unsigned char r_MODE[AES_MAX_MODE_LEN]; // Recovered mode
   unsigned char HMAC[AES_MAX_HMAC_LEN];
@@ -466,6 +467,7 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
   memmove(r_MODE, buf, sizeof(r_MODE));
   offset += sizeof(r_MODE);
 
+  // Read the mode setting for this encrypted block 
   // Mode 0 = Plain text, no encryption (debugging only)
   // All others using = 256-bit AES
   memset(MODE, 0, sizeof(MODE)); // Check for mode 0
@@ -486,7 +488,7 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
   memmove(SALT, (buf+offset), SALT_len);
   offset += SALT_len;
 
-  rv = AES_derive_key((unsigned char *)secret, secret_len, SALT, SALT_len, KEY, KEY_len, IV, IV_len);
+  rv = AES_derive_key((unsigned char *)secret, secret_len, SALT, SALT_len, KEY, KEY_len, IV, IV_len, key_iterations);
   if(rv != AES_NO_ERROR) {
     return rv;
   }
@@ -518,7 +520,7 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
  
   unsigned char plaintext[AES_PLAINTEXT_BUF_SIZE];
   unsigned unencrypted_data_len = 0;
-  rv = AES_decrypt(KEY, IV, (const unsigned char*)new_buf, len, plaintext, sizeof(plaintext), &unencrypted_data_len);
+  rv = AES_256_CBC_decrypt(KEY, IV, (const unsigned char*)new_buf, len, plaintext, sizeof(plaintext), &unencrypted_data_len);
   if(rv != AES_NO_ERROR) {
     delete new_buf;
     return rv;
@@ -545,7 +547,7 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 }
 
 int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], unsigned secret_len,
-		unsigned int key_iterations)
+		int mode, unsigned int key_iterations)
 // Decrypt a specified buffer of size "buf_len" with a secret key/password/passphrase
 // ranging from 8 bytes to 128 bytes. Returns 0 if successful or a non-zero value to
 // indicate an error condition.
@@ -562,6 +564,7 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 		       IV, sizeof(IV),
 		       VERIFIER, sizeof(VERIFIER),
 		       HMAC, sizeof(HMAC),
+		       mode,
 		       key_iterations);
 
   // Clear all buffers and return
@@ -599,6 +602,7 @@ int AES_decrypt_buf(AES_buf_t *b)
 		       b->iv, sizeof(b->iv),
 		       b->verifier, sizeof(b->verifier),
 		       b->hmac, sizeof(b->hmac),
+		       b->mode,
 		       b->key_iterations);
   b->buf_len = buf_len;
   return rv;
@@ -628,6 +632,7 @@ int AES_decrypt_buf(AES_buf_t *b, void *buf, unsigned int *buf_len)
 		       b->iv, sizeof(b->iv),
 		       b->verifier, sizeof(b->verifier),
 		       b->hmac, sizeof(b->hmac),
+		       b->mode,
 		       b->key_iterations);
   return rv;
 }

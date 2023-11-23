@@ -46,6 +46,7 @@ FCryptCache::FCryptCache(unsigned CacheSize) : cache(CacheSize)
   buf_size = 1024;
   overwrite = 0;
   mode = 3;
+  key_iterations =  AES_DEF_ITERATIONS;
   en_dot_ext = ".enc";
   bytes_wrote = (FAU_t)0;
   bytes_read = (FAU_t)0;
@@ -91,8 +92,6 @@ void FCryptCache::Read(void *buf, unsigned Bytes, gxDeviceTypes dev)
   }
 }
 
-int count = 0;
-
 void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev) 
 {
   int rv = AES_NO_ERROR;
@@ -105,6 +104,9 @@ void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev)
 
   unsigned buf_len;
   unsigned i;
+
+  aesdb.b.mode = mode;
+  aesdb.b.key_iterations  = key_iterations;
   
   // Encrypt the file buffer
   memmove(fbuf, buf, Bytes);
@@ -200,8 +202,6 @@ int FCryptCache::LoadFile(gxDeviceCachePtr p)
   
   unsigned read_len = AES_MAX_INPUT_BUF_LEN;
   if(crypt_stream == 0) read_len += AES_file_enctryption_overhead();
-
-  //  infile.df_Rewind();
 
   while(!infile.df_EOF()) {
     if(infile.df_Read(read_buf, read_len) != DiskFileB::df_NO_ERROR) {
@@ -355,7 +355,16 @@ int FCryptCache::OpenOutputFile()
   char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
   memmove(crypt_buf, enc_header, sizeof(enc_header));
 
-  rv =  AES_Encrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length(), mode);
+  int crypt_mode = -1;
+  if(mode == 0) {
+    // If mode 0 is used for testing we will still encrypt the file header 
+    crypt_mode = -1;
+  }
+  else {
+    crypt_mode = mode;
+  }
+  
+  rv =  AES_Encrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length(), crypt_mode, key_iterations);
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = rv;
     err << clear << "File header crypt error " << AES_err_string(rv);
@@ -425,7 +434,6 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
     err << clear << "Bad file length";
     return 0;
   }
-
   
   memmove(aesdb.b.secret, secret.m_buf(), secret.length());
   aesdb.b.secret_len = secret.length();
@@ -443,7 +451,7 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
   }
   unsigned len = infile.df_gcount();
 
-  rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length());
+  rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length(), mode, key_iterations);
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
@@ -578,7 +586,7 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &s
   }
   unsigned len = infile.df_gcount();
 
-  rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length());
+  rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length(), mode, key_iterations);
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
@@ -837,8 +845,6 @@ int cryptdb_getdircontents(gxString &path, gxString &err,
   }
   return 1;
 }
-
-#include <iostream>
 
 int read_key_file(const char *fname, MemoryBuffer &key, gxString &err, int expected_key_len)
 // Read in key file contents to key object and return in reference. 

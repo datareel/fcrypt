@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/19/2023
+// Date Last Modified: 11/22/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -54,10 +54,10 @@ using namespace std; // Use unqualified names for Standard C++ library
 // Constants
 
 // Globals
-int buf_size = 1024;
-int num_buckets = 255;
+int num_buckets = 1024;
 int overwrite = 0;
-char mode = 3;
+int mode = -1;
+unsigned key_iterations =  AES_DEF_ITERATIONS;
 int remove_src_file = 0;
 gxList<gxString> file_list;
 gxString en_dot_ext(".enc");
@@ -79,12 +79,13 @@ int CryptFile();
 int ChangeDir(gxString &path, int prompt);
 int LPWD();
 int ListSystemDir(gxString &path, char sort_by = 'n');
-int SetBufSize(int intbuf = -1);
 int SetCacheBuckets(int intbuf = -1);
 int SetDotExtension(gxString &ext);
 int SetOutputDir(gxString &dir);
 int SetEncLevel(int intbuf = -1);
 void ShowOptions();
+int SetKey();
+int SetKeyIterations(int intbuf = 1000);
 // ----------------------------------------------------------- // 
 
 void PausePrg()
@@ -132,14 +133,66 @@ void HelpMessage()
   cout << "          -D[name] = Specify and make output DIR" << "\n" << flush;
   cout << "          -f[name] = Specify output file and DIR name" << "\n" << flush;
   cout << "          -g = Generate hashed output file names" << "\n" << flush;
-  cout << "          -k = Specify a key to use for encryption" << "\n" << flush;
+  cout << "          -k = Supply a key used to encrypt" << "\n" << flush;
   cout << "          -o = Overwrite existing enc file(s)" << "\n" << flush;
-  cout << "          -p = Input a encrypt secret" << "\n" << flush;
+  cout << "          -p = Supply a password used to encrypt" << "\n" << flush;
   cout << "          -r = Remove unencrypted source file(s)" << "\n" << flush;
   cout << "          -R = Encrypt DIR including all files and subdirectories" << "\n" << flush;
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "          -x[ext] = Specify enc file(s) dot extension" << "\n" << flush;
+  cout << "\n" << flush;
+  cout << "          --iter=num to set the number of derived key iterations" << "\n" << flush;
   cout << "\n"; // End of list
+}
+
+int ProcessDashDashArg(gxString &arg)
+{
+  gxString sbuf, equal_arg;
+  int has_valid_args = 0;
+  
+  if(arg.Find("=") != -1) {
+    // Look for equal arguments
+    // --log-file="/var/log/my_service.log"
+    equal_arg = arg;
+    equal_arg.DeleteBeforeIncluding("=");
+    arg.DeleteAfterIncluding("=");
+    equal_arg.TrimLeading(' '); equal_arg.TrimTrailing(' ');
+    equal_arg.TrimLeading('\"'); equal_arg.TrimTrailing('\"');
+    equal_arg.TrimLeading('\''); equal_arg.TrimTrailing('\'');
+  }
+
+  arg.ToLower();
+
+  // Process all -- arguments here
+  if(arg == "help") {
+    HelpMessage();
+    return 0; // Signal program to exit
+  }
+  if(arg == "?") {
+    HelpMessage();
+    return 0; // Signal program to exit
+  }
+
+  if((arg == "version") || (arg == "ver")) {
+    DisplayVersion();
+    return 0; // Signal program to exit
+  }
+
+  if(arg == "iter") {
+    if(equal_arg.is_null()) {
+      cout << "ERROR: The --iter switch requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(equal_arg.Atoi() <= 0) {
+      cout << "ERROR: Invalid value passed to the --iter switch" << "\n" << flush;
+      return 0;
+    }
+    key_iterations = equal_arg.Atoi();
+    has_valid_args = 1;
+  }
+
+  arg.Clear();
+  return has_valid_args;
 }
 
 int ProcessArgs(char *arg)
@@ -147,17 +200,6 @@ int ProcessArgs(char *arg)
   gxString sbuf;
   gxString ebuf;
   switch(arg[1]) {
-    case 'b':
-      buf_size = (gxsPort_t)atoi(arg+2); 
-      if((buf_size < 255) || (buf_size > 65535)) {
-	cout << "\n" << flush;
-	cout << "Bad buffer size specified" << "\n" << flush;
-	cout << "Valid range = 255 to 65535 bytes" << "\n" << flush;
-	cout << "\n" << flush;
-	return 0;
-      }
-      break;
-
     case 'c':
       num_buckets = (gxsPort_t)atoi(arg+2); 
       if((num_buckets < 1) || (num_buckets > 65535)) {
@@ -272,6 +314,13 @@ int ProcessArgs(char *arg)
       HelpMessage();
       return 0;
 
+    case '-':
+      sbuf = arg+2; 
+      // Add all -- prepend filters here
+      sbuf.TrimLeading('-');
+      if(!ProcessDashDashArg(sbuf)) return 0;
+      break;
+      
     default:
       cout << "\n" << flush;
       cout << "Unknown switch " << arg << "\n" << flush;
@@ -288,16 +337,16 @@ void PrgMenu()
 {
   const int num_menu = 24;
   const char *menu[num_menu] = {
-    "buf      Set buffer size",
     "cache    Set cache buckets",
     "cd       Change DIR",
     "clear    Clear screen",
     "crypt    Encrypt file",
-    "crypt -r Encrypt DIR", 
     "date     Display date/time",
     "ext      Set dot extension",
     "hash     Hashed outfile names",
     "help     Print help menu",
+    "iter     Set new key iterations",
+    "key      Use key file to encrypt",
     "level    Set encryption level",
     "ls       list files by name",
     "ls -d    list files by date",
@@ -391,16 +440,6 @@ int InteraciveMode()
     if((command == "quit") || (command == "exit") || (command == "bye")) {
       break; // Exit the program
     }
-    if(command == "buf") {
-      intbuf = -1;
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	intbuf = input.Atoi();
-      }
-      SetBufSize(intbuf);
-      continue;
-    }
     if(command == "cache") {
       intbuf = -1;
       if(input.Find(" ") != -1) {
@@ -432,10 +471,6 @@ int InteraciveMode()
       CryptFile();
       continue;
     }
-    if(command == "crypt-r") {
-      // CryptFile();
-      continue;
-    }
     if(command == "date") {
       consoleDateTime();
       continue;
@@ -465,6 +500,10 @@ int InteraciveMode()
       }
       continue;
     }
+    if(command == "key") {
+      SetKey();
+      continue;
+    }
     if(command == "level") {
       intbuf = -1;
       if(input.Find(" ") != -1) {
@@ -475,6 +514,17 @@ int InteraciveMode()
       SetEncLevel(intbuf);
       continue;
     }
+    if(command == "iter") {
+      intbuf = -1;
+      if(input.Find(" ") != -1) {
+	input.TrimTrailingSpaces();
+	input.DeleteBeforeIncluding(" ");
+	intbuf = input.Atoi();
+      }
+      SetKeyIterations(intbuf);
+      continue;
+    }
+
     if((command == "ls") || (command == "dir")) {
       fdnames.Clear();
       if(input.Find(" ") != -1) {
@@ -775,8 +825,8 @@ int main(int argc, char **argv)
   while(ptr) {
     FCryptCache fc(num_buckets);
     fc.mode = mode;
+    fc.key_iterations = key_iterations;
     fc.SetOverWrite(overwrite);
-    fc.SetBufSize(buf_size);
     fc.SetDotExt(en_dot_ext.c_str());
     if(!output_dir_name.is_null()) {
       fc.SetDir(output_dir_name.c_str());
@@ -791,14 +841,19 @@ int main(int argc, char **argv)
 
     if(clientcfg->verbose_mode) {
       cout << "Encrypting:      " << ptr->data.c_str() << "\n" << flush;
-      cout << "Encryption mode: " << (int)mode << "\n" << flush;
-      cout << "Buffer size:     " << buf_size << "\n" << flush;
+      if(mode == -1 || mode == 3) {
+	cout << "Encryption mode: " << "AES 256 CBC" << "\n" << flush;
+      }
+      else {
+	cout << "Encryption mode: " << mode << "\n" << flush;
+      }
+      cout << "Key iterations:  " << key_iterations << "\n" << flush;
       cout << "Cache buckets:   " << num_buckets << "\n" << flush;
     }
     else {
       cout << "Encrypting: " << ptr->data.c_str() << "\n" << flush;
     }
-    if(mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
+    if(fc.mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
 
     rv = fc.EncryptFile(ptr->data.c_str(), cp.secret);
     cp = tmp_cp;
@@ -904,8 +959,8 @@ int CryptFile()
     
   FCryptCache fc(num_buckets);
   fc.mode = mode;
+  fc.key_iterations = key_iterations;
   fc.SetOverWrite(overwrite);
-  fc.SetBufSize(buf_size);
   fc.SetDotExt(en_dot_ext.c_str());
   if(!output_dir_name.is_null()) {
     fc.SetDir(output_dir_name.c_str());
@@ -920,8 +975,13 @@ int CryptFile()
 
   if(clientcfg->verbose_mode) {
     cout << "Encrypting:      " << fname.c_str() << "\n" << flush;
-    cout << "Encryption mode: " << (int)mode << "\n" << flush;
-    cout << "Buffer size:     " << buf_size << "\n" << flush;
+    if(mode == -1 || mode == 3) {
+      cout << "Encryption mode: " << "AES 256 CBC" << "\n" << flush;
+    }
+    else {
+      cout << "Encryption mode: " << mode << "\n" << flush;
+    }
+    cout << "Key iterations:  " << key_iterations << "\n" << flush;
     cout << "Cache buckets:   " << num_buckets << "\n" << flush;
   }
   else {
@@ -980,6 +1040,38 @@ int ChangeDir(gxString &path, int prompt)
 
   cout << "\n" << flush;
   cout << "Changed directory to: " << path.c_str() << "\n" << flush;
+  return 1;
+}
+
+int SetKey()
+{
+  gxString fname, ebuf;
+  cout << "\n" << flush;
+  cout << "Key file name: " << flush;
+  if(!consoleGetString(fname)) {
+    cout << "Invalid entry!" << "\n" << flush;
+    return  0;
+  }
+  cout << "\n" << flush;
+  if(fname.is_null()) {
+    cout << "No file name was entered" << "\n" << flush;
+    return  0;
+  }
+  if(!futils_exists(fname.c_str())) {
+    cout << "\n" << flush;
+    cout << "ERROR: Key file " << fname.c_str() << " does not exist" <<  "\n" << flush;
+    cout << "\n" << flush;
+    return 0;
+  }
+  if(read_key_file(fname.c_str(), key, ebuf) != 0) {
+    cout << "\n" << flush;
+    cout << "ERROR: " << ebuf.c_str() << "\n" << flush;
+    cout << "\n" << flush;
+    return 0;
+  }
+  CommandLinePassword.secret = key;
+  use_input_arg_key_file  = 1;
+
   return 1;
 }
 
@@ -1129,29 +1221,6 @@ int ListSystemDir(gxString &path, char sort_by)
   return 1;
 }
 
-int SetBufSize(int intbuf)
-{
-  if(intbuf == -1) {
-    gxString intstr;
-    cout << "\n" << flush;
-    cout << "Enter new buffer size (255-65535)> " << flush;
-    if(!consoleGetString(intstr)) {
-      cout << "\n" << flush;
-      cout << "Invalid entry!" << "\n" << flush;
-      return  0;
-    }
-    intbuf = intstr.Atoi();
-  }
-  if((intbuf < 255) || (intbuf > 65535)) {
-    cout << "\n" << flush;
-    cout << "Bad buffer size specified" << "\n" << flush;
-    cout << "Valid range = 255 to 65535 bytes" << "\n" << flush;
-    return 0;
-  }
-  buf_size = intbuf;
-  return 1;
-}
-
 int SetCacheBuckets(int intbuf)
 {
   if(intbuf == -1) {
@@ -1238,22 +1307,39 @@ int SetEncLevel(int intbuf)
     }
     intbuf = intstr.Atoi();
   }
-  if(intbuf == 128) {
-    mode = 1;
-  }
-  else if(intbuf == 192) {
-    mode = 2;
-  }
-  else if(intbuf == 256) {
+  if(intbuf == 256) {
     mode = 3;
   }
   else {
     cout << "\n" << flush;
     cout << "Bad encryption level specified" << "\n" << flush;
-    cout << "Valid levels are 128, 192, or 256" << "\n" << flush;
+    cout << "Valid levels are 256" << "\n" << flush;
     return 0;
   }
 
+  return 1;
+}
+
+int SetKeyIterations(int intbuf)
+{
+  if(intbuf == -1) {
+    gxString intstr;
+    cout << "\n" << flush;
+    cout << "Enter new key iterations value> " << flush;
+    if(!consoleGetString(intstr)) {
+      cout << "\n" << flush;
+      cout << "Invalid entry!" << "\n" << flush;
+      return  0;
+    }
+    intbuf = intstr.Atoi();
+  }
+  if(intbuf <= 0) {
+    cout << "\n" << flush;
+    cout << "Bad key iterations value specified" << "\n" << flush;
+    return 0;
+  }
+
+  key_iterations = intbuf;
   return 1;
 }
 
@@ -1261,14 +1347,7 @@ void ShowOptions()
 {
   cout << "\n" << flush;
   cout << "\n" << flush;
-  cout << "Buffer size: " << buf_size << "\n" << flush;
   cout << "Cache buckets: " << num_buckets << "\n" << flush;
-  if(mode == 1) {
-    cout << "Encryption mode: 128-bit" << "\n" << flush;
-  }
-  if(mode == 2) {
-    cout << "Encryption mode: 192-bit" << "\n" << flush;
-  }
   if(mode == 3) {
     cout << "Encryption mode: 256-bit" << "\n" << flush;
   }

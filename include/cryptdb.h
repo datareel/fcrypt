@@ -166,7 +166,8 @@ public: // Functions used to get the current device cache
 
 public:
   int ERROR_LEVEL;
-  char mode;
+  int mode;
+  unsigned key_iterations;
   gxString err;
   CryptSecretHdr cp;
   AESStreamCrypt aesdb;
