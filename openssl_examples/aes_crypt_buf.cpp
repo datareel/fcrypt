@@ -92,9 +92,6 @@ int main(int argc, char *argv[])
 
   unsigned char *ciphertext = new unsigned char[c_len];
   
-  unsigned encrypted_data_buf[DEF_BUF_SIZE + cipher_block_size];
-  memset(encrypted_data_buf, 0, (DEF_BUF_SIZE + cipher_block_size));
-
   cout << "cipher_block_size: " << cipher_block_size  << "\n";
   cout << "Crypt buf len: " << c_len << "\n";
   
