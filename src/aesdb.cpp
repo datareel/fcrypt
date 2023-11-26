@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/20/2023
+// Date Last Modified: 11/25/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -27,12 +27,7 @@ License along with this library; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  
 USA
 
-AES encryption and decryption routines.                                         
-AES encryption routes used encrypt/decrypt file buffers and memory              
-buffers.                                                                        
-AES encryption routes used create password file hashes.                         
-AES encryption routes used generate encryption certificates and                 
-authenticate users.       
+AES encryption and decryption routines.
 */
 // ----------------------------------------------------------- // 
 #include <aesdb.h>

@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/20/2023
+// Date Last Modified: 11/25/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -27,12 +27,11 @@ License along with this library; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  
 USA
 
-AES encryption and decryption routines.                                         
-AES encryption routes used encrypt/decrypt file buffers and memory              
-buffers.                                                                        
-AES encryption routes used create password file hashes.                         
-AES encryption routes used generate encryption certificates and                 
-authenticate users.       
+AES encryption and decryption routines.
+AES encryption routes used encrypt/decrypt file buffers and memory
+buffers.
+
+AES encryption routes used generate encryption certificates.
 */
 // ----------------------------------------------------------- //   
 #ifndef __AES_CRYPT_DB_HPP__
@@ -43,7 +42,6 @@ authenticate users.
 #include <openssl/aes.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
-#include <openssl/x509.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 
@@ -67,7 +65,7 @@ const unsigned int AES_MAX_MODE_LEN = 4;
 const unsigned int AES_INPUT_BUF_LEN = 512;
 const unsigned int AES_MAX_INPUT_BUF_LEN = 768;
 
-// Enmerations
+// Enumerations
 enum {
   AES_NO_ERROR = 0,
   AES_INVALID_ERROR,

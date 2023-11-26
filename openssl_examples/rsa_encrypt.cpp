@@ -281,5 +281,19 @@ int main()
   RSA_free(rsa_private);
   RSA_free(rsa_public);
 
+  std::cout << "Reading the passphrase protected private key without suppling the passphrase" << "\n";
+  fp = fopen(private_key2_fname,"rb");
+  if(!fp) {
+    std::cout << "Cannot open private key file " << private_key2_fname << "\n";
+    return -1;    
+  }
+  rsa_private = RSA_new() ;
+
+  rsa_private = PEM_read_RSAPrivateKey(fp, &rsa_private, 0, 0);
+  if(!rsa_private) return print_last_error();
+
+  fclose(fp);
+  RSA_free(rsa_private);
+  
   return 0;
 }
