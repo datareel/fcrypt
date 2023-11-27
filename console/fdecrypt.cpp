@@ -65,6 +65,12 @@ unsigned key_iterations =  AES_DEF_ITERATIONS;
 unsigned write_to_stdout = 0;
 gxString user_defined_output_file;
 unsigned use_ouput_file = 0;
+gxString private_rsa_key_file;
+int use_private_rsa_key = 0;
+unsigned char rsa_ciphertext[8192];
+unsigned rsa_chipertext_len;
+char private_key[RSA_max_keybuf_len];
+unsigned private_key_len = 0;
 
 void DisplayVersion()
 {
@@ -99,6 +105,7 @@ void HelpMessage()
   cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --outfile=fname (Write decrypt output to specified file name)" << "\n" << flush;
+  cout << "          --master-rsa-key=key.pem (Use a single RSA key for decryption" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -106,6 +113,7 @@ int ProcessDashDashArg(gxString &arg)
 {
   gxString sbuf, equal_arg;
   int has_valid_args = 0;
+  int rv = 0;
   
   if(arg.Find("=") != -1) {
     // Look for equal arguments
@@ -155,6 +163,30 @@ int ProcessDashDashArg(gxString &arg)
     }
     user_defined_output_file = equal_arg;
     use_ouput_file = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "master-rsa-key") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --master-rsa-key missing filename: --master-rsa-key=/$HOME/keys/rsa_key.pem" << "\n" << flush;
+      return 0;
+    }
+    private_rsa_key_file = equal_arg;
+    if(!futils_exists(private_rsa_key_file.c_str())) {
+	cerr << "\n" << flush;
+	cerr << "ERROR: Private RSA key file " << private_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cerr << "\n" << flush;
+	return 0;
+    }
+    rv = RSA_read_key_file(private_rsa_key_file.c_str(), private_key, sizeof(private_key), &private_key_len);
+    if(rv != RSA_NO_ERROR) {
+      cerr << "ERROR: " << RSA_err_string(rv) << "\n" << flush;
+      return 0;
+    }
+    unsigned char file_encryption_key[128];
+    AES_fillrand(file_encryption_key, sizeof(file_encryption_key));
+    key.Cat(file_encryption_key, sizeof(file_encryption_key));
+    CommandLinePassword.secret = key;
+    use_private_rsa_key = 1;
     has_valid_args = 1;
   }
 
@@ -423,7 +455,11 @@ int main(int argc, char **argv)
   gxString password;
   
   if(use_input_arg_key_file) {
-    cerr << "Using key file for encryption" << "\n" << flush;
+    cerr << "Using key file for decryption" << "\n" << flush;
+  }
+
+  if(use_private_rsa_key) {
+    cerr << "Using private RSA key file for decryption" << "\n" << flush;
   }
   
   if(CommandLinePassword.secret.is_null()) {
@@ -447,8 +483,49 @@ int main(int argc, char **argv)
 
   gxListNode<gxString> *ptr = file_list.GetHead();
   err = 0;
-
+  int rv = 0;
+  
   while(ptr) {
+    cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
+    
+    if(use_private_rsa_key) {
+      FILE *fp;
+      fp = fopen(ptr->data.c_str(), "rb");
+      if(!fp) {
+	cerr << "ERROR: Error opening file " << ptr->data.c_str() << "\n" << flush; ;
+	continue;
+      }
+      unsigned char read_buf[STATIC_DATA_AREA_SIZE];
+      unsigned input_bytes_read = 0;
+      memset(read_buf, 0, sizeof(read_buf));
+      input_bytes_read = fread((unsigned char *)read_buf, 1, sizeof(read_buf), fp);
+      if(input_bytes_read != STATIC_DATA_AREA_SIZE) {
+	fclose(fp);
+	cerr << "ERROR: Error reading data area blocks from file " << ptr->data.c_str() << "\n" << flush; ;
+	continue;
+      }
+      int offset = 0;
+      StaticDataBlockHdr static_data_block_header;
+      memmove(&static_data_block_header, read_buf, sizeof(static_data_block_header));
+      if(static_data_block_header.version != 2023102 && static_data_block_header.checkword != 0xFEFE) {
+	cerr << "ERROR: Invalid data block in file " << ptr->data.c_str() << "\n" << flush; ;
+	continue;
+      }
+      offset+=sizeof(static_data_block_header);
+      memmove(rsa_ciphertext, read_buf+offset, static_data_block_header.block_len);
+      unsigned decrypted_data_len = 0;
+      unsigned char rsa_decrypted_message[2048];
+      rv = RSA_private_key_decrypt((const unsigned char *)private_key, private_key_len,
+				   rsa_ciphertext, static_data_block_header.block_len,
+				   rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len);
+      if(rv != RSA_NO_ERROR) {
+	cerr << "ERROR: " << RSA_err_string(rv) << "\n" << flush; 
+	continue;
+      }
+      cp.secret.Clear(1);
+      cp.secret.Cat(rsa_decrypted_message, decrypted_data_len);
+    }
+
     FCryptCache fc(num_buckets);
     fc.key_iterations = key_iterations;
     if(!output_dir_name.is_null()) {
@@ -456,7 +533,6 @@ int main(int argc, char **argv)
     }
     gxString sbuf;
     gxUINT32 version;
-    cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
     int rv = 0;
 
     if(write_to_stdout) {

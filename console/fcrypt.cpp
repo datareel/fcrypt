@@ -71,6 +71,10 @@ int use_input_arg_secret = 0;
 int use_input_arg_key_file = 0;
 gxString input_arg_key_file;
 MemoryBuffer key;
+gxString public_rsa_key_file;
+int use_public_rsa_key = 0;
+unsigned char rsa_ciphertext[8192];
+unsigned rsa_chipertext_len;
 
 // ----------------------------------------------------------- // 
 // Interactive user function prototypes
@@ -141,7 +145,8 @@ void HelpMessage()
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "          -x[ext] = Specify enc file(s) dot extension" << "\n" << flush;
   cout << "\n" << flush;
-  cout << "          --iter=num to set the number of derived key iterations" << "\n" << flush;
+  cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
+  cout << "          --master-rsa-key=pubkey.pem (Use a single RSA key for encryption)" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -180,17 +185,33 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "iter") {
     if(equal_arg.is_null()) {
-      cout << "ERROR: The --iter switch requires an input argument" << "\n" << flush;
+      cout << "ERROR: --iter requires an input argument: --iter=10000" << "\n" << flush;
       return 0;
     }
     if(equal_arg.Atoi() <= 0) {
-      cout << "ERROR: Invalid value passed to the --iter switch" << "\n" << flush;
+      cout << "ERROR: Invalid value passed to --iter" << "\n" << flush;
       return 0;
     }
     key_iterations = equal_arg.Atoi();
     has_valid_args = 1;
   }
 
+  if(arg == "master-rsa-key") {
+    if(equal_arg.is_null()) {
+      cout << "ERROR: --master-rsa-key missing filename: --master-rsa-key=/$HOME/keys/rsa_pubkey.pem" << "\n" << flush;
+      return 0;
+    }
+    public_rsa_key_file = equal_arg;
+    if(!futils_exists(public_rsa_key_file.c_str())) {
+	cout << "\n" << flush;
+	cout << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cout << "\n" << flush;
+	return 0;
+    }
+    use_public_rsa_key = 1;
+    has_valid_args = 1;
+  }
+  
   arg.Clear();
   return has_valid_args;
 }
@@ -772,6 +793,35 @@ int main(int argc, char **argv)
     cout << "Using key file for encryption" << "\n" << flush;
   }
 
+  if(use_public_rsa_key) {
+    cout << "Using master RSA key file for encryption" << "\n" << flush;
+    RSA_openssl_init();
+    char public_key[RSA_max_keybuf_len];
+    unsigned public_key_len = 0;
+    rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len);
+    if(rv != RSA_NO_ERROR) {
+      std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
+      return 1;
+    }
+    if(CommandLinePassword.secret.is_null()) { // No AES file encryption key or password was provided by the caller 
+      // Generate a file encryption key that will be used for the AES encryption
+      unsigned char file_encryption_key[128];
+      AES_fillrand(file_encryption_key, sizeof(file_encryption_key));
+      key.Cat(file_encryption_key, sizeof(file_encryption_key));
+      CommandLinePassword.secret = key;
+    }
+    
+    memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
+
+    rv = RSA_public_key_encrypt((const unsigned char *)public_key, public_key_len,
+				CommandLinePassword.secret.m_buf(), CommandLinePassword.secret.length(),
+				rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_chipertext_len);
+    if(rv != RSA_NO_ERROR) {
+      std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
+      return 1;
+    }
+  }
+  
   if(CommandLinePassword.secret.is_null()) {
     cout << "Password: " << flush;
     if(!consoleGetString(password, 1)) {
@@ -821,9 +871,19 @@ int main(int argc, char **argv)
   gxListNode<gxString> *ptr = file_list.GetHead();
   tmp_cp = cp;
   rv = err = 0;
-
+  unsigned offset = 0;
+  
   while(ptr) {
     FCryptCache fc(num_buckets);
+    if(use_public_rsa_key) {
+      StaticDataBlockHdr static_data_block_header;
+      static_data_block_header.block_len = rsa_chipertext_len;
+      static_data_block_header.block_type = 1;
+      offset = 0;
+      memmove(fc.static_data, &static_data_block_header, sizeof(static_data_block_header));
+      offset+=sizeof(static_data_block_header);
+      memmove(fc.static_data+offset, rsa_ciphertext, rsa_chipertext_len);
+    }
     fc.mode = mode;
     fc.key_iterations = key_iterations;
     fc.SetOverWrite(overwrite);

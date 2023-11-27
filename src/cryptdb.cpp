@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/18/2023
+// Date Last Modified: 11/26/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -53,6 +53,7 @@ FCryptCache::FCryptCache(unsigned CacheSize) : cache(CacheSize)
   crypt_stream = 1;
   gen_file_names = 0;
   ERROR_LEVEL = 0;
+  AES_fillrand(static_data, sizeof(static_data));
 }
 
 void FCryptCache::GenFileNames()
@@ -344,10 +345,7 @@ int FCryptCache::OpenOutputFile()
     }
   }
 
-  // Adding a static data area
-  AES_fillrand(static_data, sizeof(static_data));
-  
-  // Adding a file header with meta data
+  // Setup the file header
   char enc_header[AES_MAX_INPUT_BUF_LEN];
   AES_fillrand((unsigned char *)enc_header, sizeof(enc_header));
  
@@ -393,6 +391,7 @@ int FCryptCache::OpenOutputFile()
     return 0;
   }
 
+  // Adding a static data area
   // Write the static data area to disk
   outfile.df_Write(static_data, sizeof(static_data));
   if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
@@ -403,7 +402,7 @@ int FCryptCache::OpenOutputFile()
   } 
   bytes_wrote += sizeof(static_data);
   
-  
+  // Adding a file header with meta data
   // Write the file header to disk
   outfile.df_Write(crypt_buf, len);
   if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
