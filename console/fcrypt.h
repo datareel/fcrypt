@@ -37,6 +37,10 @@ File encryption include file.
 
 #include "globals.h"
 #include "c_thread.h"
+#include "c_config.h"
+#include "cryptdb.h"
+#include "aesdb.h"
+#include "rsadb.h"
 
 #endif // __GX_FILE_CRYPT_HPP__
 // ----------------------------------------------------------- // 

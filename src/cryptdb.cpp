@@ -127,14 +127,27 @@ void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev)
     return;
   }
 
-  outfile.df_Write(fbuf, Bytes);
-  if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
-    ERROR_LEVEL = -1;
-    err << clear << "Fatal file buf write error " << ofname;
-    return;
-  } 
-  bytes_wrote += Bytes;
-
+  switch(dev) {
+    case gxDEVICE_DISK_FILE:
+      outfile.df_Write(fbuf, Bytes);
+      if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
+	ERROR_LEVEL = -1;
+	err << clear << "Fatal file buf write error " << ofname;
+	return;
+      } 
+      bytes_wrote += Bytes;
+      break;
+    case gxDEVICE_CONSOLE:
+      if(ofname == "stderr") {
+	std::cerr.write((char *)fbuf, Bytes);
+      }
+      else {
+	std::cout.write((char *)fbuf, Bytes);
+      }
+      bytes_wrote += Bytes;
+    default:
+      break;
+  }
 }
 
 int FCryptCache::EncryptFile(const char *fname, const MemoryBuffer &secret)
@@ -330,6 +343,9 @@ int FCryptCache::OpenOutputFile()
       }
     }
   }
+
+  // Adding a static data area
+  AES_fillrand(static_data, sizeof(static_data));
   
   // Adding a file header with meta data
   char enc_header[AES_MAX_INPUT_BUF_LEN];
@@ -377,6 +393,17 @@ int FCryptCache::OpenOutputFile()
     return 0;
   }
 
+  // Write the static data area to disk
+  outfile.df_Write(static_data, sizeof(static_data));
+  if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error writing static data area to file " << ofname;
+    CloseOutputFile();
+    return 0;
+  } 
+  bytes_wrote += sizeof(static_data);
+  
+  
   // Write the file header to disk
   outfile.df_Write(crypt_buf, len);
   if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
@@ -409,11 +436,9 @@ int FCryptCache::TestVersion(CryptFileHdr hdr, gxUINT32 &version)
   return 1;
 }
 
-int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUINT32 &version)
+int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const MemoryBuffer &secret, gxUINT32 &version)
 {
   err.Clear();
-  filename.Clear();
-  ofname.Clear();
   bytes_wrote = (FAU_t)0;
   bytes_read = (FAU_t)0;
   crypt_stream = 0;
@@ -434,6 +459,20 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
     err << clear << "Bad file length";
     return 0;
   }
+
+  // Read the static data area
+  if(infile.df_Read(static_data, sizeof(static_data)) != 
+     DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error reading file static data area";
+    return 0;
+  }
+
+  if(infile.df_gcount() != sizeof(static_data)) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error reading file static data area";
+    return 0;
+  }
   
   memmove(aesdb.b.secret, secret.m_buf(), secret.length());
   aesdb.b.secret_len = secret.length();
@@ -442,7 +481,7 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
   unsigned read_len = AES_MAX_INPUT_BUF_LEN + AES_file_enctryption_overhead();
   char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
 
-  CryptFileHdr hdr, null_hdr;
+  CryptFileHdr null_hdr;
   if(infile.df_Read(crypt_buf, read_len) != 
      DiskFileB::df_NO_ERROR) {
     ERROR_LEVEL = -1;
@@ -480,11 +519,37 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
   }
 
   mode = (char)hdr.mode;
+ 
+  return 1;
+}
+
+int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, char *outfile_name)
+{
+  filename.Clear();
+  ofname.Clear();
+  int rv;
+  gxDeviceTypes o_device = gxDEVICE_DISK_FILE; // Output device
+  gxDeviceTypes i_device = gxDEVICE_NULL;      // No input buffering
+
+  CryptFileHdr hdr;
+  if(!DecryptFileHeader(hdr, fname, secret, version)) return 0;
   
   gxString sbuf;
-  ofname.SetString(hdr.fname, hdr.name_len);
-    
-  if(!output_dir_name.is_null()) {
+  if(outfile_name) { // The caller has specified and output file
+    sbuf << clear << outfile_name;
+    if(sbuf == "stdout" || sbuf == "stderr") {
+      ofname << clear << sbuf;
+      o_device = gxDEVICE_CONSOLE;
+    }
+    else {
+      ofname << clear << outfile_name;
+    }
+  }
+  else { 
+    ofname.SetString(hdr.fname, hdr.name_len);
+  }
+  
+  if(!output_dir_name.is_null() && o_device == gxDEVICE_DISK_FILE) {
 #if defined (__WIN32__) 
     futils_makeDOSpath(output_dir_name.c_str());
     if(output_dir_name[output_dir_name.length()-1] != '\\') {
@@ -512,15 +577,13 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
     }
   }
 
-  MemoryBuffer mbuf;
-  if(outfile.df_Create(ofname.c_str()) != DiskFileB::df_NO_ERROR) {
-    ERROR_LEVEL = -1;
-    err << clear << "Error opening " << ofname;
-    return 0;
+  if(o_device == gxDEVICE_DISK_FILE) {
+    if(outfile.df_Create(ofname.c_str()) != DiskFileB::df_NO_ERROR) {
+      ERROR_LEVEL = -1;
+      err << clear << "Error opening " << ofname;
+      return 0;
+    }
   }
-  
-  gxDeviceTypes o_device = gxDEVICE_DISK_FILE; // Output device
-  gxDeviceTypes i_device = gxDEVICE_NULL;      // No input buffering
 
   // Setup a pointer to the cache buckets
   gxDeviceCachePtr p(cache, o_device, i_device); 
@@ -544,80 +607,17 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
 int FCryptCache::DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &secret,
 					gxUINT32 &version, gxString &crypt_file_name)
 {
-  err.Clear();
+
   filename.Clear();
   ofname.Clear();
-  bytes_wrote = (FAU_t)0;
-  bytes_read = (FAU_t)0;
-  crypt_stream = 0;
   int rv;
   
   crypt_file_name.Clear();
 
-  if(!cache) {
-    ERROR_LEVEL = -1;
-    err << clear << "No cache buffers available";
-    cp.secret.Clear(1);
-    return 0;
-  }
+  CryptFileHdr hdr;
+  if(!DecryptFileHeader(hdr, fname, secret, version)) return 0;
 
-  cp.secret = secret; 
-  if(!OpenInputFile(fname)) return 0;
-
-  if(infile.df_Length() < (sizeof(gxUINT32)*4)) {
-    ERROR_LEVEL = -1;
-    err << clear << "Bad file length";
-    return 0;
-  }
-
-  memmove(aesdb.b.secret, secret.m_buf(), secret.length());
-  aesdb.b.secret_len = secret.length();
-
-  // Read the encrypted file header
-  unsigned read_len = AES_MAX_INPUT_BUF_LEN + AES_file_enctryption_overhead();
-  char crypt_buf[AES_CIPHERTEXT_BUF_SIZE];
-
-  CryptFileHdr hdr, null_hdr;
-  if(infile.df_Read(crypt_buf, read_len) != 
-     DiskFileB::df_NO_ERROR) {
-    ERROR_LEVEL = -1;
-    err << clear << "Error reading file header";
-    return 0;
-  }
-  unsigned len = infile.df_gcount();
-
-  rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length(), mode, key_iterations);
-  if(rv != AES_NO_ERROR) {
-    ERROR_LEVEL = -1;
-    err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
-    return 0;
-  }
-  memmove(&hdr, crypt_buf, sizeof(hdr));
-
-  
-  if(hdr.checkword != null_hdr.checkword) {
-    ERROR_LEVEL = -1;
-    err << clear << "Corrupt file bad checkword";
-    return 0;
-  }
-
-  // Select the correct file decrypt version
-  if(!TestVersion(hdr, version)) return 0;
-  
-  if(hdr.name_len > gxUINT32(infile.df_Length()-(sizeof(gxUINT32)*3))) {
-    ERROR_LEVEL = -1;
-    err << clear << "Incomplete or corrupt file";
-    return 0;
-  }
-  if(hdr.name_len > AES_MAX_NAME_LEN) {
-    ERROR_LEVEL = -1;
-    err << clear << "Invalid file header";
-    return 0;
-  }
-
-  mode = (char)hdr.mode;
-
-  // Set the unencrypted file name
+     // Set the unencrypted file name
   crypt_file_name.SetString(hdr.fname, hdr.name_len);
 
   cp.secret.Clear(1);

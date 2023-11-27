@@ -50,6 +50,25 @@ Encryption routes generate encryption certificates and authenticate users.
 #include "dfileb.h"
 #include "gxlist.h"
 
+const unsigned STATIC_DATA_AREA_SIZE = 65536;
+
+struct GXDLCODE_API StaticDataBlockHdr
+{
+  StaticDataBlockHdr() {
+    version = 2023102;
+    checkword = 0xFEFE; 
+    block_len = (gxUINT32)0;
+    block_type = (gxUINT32)0;
+  }
+  
+  ~StaticDataBlockHdr() { }
+
+  gxUINT32 version;    // Header version number
+  gxUINT32 checkword;  // Header checkword
+  gxUINT32 block_type; // Application specific block type
+  gxUINT32 block_len;  // Variable length of this data block
+};
+
 struct GXDLCODE_API CryptFileHdr
 {
   CryptFileHdr() {
@@ -107,9 +126,9 @@ public: // Encrypt functions
   int EncryptFile(const char *fname, const MemoryBuffer &secret);
 
 public: // Decrypt fucntions
-  int DecryptFile(const char *fname, const MemoryBuffer &secret, gxUINT32 &version);
-  int DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &secret,
-			     gxUINT32 &version, gxString &crypt_file_name);
+  int DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const MemoryBuffer &secret, gxUINT32 &version);
+  int DecryptFile(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, char *outfile_name = 0);
+  int DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, gxString &crypt_file_name);
 
 public: // Helper functions
   void Flush() { cache.Flush(); } // Flush the cache buckets
@@ -171,6 +190,7 @@ public:
   gxString err;
   CryptSecretHdr cp;
   AESStreamCrypt aesdb;
+  unsigned char static_data[STATIC_DATA_AREA_SIZE];
 };
 
 // Standalone functions

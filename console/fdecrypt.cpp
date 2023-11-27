@@ -62,18 +62,21 @@ int use_input_arg_key_file = 0;
 gxString input_arg_key_file;
 MemoryBuffer key;
 unsigned key_iterations =  AES_DEF_ITERATIONS;
+unsigned write_to_stdout = 0;
+gxString user_defined_output_file;
+unsigned use_ouput_file = 0;
 
 void DisplayVersion()
 {
-  cout << "\n" << flush;
-  cout << clientcfg->program_name.c_str() 
+  cerr << "\n" << flush;
+  cerr << clientcfg->program_name.c_str() 
        << " version " << clientcfg->version_str.c_str();
-  cout << "\n" << flush;
-  cout << clientcfg->copyright.c_str() << " " 
+  cerr << "\n" << flush;
+  cerr << clientcfg->copyright.c_str() << " " 
        << clientcfg->copyright_dates.c_str() << "\n" << flush;
-  cout << "Produced by: " << clientcfg->produced_by << "\n" << flush;
-  cout << clientcfg->support_email.c_str() << "\n" << flush;
-  cout << clientcfg->default_url.c_str() << "\n" << flush;
+  cerr << "Produced by: " << clientcfg->produced_by << "\n" << flush;
+  cerr << clientcfg->support_email.c_str() << "\n" << flush;
+  cerr << clientcfg->default_url.c_str() << "\n" << flush;
 }
 
 void HelpMessage() 
@@ -93,7 +96,9 @@ void HelpMessage()
   cout << "          -R = Decrypt DIR including all files and subdirectories" << "\n" << flush;
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "\n" << flush;
-  cout << "          --iter=num to set the number of derived key iterations" << "\n" << flush;
+  cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
+  cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
+  cout << "          --outfile=fname (Write decrypt output to specified file name)" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -132,14 +137,30 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "iter") {
     if(equal_arg.is_null()) {
-      cout << "ERROR: The --iter switch requires an input argument" << "\n" << flush;
+      cerr << "ERROR: The --iter switch requires an input argument" << "\n" << flush;
       return 0;
     }
     if(equal_arg.Atoi() <= 0) {
-      cout << "ERROR: Invalid value passed to the --iter switch" << "\n" << flush;
+      cerr << "ERROR: Invalid value passed to the --iter switch" << "\n" << flush;
       return 0;
     }
     key_iterations = equal_arg.Atoi();
+    has_valid_args = 1;
+  }
+
+  if(arg == "outfile") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: The --outfile switch requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    user_defined_output_file = equal_arg;
+    use_ouput_file = 1;
+    has_valid_args = 1;
+  }
+
+  
+  if(arg == "stdout") {
+    write_to_stdout = 1;
     has_valid_args = 1;
   }
   
@@ -157,10 +178,10 @@ int ProcessArgs(char *arg)
     case 'c': 
       num_buckets = (gxsPort_t)atoi(arg+2); 
       if((num_buckets < 1) || (num_buckets > 65535)) {
-	cout << "\n" << flush;
-	cout << "Bad number of cache buckets specified" << "\n" << flush;
-	cout << "Valid range = 1 to 65535 bytes" << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "Bad number of cache buckets specified" << "\n" << flush;
+	cerr << "Valid range = 1 to 65535 bytes" << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       break;
@@ -189,17 +210,17 @@ int ProcessArgs(char *arg)
     case 'd':
       output_dir_name = arg+2;
       if(!futils_exists(output_dir_name.c_str())) {
-	cout << "\n" << flush;
-	cout << "Bad output DIR specified" << "\n" << flush;
-	cout << output_dir_name.c_str() << " does not exist" << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << output_dir_name.c_str() << " does not exist" << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       if(!futils_isdirectory(output_dir_name.c_str())) {
-	cout << "\n" << flush;
-	cout << "Bad output DIR specified" << "\n" << flush;
-	cout << output_dir_name.c_str() << " is a file name" << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       break;
@@ -208,17 +229,17 @@ int ProcessArgs(char *arg)
       output_dir_name = arg+2;
       if(!futils_exists(output_dir_name.c_str())) {
 	if(futils_mkdir(output_dir_name.c_str()) != 0) {
-	  cout << "\n" << flush;
-	  cout << "Error making directory" << "\n" << flush;
-	  cout << "\n" << flush;
+	  cerr << "\n" << flush;
+	  cerr << "Error making directory" << "\n" << flush;
+	  cerr << "\n" << flush;
 	  return 0;
 	}
       }
       if(!futils_isdirectory(output_dir_name.c_str())) {
-	cout << "\n" << flush;
-	cout << "Bad output DIR specified" << "\n" << flush;
-	cout << output_dir_name.c_str() << " is a file name" << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       break;
@@ -231,15 +252,15 @@ int ProcessArgs(char *arg)
     case 'k':
       input_arg_key_file = arg+2;
       if(!futils_exists(input_arg_key_file.c_str())) {
-	cout << "\n" << flush;
-	cout << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
-	cout << "\n" << flush;
-	cout << "ERROR: " << ebuf.c_str() << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       CommandLinePassword.secret = key;
@@ -254,10 +275,10 @@ int ProcessArgs(char *arg)
       break;
 
     default:
-      cout << "\n" << flush;
-      cout << "Unknown switch " << arg << "\n" << flush;
-      cout << "Exiting..." << "\n" << flush;
-      cout << "\n" << flush;
+      cerr << "\n" << flush;
+      cerr << "Unknown switch " << arg << "\n" << flush;
+      cerr << "Exiting..." << "\n" << flush;
+      cerr << "\n" << flush;
       return 0;
   }
   arg[0] = '\0';
@@ -268,9 +289,9 @@ int ProcessArgs(char *arg)
 int ExitMessage()
 {
   if(debug_mode) {
-    cout << debug_message << "\n" << flush; 
+    cerr << debug_message << "\n" << flush; 
   }
-  cout << "Error decrypting enc file" << "\n" << flush;
+  cerr << "Error decrypting enc file" << "\n" << flush;
   return 1;
 }
 
@@ -285,14 +306,14 @@ int ListFileNames(CryptSecretHdr &cp)
     gxUINT32 version;
     cout << "Encrypted name: " << ptr->data.c_str() << "\n" << flush;
     if(!fc.DecryptOnlyTheFileName(ptr->data.c_str(), cp.secret, version, sbuf)) {
-      cout << "File name decrypt failed" << "\n" << flush;
+      cerr << "File name decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
       ExitMessage();
       ptr = ptr->next;
       continue;
     }
     if(fc.ERROR_LEVEL != 0) { // Check the ERROR level from the file caching ops
-      cout << "File decrypt failed" << "\n" << flush;
+      cerr << "File decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
       ExitMessage();
       ptr = ptr->next;
@@ -335,9 +356,9 @@ int main(int argc, char **argv)
   char top_pwd[futils_MAX_DIR_LENGTH];
   char curr_pwd[futils_MAX_DIR_LENGTH];
   if(futils_getcwd(top_pwd, futils_MAX_DIR_LENGTH) != 0) {
-    cout << "\n" << flush;
-    cout << "Encountered fatal fcrypt error" << "\n";
-    cout << "Error setting top present working DIR" << "\n";
+    cerr << "\n" << flush;
+    cerr << "Encountered fatal fcrypt error" << "\n";
+    cerr << "Error setting top present working DIR" << "\n";
     return 1;
   }
 
@@ -353,25 +374,25 @@ int main(int argc, char **argv)
 	    if(recurse) {
 	      if(use_abs_path) cryptdb_makeabspath(fn);
 	      if(futils_getcwd(curr_pwd, futils_MAX_DIR_LENGTH) != 0) {
-		cout << "\n" << flush;
-		cout << "Encountered fatal decrypt error" << "\n";
-		cout << "Error setting current present working DIR" << "\n";
+		cerr << "\n" << flush;
+		cerr << "Encountered fatal decrypt error" << "\n";
+		cerr << "Error setting current present working DIR" << "\n";
 		return 1;
 	      }      
 
 	      num_dirs++;
 	      if(!cryptdb_getdircontents(fn, err_str, file_list, 
 					 num_files, num_dirs)) {
-		cout << "\n" << flush;
-		cout << "Encountered fatal decrypt error" << "\n";
-		cout << err_str.c_str() << "\n";
+		cerr << "\n" << flush;
+		cerr << "Encountered fatal decrypt error" << "\n";
+		cerr << err_str.c_str() << "\n";
 		return 1; 
 	      }
 
 	      if(futils_chdir(curr_pwd) != 0) {
-		cout << "\n" << flush;
-		cout << "Encountered fatal decrypt error" << "\n";
-		cout << "Error resetting current present working DIR" << "\n";
+		cerr << "\n" << flush;
+		cerr << "Encountered fatal decrypt error" << "\n";
+		cerr << "Error resetting current present working DIR" << "\n";
 		return 1;
 	      }
 
@@ -389,20 +410,20 @@ int main(int argc, char **argv)
   }
 
   if(num_files == 0) {
-    cout << "\n" << flush;
-    cout << "Encountered fatal decrypt error" << "\n";
-    cout << "No file name specified" << "\n";
+    cerr << "\n" << flush;
+    cerr << "Encountered fatal decrypt error" << "\n";
+    cerr << "No file name specified" << "\n";
     return 1;
   }
   
   DisplayVersion();
-  cout << "\n" << flush;
+  cerr << "\n" << flush;
 
   CryptSecretHdr cp;
   gxString password;
   
   if(use_input_arg_key_file) {
-    cout << "Using key file for encryption" << "\n" << flush;
+    cerr << "Using key file for encryption" << "\n" << flush;
   }
   
   if(CommandLinePassword.secret.is_null()) {
@@ -435,30 +456,43 @@ int main(int argc, char **argv)
     }
     gxString sbuf;
     gxUINT32 version;
-    cout << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
+    cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
+    int rv = 0;
 
-    if(!fc.DecryptFile(ptr->data.c_str(), cp.secret, version)) {
-      cout << "File decrypt failed" << "\n" << flush;
+    if(write_to_stdout) {
+      rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version, "stdout");
+    }
+    else {
+      if(use_ouput_file) {
+	rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version, user_defined_output_file.c_str());
+      }
+      else {
+	rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version);
+      }
+    }
+    
+    if(!rv) {
+      cerr << "File decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
       err = ExitMessage();
       ptr = ptr->next;
       continue;
     }
     if(fc.ERROR_LEVEL != 0) { // Check the ERROR level from the file caching ops
-      cout << "File decrypt failed" << "\n" << flush;
+      cerr << "File decrypt failed" << "\n" << flush;
       debug_message << clear << "ERROR: " << fc.err;
       err = ExitMessage();
       ptr = ptr->next;
       continue;
     }
-    cout << "File decrypt successful" << "\n" << flush;
+    cerr << "File decrypt successful" << "\n" << flush;
     sbuf << clear << wn << fc.BytesWrote();
-    cout << "Wrote " << sbuf.c_str() << " bytes to "
+    cerr << "Wrote " << sbuf.c_str() << " bytes to "
 	 << fc.OutFileName() << "\n" << flush;
 
     if(remove_src_file) {
       if(futils_remove(ptr->data.c_str()) != 0) {
-	cout << "Error removing " << ptr->data.c_str() << " source file"
+	cerr << "Error removing " << ptr->data.c_str() << " source file"
 	     << "\n" << flush;
       }
     }
@@ -467,11 +501,11 @@ int main(int argc, char **argv)
 
   if(err == 0) {
     if(num_files > 1) {
-      cout << "Decrypted " << num_files << " files" 
+      cerr << "Decrypted " << num_files << " files" 
 	   << "\n" << flush;
     }
     if(num_dirs > 0) {
-      cout << "Traversed " << num_dirs << " directories"  
+      cerr << "Traversed " << num_dirs << " directories"  
 	   << "\n" << flush;
     }
   }

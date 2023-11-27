@@ -9,13 +9,16 @@ CRYPTDB_DEP = $(APPINC_PATH)cryptdb.h $(APPINC_PATH)aesdb.h
 
 AESDB_DEP = $(APPINC_PATH)aesdb.h
 
+RSADB_DEP = $(APPINC_PATH)rsadb.h
+
 GLOBALS_DEP = $(APPINC_PATH)globals.h
 
 C_CONFIG_DEP = $(APPINC_PATH)c_config.h $(APPINC_PATH)globals.h \
 	$(APPINC_PATH)c_thread.h
 
 C_THREAD_DEP = $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
-	$(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h
+	$(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h \
+	$(APPINC_PATH)rsadb.h
 
 PROJECT_DEP = $(C_THREAD_DEP) ../fcrypt.h
 # ===============================================================
@@ -25,6 +28,9 @@ cryptdb$(OBJ_EXT):	$(APPSRC_PATH)cryptdb.cpp $(CRYPTDB_DEP)
 
 aesdb$(OBJ_EXT):	$(APPSRC_PATH)aesdb.cpp $(AESDB_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)aesdb.cpp
+
+rsadb$(OBJ_EXT):	$(APPSRC_PATH)rsadb.cpp $(RSADB_DEP)
+	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)rsadb.cpp
 
 globals$(OBJ_EXT):	$(APPSRC_PATH)globals.cpp $(GLOBALS_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)globals.cpp
@@ -160,6 +166,7 @@ OBJECTS = $(PROJECT)$(OBJ_EXT) \
 	globals$(OBJ_EXT) \
 	cryptdb$(OBJ_EXT) \
 	aesdb$(OBJ_EXT) \
+	rsadb$(OBJ_EXT) \
 	c_config$(OBJ_EXT) \
 	c_thread$(OBJ_EXT)
 # ===============================================================
