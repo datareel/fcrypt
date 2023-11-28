@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/16/2023
+// Date Last Modified: 11/27/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -51,31 +51,44 @@ Encryption routes generate encryption certificates and authenticate users.
 #include "gxlist.h"
 
 const unsigned STATIC_DATA_AREA_SIZE = 65536;
+const unsigned MAX_FILENAME_LEN = 256;
+const unsigned MAX_USERNAME_LEN = 64;
+const gxUINT32 STATIC_DATA_BLOCK_VERSION = 2023103;
+const gxUINT32 CRYPT_FILE_VERSION = 2023103;
 
 struct GXDLCODE_API StaticDataBlockHdr
 {
   StaticDataBlockHdr() {
-    version = 2023102;
+    version = STATIC_DATA_BLOCK_VERSION;
     checkword = 0xFEFE; 
     block_len = (gxUINT32)0;
     block_type = (gxUINT32)0;
+    block_status = (gxUINT32)0;
+    ciphertext_len = (gxUINT32)0;
+    username_len = (gxUINT32)0;
+    AES_fillrand(reserved, sizeof(reserved));
   }
   
   ~StaticDataBlockHdr() { }
 
-  gxUINT32 version;    // Header version number
-  gxUINT32 checkword;  // Header checkword
-  gxUINT32 block_type; // Application specific block type
-  gxUINT32 block_len;  // Variable length of this data block
+  gxUINT32 version;        // Header version number
+  gxUINT32 checkword;      // Header checkword
+  gxUINT32 block_type;     // Application specific block type
+  gxUINT32 block_status;   // Application specific block status
+  gxUINT32 block_len;      // Variable length of this data block excluding this header
+  gxUINT32 ciphertext_len; // Variable length of the encrypted data
+  gxUINT32 username_len;   // Variable length of optional username
+  unsigned char reserved[32]; // Reserved for future use
 };
 
 struct GXDLCODE_API CryptFileHdr
 {
   CryptFileHdr() {
-    version = 2023102;
+    version = CRYPT_FILE_VERSION;
     checkword = 0xFEFE; 
     name_len = (gxUINT32)0;
     memset(fname, 0, sizeof(fname));
+    memset(reserved, 0, sizeof(reserved));
     mode = 3;
   }
   ~CryptFileHdr() { }
@@ -87,7 +100,8 @@ struct GXDLCODE_API CryptFileHdr
                       // 3 = AES 256-bit encryption 
 
   gxUINT32 name_len; // Variable length of encrypted file name or DIR list
-  char fname[256];  // Name of the file that was encrypted or DIR list
+  char fname[MAX_FILENAME_LEN]; // Name of the file that was encrypted or DIR list
+  unsigned char reserved[32]; // Reserved for future use
 };
 
 struct GXDLCODE_API CryptSecretHdr

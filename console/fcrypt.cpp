@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/22/2023
+// Date Last Modified: 11/27/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -50,6 +50,7 @@ using namespace std; // Use unqualified names for Standard C++ library
 #include "gxlist.h"
 #include "gxbstree.h"
 #include "bstreei.h"
+#include "gxs_b64.h"
 
 // Constants
 
@@ -74,7 +75,8 @@ MemoryBuffer key;
 gxString public_rsa_key_file;
 int use_public_rsa_key = 0;
 unsigned char rsa_ciphertext[8192];
-unsigned rsa_chipertext_len;
+unsigned rsa_ciphertext_len;
+gxString rsa_key_username;
 
 // ----------------------------------------------------------- // 
 // Interactive user function prototypes
@@ -210,8 +212,17 @@ int ProcessDashDashArg(gxString &arg)
     }
     use_public_rsa_key = 1;
     has_valid_args = 1;
+    rsa_key_username = "master_key";
   }
-  
+
+  if(arg == "rsa-key-username") {
+    if(equal_arg.is_null()) {
+      cout << "ERROR: --rsa-key-username missing name: --rsa-key-username=$(whoami)" << "\n" << flush;
+      return 0;
+    }
+    rsa_key_username = equal_arg;
+    has_valid_args = 1;
+  }
   arg.Clear();
   return has_valid_args;
 }
@@ -686,7 +697,7 @@ int main(int argc, char **argv)
   // Set the program information
   clientcfg->executable_name = "fcrypt";
   clientcfg->program_name = "File Encrypt";
-  clientcfg->version_str = "2023.102";
+  clientcfg->version_str = "2023.103";
 
   if(argc < 2) {
     HelpMessage();
@@ -815,7 +826,7 @@ int main(int argc, char **argv)
 
     rv = RSA_public_key_encrypt((const unsigned char *)public_key, public_key_len,
 				CommandLinePassword.secret.m_buf(), CommandLinePassword.secret.length(),
-				rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_chipertext_len);
+				rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len);
     if(rv != RSA_NO_ERROR) {
       std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
       return 1;
@@ -876,13 +887,47 @@ int main(int argc, char **argv)
   while(ptr) {
     FCryptCache fc(num_buckets);
     if(use_public_rsa_key) {
+      // Add an RSA key for access using asymmetric encryption 
+      // Block header -> ciphertext -> hmac -> username 
       StaticDataBlockHdr static_data_block_header;
-      static_data_block_header.block_len = rsa_chipertext_len;
+      unsigned char hash[AES_MAX_HMAC_LEN];
+      char username_buf[1024];
+      memset(username_buf, 0, sizeof(username_buf));
+      unsigned username_buf_len = 0;
+      
+      static_data_block_header.block_len = 0;
       static_data_block_header.block_type = 1;
+      static_data_block_header.block_status = 1;
+      
+      static_data_block_header.ciphertext_len = rsa_ciphertext_len;
+      static_data_block_header.block_len += rsa_ciphertext_len;
+      static_data_block_header.block_len += sizeof(hash);
+      static_data_block_header.username_len = 0;
+
+      if(!rsa_key_username.is_null()) {
+	gxsBase64Encode(rsa_key_username.c_str(), username_buf, rsa_key_username.length());
+	username_buf_len = strlen(username_buf);
+	static_data_block_header.username_len = username_buf_len;
+      }
+            
       offset = 0;
       memmove(fc.static_data, &static_data_block_header, sizeof(static_data_block_header));
       offset+=sizeof(static_data_block_header);
-      memmove(fc.static_data+offset, rsa_ciphertext, rsa_chipertext_len);
+      memmove(fc.static_data+offset, rsa_ciphertext, rsa_ciphertext_len);
+      offset+=rsa_ciphertext_len;
+
+      rv = AES_HMAC(cp.secret.m_buf(), cp.secret.length(), rsa_ciphertext, rsa_ciphertext_len, hash, sizeof(hash));
+      if(rv != AES_NO_ERROR) {
+	cout << "ERROR: Failed to generate HMAC for RSA ciphertext" << "\n" << flush;
+	ptr = ptr->next;
+	continue;
+      }
+      memmove(fc.static_data+offset, hash, sizeof(hash)); // Store the HMAC
+      offset+=sizeof(hash);
+      
+      if(static_data_block_header.username_len > 0) {
+	memmove(fc.static_data+offset, username_buf, username_buf_len); // Store the HMAC
+      }
     }
     fc.mode = mode;
     fc.key_iterations = key_iterations;
@@ -922,6 +967,7 @@ int main(int argc, char **argv)
       cout << fc.err.c_str() << "\n" << flush;
       ptr = ptr->next;
       err = 1;
+      ptr = ptr->next;
       continue;
     } 
 

@@ -419,11 +419,14 @@ int FCryptCache::OpenOutputFile()
 int FCryptCache::TestVersion(CryptFileHdr hdr, gxUINT32 &version)
 {
   err.Clear();
-
+  
   // Select the correct file decrypt version
   switch((int)hdr.version) {
-    case 2023102: // Current version
+    case 2023102: // Previous version
       version = (gxUINT32)2023102;
+      break;
+    case 2023103: // Current version
+      version = (gxUINT32)2023103;
       break;
     default:
       version = (gxUINT32)0;

@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/20/2023
+// Date Last Modified: 11/27/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -41,6 +41,7 @@ using namespace std; // Use unqualified names for Standard C++ library
 
 #include "fcrypt.h"
 #include "gxlist.h"
+#include "gxs_b64.h"
 
 #ifdef __MSVC_DEBUG__
 #include "leaktest.h"
@@ -68,7 +69,7 @@ unsigned use_ouput_file = 0;
 gxString private_rsa_key_file;
 int use_private_rsa_key = 0;
 unsigned char rsa_ciphertext[8192];
-unsigned rsa_chipertext_len;
+unsigned rsa_ciphertext_len;
 char private_key[RSA_max_keybuf_len];
 unsigned private_key_len = 0;
 
@@ -369,7 +370,7 @@ int main(int argc, char **argv)
   // Set the program information
   clientcfg->executable_name = "fdecrypt";
   clientcfg->program_name = "File Decrypt";
-  clientcfg->version_str = "2023.102";
+  clientcfg->version_str = "2023.103";
 
   if(argc < 2) {
     HelpMessage();
@@ -493,6 +494,7 @@ int main(int argc, char **argv)
       fp = fopen(ptr->data.c_str(), "rb");
       if(!fp) {
 	cerr << "ERROR: Error opening file " << ptr->data.c_str() << "\n" << flush; ;
+	ptr = ptr->next;
 	continue;
       }
       unsigned char read_buf[STATIC_DATA_AREA_SIZE];
@@ -502,28 +504,77 @@ int main(int argc, char **argv)
       if(input_bytes_read != STATIC_DATA_AREA_SIZE) {
 	fclose(fp);
 	cerr << "ERROR: Error reading data area blocks from file " << ptr->data.c_str() << "\n" << flush; ;
+	ptr = ptr->next;
 	continue;
       }
+      fclose(fp);
       int offset = 0;
       StaticDataBlockHdr static_data_block_header;
-      memmove(&static_data_block_header, read_buf, sizeof(static_data_block_header));
-      if(static_data_block_header.version != 2023102 && static_data_block_header.checkword != 0xFEFE) {
-	cerr << "ERROR: Invalid data block in file " << ptr->data.c_str() << "\n" << flush; ;
-	continue;
-      }
-      offset+=sizeof(static_data_block_header);
-      memmove(rsa_ciphertext, read_buf+offset, static_data_block_header.block_len);
+      unsigned char hash[AES_MAX_HMAC_LEN];
+      unsigned char r_hash[AES_MAX_HMAC_LEN];
+      char username_buf[1024];
+      char username[1024];
       unsigned decrypted_data_len = 0;
       unsigned char rsa_decrypted_message[2048];
+ 
+      memset(username_buf, 0, sizeof(username_buf));
+      memset(username, 0, sizeof(username));
+      memset(rsa_decrypted_message, 0, sizeof(rsa_decrypted_message));
+      
+      memmove(&static_data_block_header, read_buf, sizeof(static_data_block_header));
+      offset+=sizeof(static_data_block_header);
+      
+      if(static_data_block_header.version != STATIC_DATA_BLOCK_VERSION) {
+	cerr << "ERROR: Bad data block version in file " << ptr->data.c_str() << "\n" << flush; ;
+	ptr = ptr->next;
+	continue;
+      }
+      if(static_data_block_header.checkword != 0xFEFE) {
+	cerr << "ERROR: Bad data block checkword in file " << ptr->data.c_str() << "\n" << flush; ;
+	ptr = ptr->next;
+	continue;
+      }
+      
+      memmove(rsa_ciphertext, read_buf+offset, static_data_block_header.ciphertext_len);
+      offset+=static_data_block_header.ciphertext_len;
+
       rv = RSA_private_key_decrypt((const unsigned char *)private_key, private_key_len,
-				   rsa_ciphertext, static_data_block_header.block_len,
+				   rsa_ciphertext, static_data_block_header.ciphertext_len,
 				   rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len);
       if(rv != RSA_NO_ERROR) {
 	cerr << "ERROR: " << RSA_err_string(rv) << "\n" << flush; 
+	ptr = ptr->next;
 	continue;
       }
       cp.secret.Clear(1);
       cp.secret.Cat(rsa_decrypted_message, decrypted_data_len);
+
+      memmove(r_hash, read_buf+offset, sizeof(r_hash));
+      offset+=sizeof(hash);
+      
+      rv = AES_HMAC(cp.secret.m_buf(), cp.secret.length(), rsa_ciphertext, static_data_block_header.ciphertext_len, hash, sizeof(hash));
+      if(rv != AES_NO_ERROR) {
+	cerr << "ERROR: Failed to generate HMAC for RSA ciphertext" << "\n" << flush;
+	ptr = ptr->next;
+	continue;
+      }
+      if(memcmp(hash, r_hash, sizeof(hash)) != 0) {
+	cerr << "ERROR: Message authentication failed bad HMAC for RSA ciphertext" << "\n" << flush;
+	ptr = ptr->next;
+	continue;
+      }
+
+      if(static_data_block_header.username_len > 0) {
+	if(static_data_block_header.username_len > MAX_USERNAME_LEN) {
+	  cerr << "ERROR: Username length for RSA key has exceeded max lenght of " << MAX_USERNAME_LEN << "\n" << flush;
+	  ptr = ptr->next;
+	  continue;
+	}
+	memmove(username_buf, read_buf+offset, static_data_block_header.username_len);
+	gxsBase64Decode(username_buf, username);
+	cerr << "RSA key username " <<  username << "\n" << flush;
+      }
+      offset+=static_data_block_header.username_len;
     }
 
     FCryptCache fc(num_buckets);
@@ -568,7 +619,7 @@ int main(int argc, char **argv)
 
     if(remove_src_file) {
       if(futils_remove(ptr->data.c_str()) != 0) {
-	cerr << "Error removing " << ptr->data.c_str() << " source file"
+	cerr << "ERROR: Error removing " << ptr->data.c_str() << " source file"
 	     << "\n" << flush;
       }
     }
