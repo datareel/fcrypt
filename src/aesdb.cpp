@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/25/2023
+// Date Last Modified: 11/29/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -40,42 +40,41 @@ AES encryption and decryption routines.
 const int NUM_AES_ERRORS = 35;
 const char *AES_err_strings[NUM_AES_ERRORS] =
 {
-  // NOTE: For security reasons all exceptions are represented by number error codes
- "Clib exception error code 55000", // AES_NO_ERROR
- "Clib exception error code 55001", // AES_INVALID_ERROR,
- "Clib exception error code 55002", // AES_ERROR_SECRET_MIN_LENGTH
- "Clib exception error code 55003", // AES_ERROR_OUT_OF_MEMORY
- "Clib exception error code 55004", // AES_ERROR_BAD_SECRET
- "Clib exception error code 55005", // AES_ERROR_AUTH_FAILED
- "Clib exception error code 55006", // AES_ERROR_KEY_LENGTH
- "Clib exception error code 55007", // AES_ERROR_BAD_SALT
- "Clib exception error code 55008", // AES_ERROR_BAD_KEY
- "Clib exception error code 55009", // AES_ERROR_BAD_VERIFIER
- "Clib exception error code 55010", // AES_ERROR_BAD_MAC
- "Clib exception error code 55011", // AES_ERROR_BAD_MODE
- "Clib exception error code 55012", // AES_ERROR_SECRET_MAX_LENGTH
- "Clib exception error code 55013", // AES_ERROR_KEY_MAX_LENGTH
- "Clib exception error code 55014", // AES_ERROR_IV_MAX_LENGTH
- "Clib exception error code 55015", // AES_ERROR_SALT_MAX_LENGTH
- "Clib exception error code 55016", // AES_ERROR_HMAC_MAX_LENGTH
- "Clib exception error code 55017", // AES_ERROR_BUFFER_OVERFLOW
- "Clib exception error code 55018", // AES_ERROR_BAD_BUFFER_LEN
- "Clib exception error code 55019", // AES_ERROR_NO_INIT
- "Clib exception error code 55020", // AES_ERROR_INIT
- "Clib exception error code 55021", // AES_ERROR_NO_SUCH_CIPHER
- "Clib exception error code 55022", // AES_ERROR_NO_SUCH_DIGEST
- "Clib exception error code 55023", // AES_ERROR_DERIVE_KEY_GEN_FAILED
- "Clib exception error code 55024", // AES_ERROR_HMAC_INIT_FAILED
- "Clib exception error code 55025", // AES_ERROR_HMAC_UPDATE_FAILED
- "Clib exception error code 55026", // AES_ERROR_HMAC_FINAL_FAILED
- "Clib exception error code 55027", // AES_ERROR_EVP_CTX_NEW
- "Clib exception error code 55028", // AES_ERROR_EVP_CIPHER_INIT
- "Clib exception error code 55029", // AES_ERROR_EVP_ENCRYPT_CIPHER_UPDATE
- "Clib exception error code 55030", // AES_ERROR_EVP_ENCRYPT_CIPHER_FINAL
- "Clib exception error code 55031", // AES_ERROR_EVP_DECRYPT_CIPHER_UPDATE
- "Clib exception error code 55032", // AES_ERROR_EVP_DECRYPT_CIPHER_FINAL
- "Clib exception error code 55033", // AES_ERROR_SALT_INIT_FAILED
- "Clib exception error code 55034"  // AES_ERROR_NULL_POINTER
+ "AES_NO_ERROR",                        // AES_NO_ERROR
+ "AES_INVALID_ERROR,",                  // AES_INVALID_ERROR,
+ "AES_ERROR_SECRET_MIN_LENGTH",         // AES_ERROR_SECRET_MIN_LENGTH
+ "AES_ERROR_OUT_OF_MEMORY",             // AES_ERROR_OUT_OF_MEMORY
+ "AES_ERROR_BAD_SECRET",                // AES_ERROR_BAD_SECRET
+ "AES_ERROR_AUTH_FAILED",               // AES_ERROR_AUTH_FAILED
+ "AES_ERROR_KEY_LENGTH",                // AES_ERROR_KEY_LENGTH
+ "AES_ERROR_BAD_SALT",                  // AES_ERROR_BAD_SALT
+ "AES_ERROR_BAD_KEY",                   // AES_ERROR_BAD_KEY
+ "AES_ERROR_BAD_VERIFIER",              // AES_ERROR_BAD_VERIFIER
+ "AES_ERROR_BAD_MAC",                   // AES_ERROR_BAD_MAC
+ "AES_ERROR_BAD_MODE",                  // AES_ERROR_BAD_MODE
+ "AES_ERROR_SECRET_MAX_LENGTH",         // AES_ERROR_SECRET_MAX_LENGTH
+ "AES_ERROR_KEY_MAX_LENGTH",            // AES_ERROR_KEY_MAX_LENGTH
+ "AES_ERROR_IV_MAX_LENGTH",             // AES_ERROR_IV_MAX_LENGTH
+ "AES_ERROR_SALT_MAX_LENGTH",           // AES_ERROR_SALT_MAX_LENGTH
+ "AES_ERROR_HMAC_MAX_LENGTH",           // AES_ERROR_HMAC_MAX_LENGTH
+ "AES_ERROR_BUFFER_OVERFLOW",           // AES_ERROR_BUFFER_OVERFLOW
+ "AES_ERROR_BAD_BUFFER_LEN",            // AES_ERROR_BAD_BUFFER_LEN
+ "AES_ERROR_NO_INIT",                   // AES_ERROR_NO_INIT
+ "AES_ERROR_INIT",                      // AES_ERROR_INIT
+ "AES_ERROR_NO_SUCH_CIPHER",            // AES_ERROR_NO_SUCH_CIPHER
+ "AES_ERROR_NO_SUCH_DIGEST",            // AES_ERROR_NO_SUCH_DIGEST
+ "AES_ERROR_DERIVE_KEY_GEN_FAILED",     // AES_ERROR_DERIVE_KEY_GEN_FAILED
+ "AES_ERROR_HMAC_INIT_FAILED",          // AES_ERROR_HMAC_INIT_FAILED
+ "AES_ERROR_HMAC_UPDATE_FAILED",        // AES_ERROR_HMAC_UPDATE_FAILED
+ "AES_ERROR_HMAC_FINAL_FAILED",         // AES_ERROR_HMAC_FINAL_FAILED
+ "AES_ERROR_EVP_CTX_NEW",               // AES_ERROR_EVP_CTX_NEW
+ "AES_ERROR_EVP_CIPHER_INIT",           // AES_ERROR_EVP_CIPHER_INIT
+ "AES_ERROR_EVP_ENCRYPT_CIPHER_UPDATE", // AES_ERROR_EVP_ENCRYPT_CIPHER_UPDATE
+ "AES_ERROR_EVP_ENCRYPT_CIPHER_FINAL",  // AES_ERROR_EVP_ENCRYPT_CIPHER_FINAL
+ "AES_ERROR_EVP_DECRYPT_CIPHER_UPDATE", // AES_ERROR_EVP_DECRYPT_CIPHER_UPDATE
+ "AES_ERROR_EVP_DECRYPT_CIPHER_FINAL",  // AES_ERROR_EVP_DECRYPT_CIPHER_FINAL
+ "AES_ERROR_SALT_INIT_FAILED",          // AES_ERROR_SALT_INIT_FAILED
+ "AES_ERROR_NULL_POINTER"               // AES_ERROR_NULL_POINTER
 };
 
 int AES_openssl_init()

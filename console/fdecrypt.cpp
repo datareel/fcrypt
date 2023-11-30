@@ -72,18 +72,19 @@ unsigned char rsa_ciphertext[8192];
 unsigned rsa_ciphertext_len;
 char private_key[RSA_max_keybuf_len];
 unsigned private_key_len = 0;
+gxString rsa_key_passphrase;
 
 void DisplayVersion()
 {
-  cerr << "\n" << flush;
-  cerr << clientcfg->program_name.c_str() 
+  cout << "\n" << flush;
+  cout << clientcfg->program_name.c_str() 
        << " version " << clientcfg->version_str.c_str();
-  cerr << "\n" << flush;
-  cerr << clientcfg->copyright.c_str() << " " 
+  cout << "\n" << flush;
+  cout << clientcfg->copyright.c_str() << " " 
        << clientcfg->copyright_dates.c_str() << "\n" << flush;
-  cerr << "Produced by: " << clientcfg->produced_by << "\n" << flush;
-  cerr << clientcfg->support_email.c_str() << "\n" << flush;
-  cerr << clientcfg->default_url.c_str() << "\n" << flush;
+  cout << "Produced by: " << clientcfg->produced_by << "\n" << flush;
+  cout << clientcfg->support_email.c_str() << "\n" << flush;
+  cout << clientcfg->default_url.c_str() << "\n" << flush;
 }
 
 void HelpMessage() 
@@ -103,10 +104,13 @@ void HelpMessage()
   cout << "          -R = Decrypt DIR including all files and subdirectories" << "\n" << flush;
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "\n" << flush;
+  cout << "          --version (Display this programs version number)" << "\n" << flush;
+  cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --outfile=fname (Write decrypt output to specified file name)" << "\n" << flush;
-  cout << "          --rsa-key=key.pem (Use a private  RSA key for decryption)" << "\n" << flush;
+  cout << "          --rsa-key=key.pem (Use a private RSA key for decryption)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase (Provide passpharse for private  RSA key)" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -146,11 +150,11 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "iter") {
     if(equal_arg.is_null()) {
-      cerr << "ERROR: The --iter switch requires an input argument" << "\n" << flush;
+      cerr << "ERROR: --iter requires an input argument" << "\n" << flush;
       return 0;
     }
     if(equal_arg.Atoi() <= 0) {
-      cerr << "ERROR: Invalid value passed to the --iter switch" << "\n" << flush;
+      cerr << "ERROR: Invalid value passed to --iter" << "\n" << flush;
       return 0;
     }
     key_iterations = equal_arg.Atoi();
@@ -159,13 +163,23 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "outfile") {
     if(equal_arg.is_null()) {
-      cerr << "ERROR: The --outfile switch requires an input argument" << "\n" << flush;
+      cerr << "ERROR: --outfile requires an input argument" << "\n" << flush;
       return 0;
     }
     user_defined_output_file = equal_arg;
     use_ouput_file = 1;
     has_valid_args = 1;
   }
+
+  if(arg == "rsa-key-passphrase") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --rsa-key-passphrase requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    rsa_key_passphrase = equal_arg;
+    has_valid_args = 1;
+  }
+  
   if(arg == "rsa-key") {
     if(equal_arg.is_null()) {
       cerr << "ERROR: --rsa-key missing filename: --rsa-key=/$HOME/keys/rsa_key.pem" << "\n" << flush;
@@ -197,6 +211,13 @@ int ProcessDashDashArg(gxString &arg)
     has_valid_args = 1;
   }
   
+  if(!has_valid_args) {
+    cerr << "\n" << flush;
+    cerr << "Unknown or invalid --" << arg.c_str() << "\n" << flush;
+    cerr << "Exiting..." << "\n" << flush;
+    cerr << "\n" << flush;
+  }
+
   arg.Clear();
   return has_valid_args;
 }
@@ -212,8 +233,8 @@ int ProcessArgs(char *arg)
       num_buckets = (gxsPort_t)atoi(arg+2); 
       if((num_buckets < 1) || (num_buckets > 65535)) {
 	cerr << "\n" << flush;
-	cerr << "Bad number of cache buckets specified" << "\n" << flush;
-	cerr << "Valid range = 1 to 65535 bytes" << "\n" << flush;
+	cerr << "ERROR: Bad number of cache buckets specified" << "\n" << flush;
+	cerr << "ERROR: Valid range = 1 to 65535 bytes" << "\n" << flush;
 	cerr << "\n" << flush;
 	return 0;
       }
@@ -244,14 +265,14 @@ int ProcessArgs(char *arg)
       output_dir_name = arg+2;
       if(!futils_exists(output_dir_name.c_str())) {
 	cerr << "\n" << flush;
-	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << "ERROR: Bad output DIR specified" << "\n" << flush;
 	cerr << output_dir_name.c_str() << " does not exist" << "\n" << flush;
 	cerr << "\n" << flush;
 	return 0;
       }
       if(!futils_isdirectory(output_dir_name.c_str())) {
 	cerr << "\n" << flush;
-	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << "ERROR: Bad output DIR specified" << "\n" << flush;
 	cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
 	cerr << "\n" << flush;
 	return 0;
@@ -263,14 +284,14 @@ int ProcessArgs(char *arg)
       if(!futils_exists(output_dir_name.c_str())) {
 	if(futils_mkdir(output_dir_name.c_str()) != 0) {
 	  cerr << "\n" << flush;
-	  cerr << "Error making directory" << "\n" << flush;
+	  cerr << "ERROR: Error making directory" << "\n" << flush;
 	  cerr << "\n" << flush;
 	  return 0;
 	}
       }
       if(!futils_isdirectory(output_dir_name.c_str())) {
 	cerr << "\n" << flush;
-	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << "ERROR: Bad output DIR specified" << "\n" << flush;
 	cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
 	cerr << "\n" << flush;
 	return 0;
@@ -309,7 +330,7 @@ int ProcessArgs(char *arg)
 
     default:
       cerr << "\n" << flush;
-      cerr << "Unknown switch " << arg << "\n" << flush;
+      cerr << "ERROR: Unknown switch " << arg << "\n" << flush;
       cerr << "Exiting..." << "\n" << flush;
       cerr << "\n" << flush;
       return 0;
@@ -418,9 +439,6 @@ int main(int argc, char **argv)
     return 1;
   }
   
-  DisplayVersion();
-  cerr << "\n" << flush;
-
   CryptSecretHdr cp;
   gxString password;
   
@@ -436,7 +454,7 @@ int main(int argc, char **argv)
     cout << "Password: " << flush;
     if(!consoleGetString(password, 1)) {
       password.Clear(1);
-      cout << "Invalid entry!" << "\n" << flush;
+      cerr << "Invalid entry!" << "\n" << flush;
       return 1;
     }
     cp.secret.Load(password.c_str(), password.length());
@@ -489,9 +507,12 @@ int main(int argc, char **argv)
 	decrypted_data_len = 0;
 
 	if(clientcfg->verbose_mode) cerr << "Found stored RSA key for user " << list_ptr->data.username.c_str() << "\n" << flush;
+	char *passphrase = 0;
+	if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
 	rv = RSA_private_key_decrypt((const unsigned char *)private_key, private_key_len,
 				     list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(),
-				     rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len);
+				     rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len,
+				     RSA_padding, passphrase);
 
 #ifdef __DEBUG_ONLY__
 	std::cout << RSA_err_string(rv) << "\n";
@@ -502,8 +523,12 @@ int main(int argc, char **argv)
 	  cp.secret.Clear(1);
 	  cp.secret.Cat(rsa_decrypted_message, decrypted_data_len);
 
-
 	  rv = AES_HMAC(cp.secret.m_buf(), cp.secret.length(), list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(), hash, sizeof(hash));
+#ifdef __DEBUG_ONLY__
+	  unsigned i;
+	  printf("HMAC GEN: "); for(i = 0; i <  sizeof(hash); ++i) { printf("%02x",hash[i]); } printf("\n");
+	  printf("HMAC PTR: "); for(i = 0; i <  list_ptr->data.hmac.length(); ++i) { printf("%02x",list_ptr->data.hmac.m_buf()[i]); } printf("\n");
+#endif
 	  if(rv != AES_NO_ERROR) {
 	    cerr << "ERROR: Failed to generate HMAC for RSA ciphertext" << "\n" << flush;
 	    found_key = 0;

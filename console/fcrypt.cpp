@@ -99,7 +99,6 @@ void HelpMessage()
   cout << "Switches: -? = Display this help message and exit." << "\n" << flush;  
   cout << "          -0 = No encryption for testing only." << "\n" << flush;
   cout << "          -3 = 256-bit encryption (default)." << "\n" << flush;
-  cout << "          -b[size] = Specify file buffer size in bytes" << "\n" << flush;
   cout << "          -c[num] = Specify number of cache buckets" << "\n" << flush;
   cout << "          -d[name] = Specify output DIR for enc file(s)" << "\n" << flush;
   cout << "          -D[name] = Specify and make output DIR" << "\n" << flush;
@@ -113,6 +112,8 @@ void HelpMessage()
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "          -x[ext] = Specify enc file(s) dot extension" << "\n" << flush;
   cout << "\n" << flush;
+  cout << "          --version (Display this programs version number)" << "\n" << flush;
+  cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
   cout << "          --add-rsa-key=pubkey.pem (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
@@ -155,11 +156,11 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "iter") {
     if(equal_arg.is_null()) {
-      cout << "ERROR: --iter requires an input argument: --iter=10000" << "\n" << flush;
+      cerr << "ERROR: --iter requires an input argument: --iter=10000" << "\n" << flush;
       return 0;
     }
     if(equal_arg.Atoi() <= 0) {
-      cout << "ERROR: Invalid value passed to --iter" << "\n" << flush;
+      cerr << "ERROR: Invalid value passed to --iter" << "\n" << flush;
       return 0;
     }
     key_iterations = equal_arg.Atoi();
@@ -168,19 +169,19 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "add-rsa-key") {
     if(equal_arg.is_null()) {
-      cout << "ERROR: --add-rsa-key missing filename: --add-rsa-key=/$HOME/keys/rsa_pubkey.pem" << "\n" << flush;
+      cerr << "ERROR: --add-rsa-key missing filename: --add-rsa-key=/$HOME/keys/rsa_pubkey.pem" << "\n" << flush;
       return 0;
     }
     public_rsa_key_file = equal_arg;
     if(!futils_exists(public_rsa_key_file.c_str())) {
-        cout << "\n" << flush;
-        cout << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
-        cout << "\n" << flush;
+        cerr << "\n" << flush;
+        cerr << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
+        cerr << "\n" << flush;
         return 0;
     }
     rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len);
     if(rv != RSA_NO_ERROR) {
-      std::cout << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
+      std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
       return 0;
     }
     add_rsa_key = 1;
@@ -189,12 +190,20 @@ int ProcessDashDashArg(gxString &arg)
   
   if(arg == "rsa-key-username") {
     if(equal_arg.is_null()) {
-      cout << "ERROR: --rsa-key-username missing name: --rsa-key-username=$(whoami)" << "\n" << flush;
+      cerr << "ERROR: --rsa-key-username missing name: --rsa-key-username=$(whoami)" << "\n" << flush;
       return 0;
     }
     rsa_key_username = equal_arg;
     has_valid_args = 1;
   }
+
+  if(!has_valid_args) {
+    cerr << "\n" << flush;
+    cerr << "Unknown or invalid --" << arg.c_str() << "\n" << flush;
+    cerr << "Exiting..." << "\n" << flush;
+    cerr << "\n" << flush;
+  }
+
   arg.Clear();
   return has_valid_args;
 }
@@ -207,10 +216,10 @@ int ProcessArgs(char *arg)
     case 'c':
       num_buckets = (gxsPort_t)atoi(arg+2); 
       if((num_buckets < 1) || (num_buckets > 65535)) {
-	cout << "\n" << flush;
-	cout << "Bad number of cache buckets specified" << "\n" << flush;
-	cout << "Valid range = 1 to 65535 bytes" << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "Bad number of cache buckets specified" << "\n" << flush;
+	cerr << "Valid range = 1 to 65535 bytes" << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       break;
@@ -225,17 +234,17 @@ int ProcessArgs(char *arg)
     case 'd':
       output_dir_name = arg+2;
       if(!futils_exists(output_dir_name.c_str())) {
-	cout << "\n" << flush;
-	cout << "Bad output DIR specified" << "\n" << flush;
-	cout << output_dir_name.c_str() << " does not exist" << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << output_dir_name.c_str() << " does not exist" << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       if(!futils_isdirectory(output_dir_name.c_str())) {
-	cout << "\n" << flush;
-	cout << "Bad output DIR specified" << "\n" << flush;
-	cout << output_dir_name.c_str() << " is a file name" << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       break;
@@ -257,17 +266,17 @@ int ProcessArgs(char *arg)
       output_dir_name = arg+2;
       if(!futils_exists(output_dir_name.c_str())) {
 	if(futils_mkdir(output_dir_name.c_str()) != 0) {
-	  cout << "\n" << flush;
-	  cout << "Error making directory" << "\n" << flush;
-	  cout << "\n" << flush;
+	  cerr << "\n" << flush;
+	  cerr << "Error making directory" << "\n" << flush;
+	  cerr << "\n" << flush;
 	  return 0;
 	}
       }
       if(!futils_isdirectory(output_dir_name.c_str())) {
-	cout << "\n" << flush;
-	cout << "Bad output DIR specified" << "\n" << flush;
-	cout << output_dir_name.c_str() << " is a file name" << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "Bad output DIR specified" << "\n" << flush;
+	cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       break;
@@ -299,15 +308,15 @@ int ProcessArgs(char *arg)
     case 'k':
       input_arg_key_file = arg+2;
       if(!futils_exists(input_arg_key_file.c_str())) {
-	cout << "\n" << flush;
-	cout << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
-	cout << "\n" << flush;
-	cout << "ERROR: " << ebuf.c_str() << "\n" << flush;
-	cout << "\n" << flush;
+	cerr << "\n" << flush;
+	cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+	cerr << "\n" << flush;
 	return 0;
       }
       CommandLinePassword.secret = key;
@@ -326,10 +335,10 @@ int ProcessArgs(char *arg)
       break;
       
     default:
-      cout << "\n" << flush;
-      cout << "Unknown switch " << arg << "\n" << flush;
-      cout << "Exiting..." << "\n" << flush;
-      cout << "\n" << flush;
+      cerr << "\n" << flush;
+      cerr << "Unknown switch " << arg << "\n" << flush;
+      cerr << "Exiting..." << "\n" << flush;
+      cerr << "\n" << flush;
       return 0;
   }
   arg[0] = '\0';
@@ -367,9 +376,9 @@ int main(int argc, char **argv)
   char top_pwd[futils_MAX_DIR_LENGTH];
   char curr_pwd[futils_MAX_DIR_LENGTH];
   if(futils_getcwd(top_pwd, futils_MAX_DIR_LENGTH) != 0) {
-    cout << "\n" << flush;
-    cout << "Encountered fatal fcrypt error" << "\n";
-    cout << "Error setting top present working DIR" << "\n";
+    cerr << "\n" << flush;
+    cerr << "Encountered fatal fcrypt error" << "\n";
+    cerr << "Error setting top present working DIR" << "\n";
     return 1;
   }
 
@@ -386,25 +395,25 @@ int main(int argc, char **argv)
 	    if(recurse) {
 	      if(use_abs_path) cryptdb_makeabspath(fn);
 	      if(futils_getcwd(curr_pwd, futils_MAX_DIR_LENGTH) != 0) {
-		cout << "\n" << flush;
-		cout << "Encountered fatal fcrypt error" << "\n";
-		cout << "Error setting current present working DIR" << "\n";
+		cerr << "\n" << flush;
+		cerr << "Encountered fatal fcrypt error" << "\n";
+		cerr << "Error setting current present working DIR" << "\n";
 		return 1;
 	      }      
 
 	      num_dirs++;
 	      if(!cryptdb_getdircontents(fn, err_str, file_list, 
 					 num_files, num_dirs)) {
-		cout << "\n" << flush;
-		cout << "Encountered fatal fcrypt error" << "\n";
-		cout << err_str.c_str() << "\n";
+		cerr << "\n" << flush;
+		cerr << "Encountered fatal fcrypt error" << "\n";
+		cerr << err_str.c_str() << "\n";
 		return 1; 
 	      }
 
 	      if(futils_chdir(curr_pwd) != 0) {
-		cout << "\n" << flush;
-		cout << "Encountered fatal fcrypt error" << "\n";
-		cout << "Error resetting current present working DIR" << "\n";
+		cerr << "\n" << flush;
+		cerr << "Encountered fatal fcrypt error" << "\n";
+		cerr << "Error resetting current present working DIR" << "\n";
 		return 1;
 	      }
 
@@ -422,21 +431,18 @@ int main(int argc, char **argv)
   }
 
   if(num_files == 0) {
-    cout << "\n" << flush;
-    cout << "Encountered fatal fcrypt error" << "\n";
-    cout << "No file name specified" << "\n";
+    cerr << "\n" << flush;
+    cerr << "Encountered fatal fcrypt error" << "\n";
+    cerr << "No file name specified" << "\n";
     return 1;
   }
   
   if(futils_chdir(top_pwd) != 0) {
-    cout << "\n" << flush;
-    cout << "Encountered fatal fcrypt error" << "\n";
-    cout << "Error resetting top present working DIR" << "\n";
+    cerr << "\n" << flush;
+    cerr << "Encountered fatal fcrypt error" << "\n";
+    cerr << "Error resetting top present working DIR" << "\n";
     return 1;
   }
-
-  DisplayVersion();
-  cout << "\n" << flush;
 
   CryptSecretHdr cp;
   CryptSecretHdr tmp_cp;
@@ -444,29 +450,32 @@ int main(int argc, char **argv)
   
   if(use_input_arg_key_file) {
     if(add_rsa_key) {
-      cout << "Using symmetric key to add an RSA user key to an encrypted file" << "\n" << flush;
+      cerr << "Using symmetric key to add an RSA user key to an encrypted file" << "\n" << flush;
       cp.secret = CommandLinePassword.secret;
     }
     else {
-      cout << "Using symmetric key for file encryption" << "\n" << flush;
+      cerr << "Using symmetric key for file encryption" << "\n" << flush;
     }
   }
   else {
     if(add_rsa_key) {
-      cout << "Using password to add an RSA user key to an encrypted file" << "\n" << flush;
+      cerr << "Using password to add an RSA user key to an encrypted file" << "\n" << flush;
       if(CommandLinePassword.secret.is_null()) {
-	cout << "Password: " << flush;
+	cerr << "Password: " << flush;
 	if(!consoleGetString(password, 1)) {
 	  password.Clear(1);
-	  cout << "Invalid entry!" << "\n" << flush;
+	  cerr << "Invalid entry!" << "\n" << flush;
 	  return 1;
 	}
 	cp.secret.Load(password.c_str(), password.length());
 	password.Clear(1);
       }
+      else {
+	cp.secret = CommandLinePassword.secret;
+      }
     }
     else {
-      cout << "Using password for symmetric file encryption" << "\n" << flush;
+      cerr << "Using password for symmetric file encryption" << "\n" << flush;
     }
   }
 
@@ -477,13 +486,13 @@ int main(int argc, char **argv)
 
   if(add_rsa_key) {
     if(rsa_key_username.is_null()) {
-      cout << "\n" << flush;
-      cout << "ERROR: --add-rsa-key requires --rsa-key-username" << "\n" << flush;
-      cout << "\n" << flush;
+      cerr << "\n" << flush;
+      cerr << "ERROR: --add-rsa-key requires --rsa-key-username" << "\n" << flush;
+      cerr << "\n" << flush;
       return 1;
     }
 
-    cout << "Adding RSA key for user " << rsa_key_username.c_str() << " to encrypted file " << ptr->data.c_str() << "\n" << flush;
+    cerr << "Adding RSA key for user " << rsa_key_username.c_str() << " to encrypted file " << ptr->data.c_str() << "\n" << flush;
 
     RSA_openssl_init();
     memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
@@ -491,7 +500,7 @@ int main(int argc, char **argv)
 				cp.secret.m_buf(), cp.secret.length(),
 				rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len);
     if(rv != RSA_NO_ERROR) {
-      std::cout << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
+      std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
       return 1;
     }
 
@@ -499,27 +508,27 @@ int main(int argc, char **argv)
       FCryptCache fc(num_buckets);
       fc.key_iterations = key_iterations;
       if(!fc.AddRSAKeyToStaticArea(ptr->data.c_str(), cp.secret, public_key, public_key_len, rsa_key_username.c_str())) {
-	cout << "ERROR: " << fc.err.c_str() << "\n" << flush;
+	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
+	return 0;
       }
-      cout << "Public RSA key " << rsa_key_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+      cerr << "Public RSA key " << rsa_key_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
       ptr = ptr->next;
     }
     return 0;
   }
 
-
   if(CommandLinePassword.secret.is_null()) {
     cout << "Password: " << flush;
     if(!consoleGetString(password, 1)) {
       password.Clear(1);
-      cout << "Invalid entry!" << "\n" << flush;
+      cerr << "Invalid entry!" << "\n" << flush;
       return 1;
     }
     cout << "\n" << flush;
     if((int)password.length() < AES_MIN_SECRET_LEN) {
-      cout << "Password does not meet length requirement" 
+      cerr << "Password does not meet length requirement" 
 	   << "\n" << flush;
-      cout << "Password must be at least " << AES_MIN_SECRET_LEN 
+      cerr << "Password must be at least " << AES_MIN_SECRET_LEN 
 	   << " characters long" << "\n" << flush;
       password.Clear(1);
       return 1;
@@ -528,14 +537,14 @@ int main(int argc, char **argv)
     if(!consoleGetString(password2, 1)) {
       password.Clear(1);
       password2.Clear(1);
-      cout << "Invalid entry!" << "\n" << flush;
+      cerr << "Invalid entry!" << "\n" << flush;
       return 1;
     }
     cout << "\n" << flush;
     if(password != password2) {
       password.Clear(1);
       password2.Clear(1);
-      cout << "Passwords do not match" << "\n" << flush;
+      cerr << "Passwords do not match" << "\n" << flush;
       return 1;
     }
     cp.secret.Load(password.c_str(), password.length());
@@ -546,9 +555,9 @@ int main(int argc, char **argv)
     cp.secret = CommandLinePassword.secret;
     CommandLinePassword.Reset();
     if((int)cp.secret.length() < AES_MIN_SECRET_LEN) {
-      cout << "Password does not meet length requirement" 
+      cerr << "Password does not meet length requirement" 
 	   << "\n" << flush;
-      cout << "Password must be at least " << AES_MIN_SECRET_LEN 
+      cerr << "Password must be at least " << AES_MIN_SECRET_LEN 
 	   << " characters long" << "\n" << flush;
       return 1;
     }
@@ -572,40 +581,40 @@ int main(int argc, char **argv)
     gxString sbuf;
 
     if(clientcfg->verbose_mode) {
-      cout << "Encrypting:      " << ptr->data.c_str() << "\n" << flush;
+      cerr << "Encrypting:      " << ptr->data.c_str() << "\n" << flush;
       if(mode == -1 || mode == 3) {
-	cout << "Encryption mode: " << "AES 256 CBC" << "\n" << flush;
+	cerr << "Encryption mode: " << "AES 256 CBC" << "\n" << flush;
       }
       else {
-	cout << "Encryption mode: " << mode << "\n" << flush;
+	cerr << "Encryption mode: " << mode << "\n" << flush;
       }
-      cout << "Key iterations:  " << key_iterations << "\n" << flush;
-      cout << "Cache buckets:   " << num_buckets << "\n" << flush;
+      cerr << "Key iterations:  " << key_iterations << "\n" << flush;
+      cerr << "Cache buckets:   " << num_buckets << "\n" << flush;
     }
     else {
-      cout << "Encrypting: " << ptr->data.c_str() << "\n" << flush;
+      cerr << "Encrypting: " << ptr->data.c_str() << "\n" << flush;
     }
-    if(fc.mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
+    if(fc.mode == 0) cerr << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
 
     rv = fc.EncryptFile(ptr->data.c_str(), cp.secret);
     cp = tmp_cp;
     if(!rv) {
-      cout << "File encryption failed" << "\n" << flush;
-      cout << fc.err.c_str() << "\n" << flush;
+      cerr << "File encryption failed" << "\n" << flush;
+      cerr << fc.err.c_str() << "\n" << flush;
       ptr = ptr->next;
       err = 1;
       ptr = ptr->next;
       continue;
     } 
 
-    cout << "File encrypt successful" << "\n" << flush;
+    cerr << "File encrypt successful" << "\n" << flush;
     sbuf << clear << wn << fc.BytesWrote();
-    cout << "Wrote " << sbuf.c_str() << " bytes to "
+    cerr << "Wrote " << sbuf.c_str() << " bytes to "
 	 << fc.OutFileName() << "\n" << flush;
 
     if(remove_src_file) {
       if(futils_remove(ptr->data.c_str()) != 0) {
-	cout << "Error removing " << ptr->data.c_str() << " source file"
+	cerr << "Error removing " << ptr->data.c_str() << " source file"
 	     << "\n" << flush;
       }
     }
@@ -615,11 +624,11 @@ int main(int argc, char **argv)
 
   if(err == 0) {
     if(num_files > 1) {
-      cout << "Encrypted " << num_files << " files" 
+      cerr << "Encrypted " << num_files << " files" 
 	   << "\n" << flush;
     }
     if(num_dirs > 0) {
-      cout << "Traversed " << num_dirs << " directories"  
+      cerr << "Traversed " << num_dirs << " directories"  
 	   << "\n" << flush;
     }
   }
