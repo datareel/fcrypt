@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/27/2023
+// Date Last Modified: 11/29/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -52,8 +52,6 @@ using namespace std; // Use unqualified names for Standard C++ library
 #include "bstreei.h"
 #include "gxs_b64.h"
 
-// Constants
-
 // Globals
 int num_buckets = 1024;
 int overwrite = 0;
@@ -73,43 +71,12 @@ int use_input_arg_key_file = 0;
 gxString input_arg_key_file;
 MemoryBuffer key;
 gxString public_rsa_key_file;
-int use_public_rsa_key = 0;
+int add_rsa_key = 0;
 unsigned char rsa_ciphertext[8192];
 unsigned rsa_ciphertext_len;
 gxString rsa_key_username;
-
-// ----------------------------------------------------------- // 
-// Interactive user function prototypes
-// ----------------------------------------------------------- // 
-int CryptFile();
-int ChangeDir(gxString &path, int prompt);
-int LPWD();
-int ListSystemDir(gxString &path, char sort_by = 'n');
-int SetCacheBuckets(int intbuf = -1);
-int SetDotExtension(gxString &ext);
-int SetOutputDir(gxString &dir);
-int SetEncLevel(int intbuf = -1);
-void ShowOptions();
-int SetKey();
-int SetKeyIterations(int intbuf = 1000);
-// ----------------------------------------------------------- // 
-
-void PausePrg()
-// Function used to pause the program.
-{
-  cout << "\n" << flush;
-  cout << "Press any key to continue..." << "\n" << flush;
-  int c;
-  consoleGetChar(c);
-}
-
-void ClearInputStream(istream &s)
-// Used to clear istream
-{
-  char c;
-  s.clear();
-  while(s.get(c) && c != '\n') { ; }
-}
+char public_key[RSA_max_keybuf_len];
+unsigned public_key_len = 0;
 
 void DisplayVersion()
 {
@@ -128,8 +95,7 @@ void HelpMessage()
 {
   DisplayVersion();
   cout << "\n" << flush;
-  cout << "Usage: " << clientcfg->executable_name.c_str() << " [switches] " 
-       << "filename" << "\n" << flush;
+  cout << "Usage: " << clientcfg->executable_name.c_str() << " [switches] " << "filename" << "\n" << flush;
   cout << "Switches: -? = Display this help message and exit." << "\n" << flush;  
   cout << "          -0 = No encryption for testing only." << "\n" << flush;
   cout << "          -3 = 256-bit encryption (default)." << "\n" << flush;
@@ -139,7 +105,7 @@ void HelpMessage()
   cout << "          -D[name] = Specify and make output DIR" << "\n" << flush;
   cout << "          -f[name] = Specify output file and DIR name" << "\n" << flush;
   cout << "          -g = Generate hashed output file names" << "\n" << flush;
-  cout << "          -k = Supply a key used to encrypt" << "\n" << flush;
+  cout << "          -k = Supply a key used to encrypt file" << "\n" << flush;
   cout << "          -o = Overwrite existing enc file(s)" << "\n" << flush;
   cout << "          -p = Supply a password used to encrypt" << "\n" << flush;
   cout << "          -r = Remove unencrypted source file(s)" << "\n" << flush;
@@ -148,7 +114,8 @@ void HelpMessage()
   cout << "          -x[ext] = Specify enc file(s) dot extension" << "\n" << flush;
   cout << "\n" << flush;
   cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
-  cout << "          --master-rsa-key=pubkey.pem (Use a single RSA key for encryption)" << "\n" << flush;
+  cout << "          --add-rsa-key=pubkey.pem (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -156,6 +123,7 @@ int ProcessDashDashArg(gxString &arg)
 {
   gxString sbuf, equal_arg;
   int has_valid_args = 0;
+  int rv = 0;
   
   if(arg.Find("=") != -1) {
     // Look for equal arguments
@@ -198,23 +166,27 @@ int ProcessDashDashArg(gxString &arg)
     has_valid_args = 1;
   }
 
-  if(arg == "master-rsa-key") {
+  if(arg == "add-rsa-key") {
     if(equal_arg.is_null()) {
-      cout << "ERROR: --master-rsa-key missing filename: --master-rsa-key=/$HOME/keys/rsa_pubkey.pem" << "\n" << flush;
+      cout << "ERROR: --add-rsa-key missing filename: --add-rsa-key=/$HOME/keys/rsa_pubkey.pem" << "\n" << flush;
       return 0;
     }
     public_rsa_key_file = equal_arg;
     if(!futils_exists(public_rsa_key_file.c_str())) {
-	cout << "\n" << flush;
-	cout << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
-	cout << "\n" << flush;
-	return 0;
+        cout << "\n" << flush;
+        cout << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
+        cout << "\n" << flush;
+        return 0;
     }
-    use_public_rsa_key = 1;
+    rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len);
+    if(rv != RSA_NO_ERROR) {
+      std::cout << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
+      return 0;
+    }
+    add_rsa_key = 1;
     has_valid_args = 1;
-    rsa_key_username = "master_key";
   }
-
+  
   if(arg == "rsa-key-username") {
     if(equal_arg.is_null()) {
       cout << "ERROR: --rsa-key-username missing name: --rsa-key-username=$(whoami)" << "\n" << flush;
@@ -365,327 +337,6 @@ int ProcessArgs(char *arg)
   return 1; // All command line arguments were valid
 }
 
-void PrgMenu()
-{
-  const int num_menu = 24;
-  const char *menu[num_menu] = {
-    "cache    Set cache buckets",
-    "cd       Change DIR",
-    "clear    Clear screen",
-    "crypt    Encrypt file",
-    "date     Display date/time",
-    "ext      Set dot extension",
-    "hash     Hashed outfile names",
-    "help     Print help menu",
-    "iter     Set new key iterations",
-    "key      Use key file to encrypt",
-    "level    Set encryption level",
-    "ls       list files by name",
-    "ls -d    list files by date",
-    "ls -s    list files by size",
-    "over     Overwrite file(s)",
-    "pwd      Present working DIR",
-    "quit     Quit program",
-    "remove   Remove source file(s)",
-    "recurse  Follow DIRs",
-    "setdir   Set output DIR",
-    "shell    Shell to command prompt",
-    "show     Show current settings",
-    "ver      Program version info",
-    "verb     Toggle verbose mode"
-  };
-
-  int i, j;
-  const int slen = 32;
-
-  cout << "\n" << flush;
-  cout << "------------------ File Crypt User Commands ------------------" 
-       << "\n" << flush;
-  
-  // Display split menu
-  for(i = 0; i < num_menu; i++) {
-    cout << menu[i];
-    j = strlen(menu[i]);
-    while(j++ < slen) cout << " ";
-    if(i < (num_menu-1)) cout << " | ";
-    i++;
-    if(i == num_menu) break;
-    cout << menu[i];
-    cout << "\n" << flush;
-  }
-  cout << "\n" << flush;
-}
-
-int InteraciveMode()
-{
-  cout << "Entering Interactive Mode" << "\n" << flush;
-
-  int rv = 1;
-  int intbuf = -1;
-  gxString cmd_prompt, input, command, fdnames;
-
-  cmd_prompt << clear << "[fcrypt (? help)]> ";
-
-
-  while(rv) {
-    cout << "\n";
-    cout << cmd_prompt.c_str() << flush;
-    input.Clear();
-    consoleGetString(input);
-    input.TrimLeadingSpaces();
-    input.TrimTrailingSpaces();
-    input.ToLower();
-    command = input;
-
-    // Intercept dash commands
-    if(command == "ls -d") {
-      command = "ls-d";
-      input.FilterString("ls -d");
-    }
-    if(command == "ls -s") {
-      command = "ls-s";
-      input.FilterString("ls -s");
-    }
-    if(command == "crypt -s") {
-      command = "crypt-s";
-      //input.FilterString("crypt -r");
-      input.FilterString("crypt-s");
-    }
-
-    // Remove any command arguments
-    command.DeleteAfterIncluding(" ");
-
-    // Update the command history
-    clientcfg->history[clientcfg->curr_command] = input;
-    clientcfg->history[clientcfg->curr_command].FilterChar('\r');
-    clientcfg->history[clientcfg->curr_command].FilterChar('\n');
-    clientcfg->curr_command++;
-    if(clientcfg->curr_command > (OP_HISTORY_LEN-1)) {
-      clientcfg->curr_command = 0;
-    }
-
-    // Execute the user command
-    if((command == "?") || (command == "help")) {
-      PrgMenu();
-      continue;
-    }
-    if((command == "quit") || (command == "exit") || (command == "bye")) {
-      break; // Exit the program
-    }
-    if(command == "cache") {
-      intbuf = -1;
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	intbuf = input.Atoi();
-      }
-      SetCacheBuckets(intbuf);
-      continue;
-    }
-    if(command == "cd") {
-      fdnames.Clear();
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	fdnames = input;
-	ChangeDir(fdnames, 0);
-      }
-      else {
-	ChangeDir(fdnames, 1);
-      }
-      continue;
-    }
-    if(command == "clear") {
-      consoleClear(); 
-      continue;
-    }
-    if(command == "crypt") {
-      CryptFile();
-      continue;
-    }
-    if(command == "date") {
-      consoleDateTime();
-      continue;
-    }
-    if(command == "ext") {
-      fdnames.Clear();
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	fdnames = input;
-      }
-      SetDotExtension(fdnames);
-      continue;
-    }
-    if(command == "hash") {
-      if(gen_file_names == 1) {
-	cout << "\n" << flush;
-	cout << "Generate hashed output file names option off" 
-	     << "\n" << flush;
-	gen_file_names = 0;
-      }
-      else {
-	cout << "\n" << flush;
-	cout << "Generate hashed output file names option on" 
-	     << "\n" << flush;
-	gen_file_names = 1;
-      }
-      continue;
-    }
-    if(command == "key") {
-      SetKey();
-      continue;
-    }
-    if(command == "level") {
-      intbuf = -1;
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	intbuf = input.Atoi();
-      }
-      SetEncLevel(intbuf);
-      continue;
-    }
-    if(command == "iter") {
-      intbuf = -1;
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	intbuf = input.Atoi();
-      }
-      SetKeyIterations(intbuf);
-      continue;
-    }
-
-    if((command == "ls") || (command == "dir")) {
-      fdnames.Clear();
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	fdnames = input;
-      }
-      ListSystemDir(fdnames, 'n');
-      continue;
-    }
-    if(command == "ls-s") {
-      fdnames.Clear();
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	fdnames = input;
-      }
-      ListSystemDir(fdnames, 's');
-      continue;
-    }
-    if(command == "ls-d") {
-      fdnames.Clear();
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	fdnames = input;
-      }
-      ListSystemDir(fdnames, 'd');
-      continue;
-    }
-    if(command == "over") {
-      if(overwrite == 1) {
-	cout << "\n" << flush;
-	cout << "Overwrite existing enc file(s) option off" << "\n" << flush;
-	overwrite = 0;
-      }
-      else {
-	cout << "\n" << flush;
-	cout << "Overwrite existing enc file(s) option on" << "\n" << flush;
-	overwrite = 1;
-      }
-      continue;
-    }
-    if(command == "pwd") {
-      LPWD();
-      continue;
-    }
-    if(command == "recurse") {
-      if(recurse == 1) {
-	cout << "\n" << flush;
-	cout << "Recurse directory option off" << "\n" << flush;
-	recurse = 0;
-      }
-      else {
-	cout << "\n" << flush;
-	cout << "Recurse directory option on" << "\n" << flush;
-	recurse = 1;
-      }
-      continue;
-    }
-    if(command == "remove") {
-      if(remove_src_file == 1) {
-	cout << "\n" << flush;
-	cout << "Remove source file option off" << "\n" << flush;
-	remove_src_file = 0;
-      }
-      else {
-	cout << "\n" << flush;
-	cout << "Remove source file option on" << "\n" << flush;
-	remove_src_file = 1;
-      }
-      continue;
-    }
-    if(command == "setdir") {
-      fdnames.Clear();
-      if(input.Find(" ") != -1) {
-	input.TrimTrailingSpaces();
-	input.DeleteBeforeIncluding(" ");
-	fdnames = input;
-      }
-      SetOutputDir(fdnames);
-      continue;
-    }
-    if((command == "shell") || (command == "!")) {
-      consoleShell(); 
-      continue;
-    }
-    if(command == "show") {
-      ShowOptions();
-      continue;
-    }
-    if(command == "ver") {
-      DisplayVersion();
-      continue;
-    }
-    if(command == "verb") {
-      if(clientcfg->verbose_mode == 1) {
-	cout << "\n" << flush;
-	cout << "Verbose mode off" << "\n" << flush;
-	clientcfg->verbose_mode = 0;
-      }
-      else {
-	cout << "\n" << flush;
-	cout << "Verbose mode on" << "\n" << flush;
-	clientcfg->verbose_mode = 1;
-      }
-      continue;
-    }
-
-    // Default message if command unknown to interrupter or
-    // no command is entered
-    cout << "\n" << flush;
-    if(!command.is_null()) {
-      cout << "Unrecognized command: " << command.c_str() << "\n" << flush;
-      cout << "\n" << flush;
-      continue;
-    }
-    if(!input.is_null()) {
-      cout << "Unrecognized input string: " << input.c_str() << "\n" << flush;
-      cout << "\n" << flush;
-      continue;
-    }
-  }
-
-  cout << "\n" << flush;
-  cout << "Exiting fcrypt program" << "\n" << flush;
-  return 0;
-}
-
 int main(int argc, char **argv)
 {
 #ifdef __MSVC_DEBUG__
@@ -701,15 +352,6 @@ int main(int argc, char **argv)
 
   if(argc < 2) {
     HelpMessage();
-
-    cout << "\n" << flush;
-    cout << "Press i key for interactive mode or any other key to exit..." 
-	 << "\n" << flush;
-    int c;
-    consoleGetChar(c);
-    if(((char)c == 'i') || ((char)c == 'I')) {
-      return InteraciveMode();
-    } 
     return 1;
   }
 
@@ -801,38 +443,71 @@ int main(int argc, char **argv)
   gxString password, password2;
   
   if(use_input_arg_key_file) {
-    cout << "Using key file for encryption" << "\n" << flush;
+    if(add_rsa_key) {
+      cout << "Using symmetric key to add an RSA user key to an encrypted file" << "\n" << flush;
+      cp.secret = CommandLinePassword.secret;
+    }
+    else {
+      cout << "Using symmetric key for file encryption" << "\n" << flush;
+    }
+  }
+  else {
+    if(add_rsa_key) {
+      cout << "Using password to add an RSA user key to an encrypted file" << "\n" << flush;
+      if(CommandLinePassword.secret.is_null()) {
+	cout << "Password: " << flush;
+	if(!consoleGetString(password, 1)) {
+	  password.Clear(1);
+	  cout << "Invalid entry!" << "\n" << flush;
+	  return 1;
+	}
+	cp.secret.Load(password.c_str(), password.length());
+	password.Clear(1);
+      }
+    }
+    else {
+      cout << "Using password for symmetric file encryption" << "\n" << flush;
+    }
   }
 
-  if(use_public_rsa_key) {
-    cout << "Using master RSA key file for encryption" << "\n" << flush;
-    RSA_openssl_init();
-    char public_key[RSA_max_keybuf_len];
-    unsigned public_key_len = 0;
-    rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len);
-    if(rv != RSA_NO_ERROR) {
-      std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
+  gxListNode<gxString> *ptr = file_list.GetHead();
+  tmp_cp = cp;
+  rv = err = 0;
+  unsigned offset = 0;
+
+  if(add_rsa_key) {
+    if(rsa_key_username.is_null()) {
+      cout << "\n" << flush;
+      cout << "ERROR: --add-rsa-key requires --rsa-key-username" << "\n" << flush;
+      cout << "\n" << flush;
       return 1;
     }
-    if(CommandLinePassword.secret.is_null()) { // No AES file encryption key or password was provided by the caller 
-      // Generate a file encryption key that will be used for the AES encryption
-      unsigned char file_encryption_key[128];
-      AES_fillrand(file_encryption_key, sizeof(file_encryption_key));
-      key.Cat(file_encryption_key, sizeof(file_encryption_key));
-      CommandLinePassword.secret = key;
-    }
-    
-    memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
 
+    cout << "Adding RSA key for user " << rsa_key_username.c_str() << " to encrypted file " << ptr->data.c_str() << "\n" << flush;
+
+    RSA_openssl_init();
+    memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
     rv = RSA_public_key_encrypt((const unsigned char *)public_key, public_key_len,
-				CommandLinePassword.secret.m_buf(), CommandLinePassword.secret.length(),
+				cp.secret.m_buf(), cp.secret.length(),
 				rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len);
     if(rv != RSA_NO_ERROR) {
-      std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
+      std::cout << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
       return 1;
     }
+
+    while(ptr) {
+      FCryptCache fc(num_buckets);
+      fc.key_iterations = key_iterations;
+      if(!fc.AddRSAKeyToStaticArea(ptr->data.c_str(), cp.secret, public_key, public_key_len, rsa_key_username.c_str())) {
+	cout << "ERROR: " << fc.err.c_str() << "\n" << flush;
+      }
+      cout << "Public RSA key " << rsa_key_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+      ptr = ptr->next;
+    }
+    return 0;
   }
-  
+
+
   if(CommandLinePassword.secret.is_null()) {
     cout << "Password: " << flush;
     if(!consoleGetString(password, 1)) {
@@ -879,56 +554,8 @@ int main(int argc, char **argv)
     }
   }
   
-  gxListNode<gxString> *ptr = file_list.GetHead();
-  tmp_cp = cp;
-  rv = err = 0;
-  unsigned offset = 0;
-  
   while(ptr) {
     FCryptCache fc(num_buckets);
-    if(use_public_rsa_key) {
-      // Add an RSA key for access using asymmetric encryption 
-      // Block header -> ciphertext -> hmac -> username 
-      StaticDataBlockHdr static_data_block_header;
-      unsigned char hash[AES_MAX_HMAC_LEN];
-      char username_buf[1024];
-      memset(username_buf, 0, sizeof(username_buf));
-      unsigned username_buf_len = 0;
-      
-      static_data_block_header.block_len = 0;
-      static_data_block_header.block_type = 1;
-      static_data_block_header.block_status = 1;
-      
-      static_data_block_header.ciphertext_len = rsa_ciphertext_len;
-      static_data_block_header.block_len += rsa_ciphertext_len;
-      static_data_block_header.block_len += sizeof(hash);
-      static_data_block_header.username_len = 0;
-
-      if(!rsa_key_username.is_null()) {
-	gxsBase64Encode(rsa_key_username.c_str(), username_buf, rsa_key_username.length());
-	username_buf_len = strlen(username_buf);
-	static_data_block_header.username_len = username_buf_len;
-      }
-            
-      offset = 0;
-      memmove(fc.static_data, &static_data_block_header, sizeof(static_data_block_header));
-      offset+=sizeof(static_data_block_header);
-      memmove(fc.static_data+offset, rsa_ciphertext, rsa_ciphertext_len);
-      offset+=rsa_ciphertext_len;
-
-      rv = AES_HMAC(cp.secret.m_buf(), cp.secret.length(), rsa_ciphertext, rsa_ciphertext_len, hash, sizeof(hash));
-      if(rv != AES_NO_ERROR) {
-	cout << "ERROR: Failed to generate HMAC for RSA ciphertext" << "\n" << flush;
-	ptr = ptr->next;
-	continue;
-      }
-      memmove(fc.static_data+offset, hash, sizeof(hash)); // Store the HMAC
-      offset+=sizeof(hash);
-      
-      if(static_data_block_header.username_len > 0) {
-	memmove(fc.static_data+offset, username_buf, username_buf_len); // Store the HMAC
-      }
-    }
     fc.mode = mode;
     fc.key_iterations = key_iterations;
     fc.SetOverWrite(overwrite);
@@ -998,492 +625,6 @@ int main(int argc, char **argv)
   }
 
   return err;
-}
-
-// ----------------------------------------------------------- // 
-// Interactive user functions
-// ----------------------------------------------------------- // 
-int CryptFile()
-{
-  CryptSecretHdr cp;
-  CryptSecretHdr tmp_cp;
-
-  gxString fname;
-  cout << "\n" << flush;
-  cout << "File name: " << flush;
-  if(!consoleGetString(fname)) {
-    cout << "Invalid entry!" << "\n" << flush;
-    return  0;
-  }
-  cout << "\n" << flush;
-  if(fname.is_null()) {
-    cout << "No file name was entered" << "\n" << flush;
-    return  0;
-  }
-
-  gxString password, password2;
-  
-  if(CommandLinePassword.secret.is_null()) {
-    cout << "Password: " << flush;
-    if(!consoleGetString(password, 1)) {
-      password.Clear(1);
-      cout << "Invalid entry!" << "\n" << flush;
-      return  0;
-    }
-    cout << "\n" << flush;
-
-    cout << "Retype password: " << flush;
-    if(!consoleGetString(password2, 1)) {
-      password.Clear(1);
-      password2.Clear(1);
-      cout << "Invalid entry!" << "\n" << flush;
-      return  0;
-    }
-    cout << "\n" << flush;
-    if(password != password2) {
-      password.Clear(1);
-      password2.Clear(1);
-      cout << "Passwords do not match" << "\n" << flush;
-    return  0;
-    }
-    cp.secret.Load(password.c_str(), password.length());
-    password.Clear(1);
-    password2.Clear(1);
-  }
-  else {
-    cp.secret = CommandLinePassword.secret;
-    CommandLinePassword.Reset();
-  }
-  
-  if((int)cp.secret.length() < AES_MIN_SECRET_LEN) {
-    cout << "Password does not meet length requirement" 
-	 << "\n" << flush;
-    cout << "Password must be at least " << AES_MIN_SECRET_LEN 
-	 << " characters long" << "\n" << flush;
-      return  0;
-  }
-    
-  FCryptCache fc(num_buckets);
-  fc.mode = mode;
-  fc.key_iterations = key_iterations;
-  fc.SetOverWrite(overwrite);
-  fc.SetDotExt(en_dot_ext.c_str());
-  if(!output_dir_name.is_null()) {
-    fc.SetDir(output_dir_name.c_str());
-  }
-  if(!output_file_name.is_null()) {
-    fc.SetOutputFileName(output_file_name.c_str());
-  }
-  if(gen_file_names) {
-    fc.GenFileNames();
-  }
-  gxString sbuf;
-
-  if(clientcfg->verbose_mode) {
-    cout << "Encrypting:      " << fname.c_str() << "\n" << flush;
-    if(mode == -1 || mode == 3) {
-      cout << "Encryption mode: " << "AES 256 CBC" << "\n" << flush;
-    }
-    else {
-      cout << "Encryption mode: " << mode << "\n" << flush;
-    }
-    cout << "Key iterations:  " << key_iterations << "\n" << flush;
-    cout << "Cache buckets:   " << num_buckets << "\n" << flush;
-  }
-  else {
-    cout << "Encrypting: " << fname.c_str() << "\n" << flush;
-  }
-  if(mode == 0) cout << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n" << flush;
-
-  int rv = fc.EncryptFile(fname.c_str(), cp.secret);
-  if(!rv) {
-    cout << "File encryption failed" << "\n" << flush;
-    cout << fc.err.c_str() << "\n" << flush;
-    return  0;
-  } 
-
-  cout << "File encrypt successful" << "\n" << flush;
-  sbuf << clear << wn << fc.BytesWrote();
-  cout << "Wrote " << sbuf.c_str() << " bytes to "
-       << fc.OutFileName() << "\n" << flush;
-
-  if(remove_src_file) {
-    if(futils_remove(fname.c_str()) != 0) {
-      cout << "Error removing " << fname.c_str() << " source file"
-	   << "\n" << flush;
-    }
-  }
-  
-  return 1;
-}
-
-int ChangeDir(gxString &path, int prompt)
-{
-  if(prompt) {
-   cout << "\n" << flush;
-   cout << "Enter the name of the directory> " << flush;
-   consoleGetString(path);
-  }
-  
-  if(path.is_null()) {
-    cout << "\n" << flush;
-    cout << "No file name was entered" << "\n" << flush;
-    return 0;
-  }
-  else {
-    if(!cryptdb_makeabspath(path)) {
-      cout << "\n" << flush;
-      cout << "Error changing directory to: " << path << "\n" << flush;
-      return 0;
-    }
-  }
-
-  if(futils_chdir(path.c_str()) != 0) {
-    cout << "\n" << flush;
-    cout << "Error changing directory to: " << path << "\n" << flush;
-    return 0;
-  }
-
-  cout << "\n" << flush;
-  cout << "Changed directory to: " << path.c_str() << "\n" << flush;
-  return 1;
-}
-
-int SetKey()
-{
-  gxString fname, ebuf;
-  cout << "\n" << flush;
-  cout << "Key file name: " << flush;
-  if(!consoleGetString(fname)) {
-    cout << "Invalid entry!" << "\n" << flush;
-    return  0;
-  }
-  cout << "\n" << flush;
-  if(fname.is_null()) {
-    cout << "No file name was entered" << "\n" << flush;
-    return  0;
-  }
-  if(!futils_exists(fname.c_str())) {
-    cout << "\n" << flush;
-    cout << "ERROR: Key file " << fname.c_str() << " does not exist" <<  "\n" << flush;
-    cout << "\n" << flush;
-    return 0;
-  }
-  if(read_key_file(fname.c_str(), key, ebuf) != 0) {
-    cout << "\n" << flush;
-    cout << "ERROR: " << ebuf.c_str() << "\n" << flush;
-    cout << "\n" << flush;
-    return 0;
-  }
-  CommandLinePassword.secret = key;
-  use_input_arg_key_file  = 1;
-
-  return 1;
-}
-
-int LPWD()
-{
-  char pwd[futils_MAX_DIR_LENGTH];
-  if(futils_getcwd(pwd, futils_MAX_DIR_LENGTH) == 0) {
-    cout << "\n" << flush;
-    cout << pwd << "\n" << flush;
-  }
-  else {
-    cout << "\n" << flush;
-    cout << "Error reading local directory" << "\n" << flush;
-    return 0;
-  }
-  return 1;
-}
-
-int ListSystemDir(gxString &path, char sort_by)
-{
-  if(path.is_null()) {
-    char pwd[futils_MAX_DIR_LENGTH];
-    if(futils_getcwd(pwd, futils_MAX_DIR_LENGTH) != 0) {
-      path = ".";
-    }
-    path = pwd;
-  }
-  cryptdb_makeabspath(path);
-
-  gxString cmd, tfname, sbuf;
-  if((sort_by == 'n') || (sort_by == 'N')) {
-    // Sort by name
-#if defined (__WIN32__)
-    cmd << clear << "dir /on " << path;
-#else
-    cmd << clear << "ls -Aal " << path;
-#endif
-  }
-  else if((sort_by == 'd') || (sort_by == 'D')) {
-    // Sort by date last modified
-#if defined (__WIN32__)
-    cmd << clear << "dir /od " << path;
-#else
-    cmd << clear << "ls -Aaltcr " << path;
-#endif
-  }
-  else if((sort_by == 's') || (sort_by == 'S')) {
-#if defined (__WIN32__)
-    cmd << clear << "dir /os " << path;
-#else
-    cmd << clear << "ls -AalSr " << path;
-#endif
-  }
-  else {
-    // Default to sort by name
-#if defined (__WIN32__)
-    cmd << clear << "dir /on " << path;
-#else
-    cmd << clear << "ls -Aal " << path;
-#endif
-  }
-
-#if defined (__WIN32__)
-  if(futils_mkdir("\\tmp") != 0) {
-    tfname = "list_dir_tmp_000";
-  }
-  else {
-    tfname << clear << "\\tmp\\" << "list_dir_tmp_000";
-  }
-#else
-  if(!futils_exists("/tmp")) {
-    tfname = "list_dir_tmp_000";
-  }
-  else {
-    tfname << clear << "/tmp/" << "list_dir_tmp_000";
-  }
-#endif
-    
-  int i = 1;
-  tfname << i;
-  while(futils_exists(tfname.c_str())) {
-    tfname.DeleteAt((tfname.length()-1), 1);
-    tfname << ++i;
-  }
-
-  cmd << " > " << tfname;
-  system(cmd.c_str());
-
-  DiskFileB infile;
-  if(infile.df_Open(tfname.c_str(), DiskFileB::df_READONLY) != 
-     DiskFileB::df_NO_ERROR) {
-    cout << "\n" << flush;
-    cout << "System list DIR request failed" << "\n" << flush;
-    cout << "Cannot create tmp file" << "\n" << flush;
-    return 0;
-  }
-
-  gxString dir_list(255); char lbuf[255];
-  if(infile.df_GetError() == DiskFileB::df_NO_ERROR) {
-    while(!infile.df_EOF()) {
-      memset(lbuf, 0, sizeof(lbuf));
-      infile.df_GetLine(lbuf, sizeof(lbuf));
-      if(infile.df_GetError() != DiskFileB::df_NO_ERROR) {
-	dir_list = "Error accessing DIR list information";
-	break;
-      }
-#if defined (__WIN32__)
-      if(lbuf[0] == ' ') { // Skip the volume label info
-	if(lbuf[1] != ' ') continue;
-      }
-
-      // Remove the disk info from the DIR listing
-      int offset = FindMatch((const char *)lbuf, 
-			     (const char *)" Dir(s)", 0, 0, 0);
-      if(offset != -1) {
-	offset += strlen(" Dir(s)");
-	lbuf[offset] = 0;
-      }
-      dir_list << lbuf << "\n";
-#else
-      sbuf << clear << lbuf;
-      sbuf.DeleteBeforeLastIncluding("/");
-      int offset = FindMatch((const char *)lbuf, 
-			     (const char *)"/", 0, 0, 0);
-      if(offset != -1) {
-	lbuf[offset] = 0;
-	strcat(lbuf, sbuf.c_str());
-      }
-      dir_list << lbuf << "\n";
-#endif
-    }
-  }
-  else {
-    dir_list = "Error accessing DIR list information";
-  }
-  infile.df_Close();
-
-  if(dir_list.is_null()) {
-    cout << "\n" << flush;
-    cout << "File system error listing DIR"
-	 << "\n" << flush;
-      return 0;
-  }
-
-  cout << "\n" << flush;
-  cout << dir_list.c_str() << "\n" << flush;
-  return 1;
-}
-
-int SetCacheBuckets(int intbuf)
-{
-  if(intbuf == -1) {
-    gxString intstr;
-    cout << "\n" << flush;
-    cout << "Enter number of cache buckets (1-65535)> " << flush;
-    if(!consoleGetString(intstr)) {
-      cout << "\n" << flush;
-      cout << "Invalid entry!" << "\n" << flush;
-      return  0;
-    }
-    intbuf = intstr.Atoi();
-  }
-  if((intbuf < 1) || (intbuf > 65535)) {
-    cout << "\n" << flush;
-    cout << "Bad number of cache buckets specified" << "\n" << flush;
-    cout << "Valid range = 1 to 65535 bytes" << "\n" << flush;
-    return 0;
-  }
-  num_buckets = intbuf;
-  return 1;
-}
-
-int SetDotExtension(gxString &ext)
-{
-  if(ext.is_null()) {
-    cout << "\n" << flush;
-    cout << "Enter new dot extension for enc file(s)> " << flush;
-    if(!consoleGetString(ext)) {
-      cout << "\n" << flush;
-      cout << "Invalid entry!" << "\n" << flush;
-      return  0;
-    }
-  }
-
-  en_dot_ext = ext;
-  if(en_dot_ext[0] != '.') {
-    en_dot_ext.InsertAt(0, ".", 1);
-  }
-
-  return 1;
-}
-
-int SetOutputDir(gxString &dir)
-{
-  if(dir.is_null()) {
-    cout << "\n" << flush;
-    cout << "Enter new output DIR for enc file(s)> " << flush;
-    if(!consoleGetString(dir)) {
-      cout << "\n" << flush;
-      cout << "Invalid entry!" << "\n" << flush;
-      return  0;
-    }
-  }
-
-  if(!futils_exists(dir.c_str())) {
-    if(futils_mkdir(dir.c_str()) != 0) {
-      cout << "\n" << flush;
-      cout << "Error making output directory" << "\n" << flush;
-      return 0;
-    }
-  }
-  if(!futils_isdirectory(dir.c_str())) {
-    cout << "\n" << flush;
-    cout << "Bad output DIR specified" << "\n" << flush;
-    cout << dir.c_str() << " is a file name" << "\n" << flush;
-    return 0;
-  }
-
-  output_dir_name = dir;
-  return 1;
-}
-
-int SetEncLevel(int intbuf)
-{
-  if(intbuf == -1) {
-    gxString intstr;
-    cout << "\n" << flush;
-    cout << "Enter new encryption level (128, 192, or 256)> " << flush;
-    if(!consoleGetString(intstr)) {
-      cout << "\n" << flush;
-      cout << "Invalid entry!" << "\n" << flush;
-      return  0;
-    }
-    intbuf = intstr.Atoi();
-  }
-  if(intbuf == 256) {
-    mode = 3;
-  }
-  else {
-    cout << "\n" << flush;
-    cout << "Bad encryption level specified" << "\n" << flush;
-    cout << "Valid levels are 256" << "\n" << flush;
-    return 0;
-  }
-
-  return 1;
-}
-
-int SetKeyIterations(int intbuf)
-{
-  if(intbuf == -1) {
-    gxString intstr;
-    cout << "\n" << flush;
-    cout << "Enter new key iterations value> " << flush;
-    if(!consoleGetString(intstr)) {
-      cout << "\n" << flush;
-      cout << "Invalid entry!" << "\n" << flush;
-      return  0;
-    }
-    intbuf = intstr.Atoi();
-  }
-  if(intbuf <= 0) {
-    cout << "\n" << flush;
-    cout << "Bad key iterations value specified" << "\n" << flush;
-    return 0;
-  }
-
-  key_iterations = intbuf;
-  return 1;
-}
-
-void ShowOptions()
-{
-  cout << "\n" << flush;
-  cout << "\n" << flush;
-  cout << "Cache buckets: " << num_buckets << "\n" << flush;
-  if(mode == 3) {
-    cout << "Encryption mode: 256-bit" << "\n" << flush;
-  }
-  if(gen_file_names) {
-    cout << "Generate hashed output file names option on" 
-	 << "\n" << flush;
-  }
-  if(!output_dir_name.is_null()) {
-    cout << "Output DIR for enc file(s): " << output_dir_name.c_str()
-	 << "\n" << flush;
-  }
-  if(overwrite) {
-    cout << "Overwrite existing enc file(s) option on" << "\n" << flush;
-  }
-  else {
-
-  }
-  if(recurse) {
-    cout << "Recurse directory option on" << "\n" << flush;
-  }
-  else {
-
-  }
-  if(remove_src_file) {
-    cout << "Remove source file option on" << "\n" << flush;
-  }
-  else {
-
-  }
-  cout << "\n" << flush;
 }
 // ----------------------------------------------------------- // 
 // ------------------------------- //

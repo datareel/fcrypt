@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/26/2023
+// Date Last Modified: 11/29/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -622,7 +622,6 @@ int FCryptCache::DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &s
      // Set the unencrypted file name
   crypt_file_name.SetString(hdr.fname, hdr.name_len);
 
-  cp.secret.Clear(1);
   CloseInputFile();
   return 1;
 }
@@ -893,6 +892,256 @@ int read_key_file(const char *fname, MemoryBuffer &key, gxString &err, int expec
   }
   
   return 0;
+}
+
+int FCryptCache::WriteStaticDataAreaToFile(const char *fname)
+{
+  ERROR_LEVEL = 0;
+  FILE *fp;
+  fp = fopen(fname, "rb+");
+  if(!fp) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error opening file " << fname;
+    return 0;
+  }
+  
+  rewind(fp);
+
+  unsigned num_bytes = fwrite((const void*)static_data, sizeof(unsigned char), sizeof(static_data), fp);
+  if(num_bytes != sizeof(static_data)) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error writing static data to file " << fname;
+    return 0;
+  }
+
+  fclose(fp);
+  
+  return 1;
+}
+
+int FCryptCache::UpdateStaticData()
+{
+  ERROR_LEVEL = 0;
+  gxListNode<StaticDataBlock> *ptr = static_block_list.GetHead();
+  unsigned offset = 0;
+  MemoryBuffer mbuf;
+  StaticDataBlockHdr static_data_block_header;
+  
+  if(!ptr) return 1;
+
+  AES_fillrand(static_data, sizeof(static_data));
+
+  offset = 0;
+  while(ptr) {
+    mbuf.Clear(1);
+    mbuf.Cat(&ptr->data.block_header, sizeof(static_data_block_header));
+    mbuf.Cat(ptr->data.rsa_ciphertext.m_buf(), ptr->data.rsa_ciphertext.length());
+    mbuf.Cat(ptr->data.hmac.m_buf(), ptr->data.hmac.length());
+    mbuf.Cat(ptr->data.username_encoded.c_str(), ptr->data.username_encoded.length());
+    if(offset > (sizeof(static_data) - mbuf.length())) {
+      ERROR_LEVEL = -11;
+      err << clear << "Out of free space in static data area";
+      mbuf.Clear(1);
+      return 0;
+    }
+    memmove(static_data+offset, mbuf.m_buf(), mbuf.length());
+    offset += mbuf.length();
+    ptr = ptr->next;
+  }
+
+  mbuf.Clear(1);
+  return 1;
+}
+
+int FCryptCache::LoadStaticDataBlocks(const char *fname)
+{
+  unsigned num_blocks, next_write_address;
+  return LoadStaticDataBlocks(fname, num_blocks, next_write_address);
+}
+
+int FCryptCache::LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, unsigned &next_write_address)
+{
+  ERROR_LEVEL = 0;
+  FILE *fp;
+  fp = fopen(fname, "rb");
+  if(!fp) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error opening encrypted file " << fname;
+    return 0;
+  }
+
+  unsigned input_bytes_read = fread(static_data, 1, sizeof(static_data), fp);
+  fclose(fp);
+
+  if(input_bytes_read != sizeof(static_data)) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error reading static data area from file " << fname;
+  }
+
+  return LoadStaticDataBlocks(num_blocks, next_write_address);
+}
+
+int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write_address)
+{
+  ERROR_LEVEL = 0;
+  StaticDataBlockHdr static_data_block_header;
+  StaticDataBlock static_data_block;
+  unsigned block_offset = 0;
+  unsigned offset = 0;
+  int found_block = 0;
+  int end_of_static_data = 0;
+  int read_static_area = 1;
+  char username_buf[1024];
+  char username[1024];
+  int rv;
+
+  num_blocks = 0;
+  next_write_address = 0;
+  static_block_list.Clear();
+
+  while(read_static_area) {
+    if(offset >= (STATIC_DATA_AREA_SIZE-sizeof(static_data_block_header))) {
+      end_of_static_data = 1;
+      read_static_area = 0;
+      break;
+    }
+    
+    found_block = 0;
+    block_offset = offset;
+    while(!found_block) {
+      if(block_offset >= (STATIC_DATA_AREA_SIZE-sizeof(static_data_block_header))) {
+	end_of_static_data = 1;
+	read_static_area = 0;
+	break;
+      }
+      
+      static_data_block_header.WipeHeader(); // Clear all existing header data before read
+      memmove(&static_data_block_header, static_data+block_offset, sizeof(static_data_block_header));
+      block_offset+=sizeof(static_data_block_header);
+      if((static_data_block_header.version == STATIC_DATA_BLOCK_VERSION) && (static_data_block_header.checkword == 0xFEFE)) {
+	// Found a valid block
+	found_block = 1;
+	num_blocks++;
+	break;
+      }
+    }
+    if(end_of_static_data) {
+      read_static_area = 0;
+      break;
+    }
+    if(found_block) {
+      static_data_block.Wipe();
+      static_data_block.block_header = static_data_block_header;
+      
+      offset+=sizeof(static_data_block_header);
+      static_data_block.rsa_ciphertext.Cat(static_data+offset, static_data_block_header.ciphertext_len);
+      offset+=static_data_block_header.ciphertext_len;
+      static_data_block.hmac.Cat(static_data+offset, AES_MAX_HMAC_LEN);
+      offset+=AES_MAX_HMAC_LEN;
+      memset(username_buf, 0, sizeof(username_buf));
+      memset(username, 0, sizeof(username));
+      
+      if(static_data_block_header.username_len > 0) {
+	memmove(username_buf, static_data+offset, static_data_block_header.username_len);
+	static_data_block.username_encoded = username_buf;
+	gxsBase64Decode(username_buf, username);
+	static_data_block.username = username;
+      }
+      offset+=static_data_block_header.username_len;
+      static_block_list.Add(static_data_block);
+    }
+  }
+  if(num_blocks == 0) offset = 0;
+  next_write_address = offset;
+  
+  return 1;
+}
+
+int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &secret,
+				       char public_key[], unsigned public_key_len,
+				       const char *rsa_key_username)
+{
+  gxString sbuf;
+  gxUINT32 version;
+  StaticDataBlockHdr static_data_block_header;
+  int read_static_area = 1;
+  char username_buf[1024];
+  char username[1024];
+  unsigned char rsa_ciphertext[8192];
+  unsigned rsa_ciphertext_len;
+  int rv;
+
+  if(!DecryptOnlyTheFileName(fname, secret, version, sbuf)) return 0;
+  if(ERROR_LEVEL != 0) return 0;
+    
+  memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
+  RSA_openssl_init();  
+  rv = RSA_public_key_encrypt((const unsigned char *)public_key, public_key_len,
+			      secret.m_buf(), secret.length(),
+			      rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len);
+  if(rv != RSA_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "RSA encrypt public key error " << RSA_err_string(rv);
+    return 0;
+  }
+
+  unsigned num_blocks = 0;
+  unsigned next_write_address = 0;
+
+  if(!LoadStaticDataBlocks(num_blocks, next_write_address)) return 0;
+  if(ERROR_LEVEL != 0) return 0;
+
+  gxListNode<StaticDataBlock> *ptr = static_block_list.GetHead();
+
+  while(ptr) {
+    sbuf << clear << rsa_key_username;
+    if(ptr->data.username == sbuf) {
+      ERROR_LEVEL = 1;
+      err << clear << "An RSA key for username " << ptr->data.username.c_str() << " already exists";
+      return 0;
+    }
+    ptr = ptr->next;
+  }
+
+  static_data_block_header.FormatHeader();
+  unsigned char hash[AES_MAX_HMAC_LEN];
+  memset(username_buf, 0, sizeof(username_buf));
+  unsigned username_buf_len = 0;
+  
+  static_data_block_header.block_len = 0;
+  static_data_block_header.block_type = 1;
+  static_data_block_header.block_status = 1;
+  
+  static_data_block_header.ciphertext_len = rsa_ciphertext_len;
+  static_data_block_header.block_len += rsa_ciphertext_len;
+  static_data_block_header.block_len += sizeof(hash);
+
+  gxsBase64Encode(rsa_key_username, username_buf, strlen(rsa_key_username));
+  username_buf_len = strlen(username_buf);
+  static_data_block_header.username_len = username_buf_len;
+
+  StaticDataBlock static_data_block;
+  static_data_block.block_header = static_data_block_header;
+  static_data_block.rsa_ciphertext.Cat(rsa_ciphertext, rsa_ciphertext_len);
+  rv = AES_HMAC(cp.secret.m_buf(), cp.secret.length(), rsa_ciphertext, rsa_ciphertext_len, hash, sizeof(hash));
+  if(rv != AES_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Failed to generate HMAC for RSA ciphertext";
+    return 0;
+  }
+
+  static_data_block.hmac.Cat(hash, sizeof(hash));
+  static_data_block.username = rsa_key_username;
+  static_data_block.username_encoded = username_buf;
+
+  static_block_list.Add(static_data_block);
+
+  if(!UpdateStaticData()) return 0;
+  if(ERROR_LEVEL != 0) return 0;
+
+  if(!WriteStaticDataAreaToFile(fname)) return 0;
+
+  return 1;
 }
 // ----------------------------------------------------------- // 
 // ------------------------------- //

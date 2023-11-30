@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/27/2023
+// Date Last Modified: 11/29/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -106,7 +106,7 @@ void HelpMessage()
   cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --outfile=fname (Write decrypt output to specified file name)" << "\n" << flush;
-  cout << "          --master-rsa-key=key.pem (Use a single RSA key for decryption" << "\n" << flush;
+  cout << "          --rsa-key=key.pem (Use a private  RSA key for decryption)" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -166,9 +166,9 @@ int ProcessDashDashArg(gxString &arg)
     use_ouput_file = 1;
     has_valid_args = 1;
   }
-  if(arg == "master-rsa-key") {
+  if(arg == "rsa-key") {
     if(equal_arg.is_null()) {
-      cerr << "ERROR: --master-rsa-key missing filename: --master-rsa-key=/$HOME/keys/rsa_key.pem" << "\n" << flush;
+      cerr << "ERROR: --rsa-key missing filename: --rsa-key=/$HOME/keys/rsa_key.pem" << "\n" << flush;
       return 0;
     }
     private_rsa_key_file = equal_arg;
@@ -328,37 +328,6 @@ int ExitMessage()
   return 1;
 }
 
-int ListFileNames(CryptSecretHdr &cp) 
-{
-  gxListNode<gxString> *ptr = file_list.GetHead();
-
-  while(ptr) {
-    FCryptCache fc(num_buckets);
-    fc.key_iterations = key_iterations;
-    gxString sbuf;
-    gxUINT32 version;
-    cout << "Encrypted name: " << ptr->data.c_str() << "\n" << flush;
-    if(!fc.DecryptOnlyTheFileName(ptr->data.c_str(), cp.secret, version, sbuf)) {
-      cerr << "File name decrypt failed" << "\n" << flush;
-      debug_message << clear << "ERROR: " << fc.err;
-      ExitMessage();
-      ptr = ptr->next;
-      continue;
-    }
-    if(fc.ERROR_LEVEL != 0) { // Check the ERROR level from the file caching ops
-      cerr << "File decrypt failed" << "\n" << flush;
-      debug_message << clear << "ERROR: " << fc.err;
-      ExitMessage();
-      ptr = ptr->next;
-      continue;
-    }
-    cout << "Decrypted name: " << sbuf.c_str() << "\n" << flush;
-    ptr = ptr->next;
-  }
-
-  return 0;
-}
-
 int main(int argc, char **argv)
 {
 #ifdef __MSVC_DEBUG__
@@ -478,9 +447,7 @@ int main(int argc, char **argv)
     cp.secret = CommandLinePassword.secret;
     CommandLinePassword.Reset();
   }
-  
-  // List the file names and return
-  if(list_file_names) return ListFileNames(cp);
+
 
   gxListNode<gxString> *ptr = file_list.GetHead();
   err = 0;
@@ -488,94 +455,6 @@ int main(int argc, char **argv)
   
   while(ptr) {
     cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
-    
-    if(use_private_rsa_key) {
-      FILE *fp;
-      fp = fopen(ptr->data.c_str(), "rb");
-      if(!fp) {
-	cerr << "ERROR: Error opening file " << ptr->data.c_str() << "\n" << flush; ;
-	ptr = ptr->next;
-	continue;
-      }
-      unsigned char read_buf[STATIC_DATA_AREA_SIZE];
-      unsigned input_bytes_read = 0;
-      memset(read_buf, 0, sizeof(read_buf));
-      input_bytes_read = fread((unsigned char *)read_buf, 1, sizeof(read_buf), fp);
-      if(input_bytes_read != STATIC_DATA_AREA_SIZE) {
-	fclose(fp);
-	cerr << "ERROR: Error reading data area blocks from file " << ptr->data.c_str() << "\n" << flush; ;
-	ptr = ptr->next;
-	continue;
-      }
-      fclose(fp);
-      int offset = 0;
-      StaticDataBlockHdr static_data_block_header;
-      unsigned char hash[AES_MAX_HMAC_LEN];
-      unsigned char r_hash[AES_MAX_HMAC_LEN];
-      char username_buf[1024];
-      char username[1024];
-      unsigned decrypted_data_len = 0;
-      unsigned char rsa_decrypted_message[2048];
- 
-      memset(username_buf, 0, sizeof(username_buf));
-      memset(username, 0, sizeof(username));
-      memset(rsa_decrypted_message, 0, sizeof(rsa_decrypted_message));
-      
-      memmove(&static_data_block_header, read_buf, sizeof(static_data_block_header));
-      offset+=sizeof(static_data_block_header);
-      
-      if(static_data_block_header.version != STATIC_DATA_BLOCK_VERSION) {
-	cerr << "ERROR: Bad data block version in file " << ptr->data.c_str() << "\n" << flush; ;
-	ptr = ptr->next;
-	continue;
-      }
-      if(static_data_block_header.checkword != 0xFEFE) {
-	cerr << "ERROR: Bad data block checkword in file " << ptr->data.c_str() << "\n" << flush; ;
-	ptr = ptr->next;
-	continue;
-      }
-      
-      memmove(rsa_ciphertext, read_buf+offset, static_data_block_header.ciphertext_len);
-      offset+=static_data_block_header.ciphertext_len;
-
-      rv = RSA_private_key_decrypt((const unsigned char *)private_key, private_key_len,
-				   rsa_ciphertext, static_data_block_header.ciphertext_len,
-				   rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len);
-      if(rv != RSA_NO_ERROR) {
-	cerr << "ERROR: " << RSA_err_string(rv) << "\n" << flush; 
-	ptr = ptr->next;
-	continue;
-      }
-      cp.secret.Clear(1);
-      cp.secret.Cat(rsa_decrypted_message, decrypted_data_len);
-
-      memmove(r_hash, read_buf+offset, sizeof(r_hash));
-      offset+=sizeof(hash);
-      
-      rv = AES_HMAC(cp.secret.m_buf(), cp.secret.length(), rsa_ciphertext, static_data_block_header.ciphertext_len, hash, sizeof(hash));
-      if(rv != AES_NO_ERROR) {
-	cerr << "ERROR: Failed to generate HMAC for RSA ciphertext" << "\n" << flush;
-	ptr = ptr->next;
-	continue;
-      }
-      if(memcmp(hash, r_hash, sizeof(hash)) != 0) {
-	cerr << "ERROR: Message authentication failed bad HMAC for RSA ciphertext" << "\n" << flush;
-	ptr = ptr->next;
-	continue;
-      }
-
-      if(static_data_block_header.username_len > 0) {
-	if(static_data_block_header.username_len > MAX_USERNAME_LEN) {
-	  cerr << "ERROR: Username length for RSA key has exceeded max lenght of " << MAX_USERNAME_LEN << "\n" << flush;
-	  ptr = ptr->next;
-	  continue;
-	}
-	memmove(username_buf, read_buf+offset, static_data_block_header.username_len);
-	gxsBase64Decode(username_buf, username);
-	cerr << "RSA key username " <<  username << "\n" << flush;
-      }
-      offset+=static_data_block_header.username_len;
-    }
 
     FCryptCache fc(num_buckets);
     fc.key_iterations = key_iterations;
@@ -585,16 +464,82 @@ int main(int argc, char **argv)
     gxString sbuf;
     gxUINT32 version;
     int rv = 0;
+    unsigned decrypted_data_len = 0;
+    unsigned char rsa_decrypted_message[2048];
+    unsigned char hash[AES_MAX_HMAC_LEN];
+    
+    if(use_private_rsa_key) {
+      if(!fc.LoadStaticDataBlocks(ptr->data.c_str())) {
+	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush; ;
+        ptr = ptr->next;
+        continue;
+      }
 
-    if(write_to_stdout) {
-      rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version, "stdout");
+      gxListNode<StaticDataBlock> *list_ptr = fc.static_block_list.GetHead();
+      if(!list_ptr) {
+	cerr << "ERROR: No authorized RSA users found in encrypted file " << ptr->data.c_str() << "\n" << flush; ;
+	ptr = ptr->next;
+	continue;
+      }
+
+      int found_key = 0;
+      while(list_ptr) {
+	memset(rsa_decrypted_message, 0, sizeof(rsa_decrypted_message));
+	memset(hash, 0, sizeof(hash));
+	decrypted_data_len = 0;
+
+	if(clientcfg->verbose_mode) cerr << "Found stored RSA key for user " << list_ptr->data.username.c_str() << "\n" << flush;
+	rv = RSA_private_key_decrypt((const unsigned char *)private_key, private_key_len,
+				     list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(),
+				     rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len);
+
+#ifdef __DEBUG_ONLY__
+	std::cout << RSA_err_string(rv) << "\n";
+#endif
+	if(rv == RSA_NO_ERROR) {
+	  found_key = 1;
+	  cerr << "RSA key decryption authorized for user " << list_ptr->data.username.c_str() << "\n" << flush; 
+	  cp.secret.Clear(1);
+	  cp.secret.Cat(rsa_decrypted_message, decrypted_data_len);
+
+
+	  rv = AES_HMAC(cp.secret.m_buf(), cp.secret.length(), list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(), hash, sizeof(hash));
+	  if(rv != AES_NO_ERROR) {
+	    cerr << "ERROR: Failed to generate HMAC for RSA ciphertext" << "\n" << flush;
+	    found_key = 0;
+	    break;
+	  }
+	  if(memcmp(hash, list_ptr->data.hmac.m_buf(), sizeof(hash)) != 0) {
+	    cerr << "ERROR: Message authentication failed bad HMAC for RSA ciphertext" << "\n" << flush;
+	    found_key = 0;
+	    break;
+	  }
+	  break;
+	}
+	list_ptr = list_ptr->next;
+      }
+      if(!found_key) {
+	cerr << "ERROR: The private RSA key provided does not have access to decrypt file " << ptr->data.c_str() << "\n" << flush; ;
+	ptr = ptr->next;
+	continue;
+      }
     }
-    else {
-      if(use_ouput_file) {
-	rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version, user_defined_output_file.c_str());
+
+    // List the file names and return
+    if(list_file_names) {
+      rv = fc.DecryptOnlyTheFileName(ptr->data.c_str(), cp.secret, version, sbuf);
+    }
+    else  {
+      if(write_to_stdout) {
+	rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version, "stdout");
       }
       else {
-	rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version);
+	if(use_ouput_file) {
+	  rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version, user_defined_output_file.c_str());
+	}
+	else {
+	  rv = fc.DecryptFile(ptr->data.c_str(), cp.secret, version);
+	}
       }
     }
     
@@ -613,6 +558,13 @@ int main(int argc, char **argv)
       continue;
     }
     cerr << "File decrypt successful" << "\n" << flush;
+
+    if(list_file_names) {
+      cout << "Decrypted name: " << sbuf.c_str() << "\n" << flush;
+      ptr = ptr->next;
+      continue;
+    }
+    
     sbuf << clear << wn << fc.BytesWrote();
     cerr << "Wrote " << sbuf.c_str() << " bytes to "
 	 << fc.OutFileName() << "\n" << flush;

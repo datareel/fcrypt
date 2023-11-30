@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/27/2023
+// Date Last Modified: 11/29/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -38,6 +38,7 @@ Encryption routes generate encryption certificates and authenticate users.
 #define __GX_S_CRYPT_DB_HPP__
 
 #include "aesdb.h"
+#include "rsadb.h"
 
 // DataReel include files
 #include "gxdlcode.h"
@@ -49,6 +50,7 @@ Encryption routes generate encryption certificates and authenticate users.
 #include "devcache.h"
 #include "dfileb.h"
 #include "gxlist.h"
+#include "gxs_b64.h"
 
 const unsigned STATIC_DATA_AREA_SIZE = 65536;
 const unsigned MAX_FILENAME_LEN = 256;
@@ -58,19 +60,41 @@ const gxUINT32 CRYPT_FILE_VERSION = 2023103;
 
 struct GXDLCODE_API StaticDataBlockHdr
 {
-  StaticDataBlockHdr() {
-    version = STATIC_DATA_BLOCK_VERSION;
-    checkword = 0xFEFE; 
-    block_len = (gxUINT32)0;
-    block_type = (gxUINT32)0;
-    block_status = (gxUINT32)0;
-    ciphertext_len = (gxUINT32)0;
-    username_len = (gxUINT32)0;
-    AES_fillrand(reserved, sizeof(reserved));
+  StaticDataBlockHdr() { FormatHeader(); }
+  ~StaticDataBlockHdr() { WipeHeader(); }
+  StaticDataBlockHdr(const StaticDataBlockHdr &ob) { Copy(ob); }
+  StaticDataBlockHdr &operator=(const StaticDataBlockHdr &ob) {
+    if(&ob == this) return *this;
+    Copy(ob);
+    return *this;
   }
   
-  ~StaticDataBlockHdr() { }
-
+  int FormatHeader() { // Setup header to be written 
+    version = STATIC_DATA_BLOCK_VERSION;
+    checkword = 0xFEFE;
+    block_len = block_type = block_status = ciphertext_len = username_len = (gxUINT32)0;
+    AES_fillrand(reserved, sizeof(reserved));
+    return 0;
+  }
+  int WipeHeader() { // Clear header to be read
+    version = checkword = 0;
+    block_len = block_type = block_status = ciphertext_len = username_len = (gxUINT32)0;
+    memset(reserved, 0, sizeof(reserved));
+    return 0;
+  }
+  int Copy(const StaticDataBlockHdr &ob) {
+    WipeHeader();
+    version = ob.version;
+    checkword = ob.checkword;
+    block_type = ob.block_type;
+    block_status = ob.block_status;
+    block_len = ob.block_len;
+    ciphertext_len = ob.ciphertext_len;
+    username_len = ob.username_len;
+    memmove(reserved, ob.reserved, sizeof(reserved));
+    return 0;
+  }
+  
   gxUINT32 version;        // Header version number
   gxUINT32 checkword;      // Header checkword
   gxUINT32 block_type;     // Application specific block type
@@ -79,6 +103,57 @@ struct GXDLCODE_API StaticDataBlockHdr
   gxUINT32 ciphertext_len; // Variable length of the encrypted data
   gxUINT32 username_len;   // Variable length of optional username
   unsigned char reserved[32]; // Reserved for future use
+};
+
+struct GXDLCODE_API StaticDataBlock // For in memory copies
+{
+ // Block header -> ciphertext -> hmac -> username
+  StaticDataBlock() { Clear(); }
+  ~StaticDataBlock() { Wipe(); }
+  StaticDataBlock(const StaticDataBlock &ob) { Copy(ob); }
+  StaticDataBlock &operator=(const StaticDataBlock &ob) {
+    if(&ob == this) return *this;
+    Copy(ob);
+    return *this;
+  }
+
+  int Copy(const StaticDataBlock &ob) {
+    Wipe();
+    block_header = ob.block_header;
+    rsa_ciphertext = ob.rsa_ciphertext;
+    rsa_plaintext = ob.rsa_plaintext;
+    hmac = ob.hmac;
+    username = ob.username;
+    username_encoded = ob.username_encoded;
+    return 0; 
+  }
+
+  int Wipe() {
+    block_header.WipeHeader();
+    rsa_ciphertext.Clear(1);
+    rsa_plaintext.Clear(1);
+    hmac.Clear(1);
+    username.Clear(1);
+    username_encoded.Clear(1);
+    return 0;
+  }
+
+  int Clear() {
+    block_header.FormatHeader();
+    rsa_ciphertext.Clear();
+    rsa_plaintext.Clear();
+    hmac.Clear();
+    username.Clear();
+    username_encoded.Clear();
+    return 0;
+  }
+  
+  StaticDataBlockHdr block_header;
+  MemoryBuffer rsa_ciphertext;
+  MemoryBuffer rsa_plaintext;
+  MemoryBuffer hmac;
+  gxString username;
+  gxString username_encoded;
 };
 
 struct GXDLCODE_API CryptFileHdr
@@ -144,6 +219,17 @@ public: // Decrypt fucntions
   int DecryptFile(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, char *outfile_name = 0);
   int DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, gxString &crypt_file_name);
 
+public: // RSA key functions
+  int UpdateStaticData();
+  int WriteStaticDataAreaToFile(const char *fname);
+  int AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &secret,
+			    char public_key[], unsigned public_key_len,
+			    const char *rsa_key_username);
+  int LoadStaticDataBlocks(const char *fname);
+  int LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, unsigned &next_write_address);
+  int LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write_address);
+  
+  
 public: // Helper functions
   void Flush() { cache.Flush(); } // Flush the cache buckets
   unsigned BucketsInUse() { return cache.BucketsInUse(); }
@@ -157,7 +243,7 @@ public: // Helper functions
   FAU_t BytesWrote() { return bytes_wrote; }
   FAU_t BytesRead() { return bytes_read; }
   void GenFileNames();
-
+  
 private: // Internal processing functions
   void CloseOutputFile() {  
     outfile.df_Close(); 
@@ -205,6 +291,7 @@ public:
   CryptSecretHdr cp;
   AESStreamCrypt aesdb;
   unsigned char static_data[STATIC_DATA_AREA_SIZE];
+  gxList<StaticDataBlock> static_block_list;
 };
 
 // Standalone functions
