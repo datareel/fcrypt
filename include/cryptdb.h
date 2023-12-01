@@ -224,7 +224,7 @@ public: // RSA key functions
   int WriteStaticDataAreaToFile(const char *fname);
   int AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &secret,
 			    char public_key[], unsigned public_key_len,
-			    const char *rsa_key_username);
+			    const char *rsa_key_username, char *passphrase = 0);
   int LoadStaticDataBlocks(const char *fname);
   int LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, unsigned &next_write_address);
   int LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write_address);

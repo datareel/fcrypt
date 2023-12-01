@@ -1059,14 +1059,12 @@ int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write
 
 int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &secret,
 				       char public_key[], unsigned public_key_len,
-				       const char *rsa_key_username)
+				       const char *rsa_key_username, char *passphrase)
 {
   gxString sbuf;
   gxUINT32 version;
   StaticDataBlockHdr static_data_block_header;
-  int read_static_area = 1;
   char username_buf[1024];
-  char username[1024];
   unsigned char rsa_ciphertext[8192];
   unsigned rsa_ciphertext_len;
   int rv;
@@ -1079,8 +1077,6 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
 
   StaticDataBlock static_data_block;
   unsigned char SALT[AES_MAX_SALT_LEN];
-  unsigned char VERIFIER[AES_MAX_VERIFIER_LEN];
-  unsigned char HMAC[AES_MAX_HMAC_LEN];
   unsigned char IV[AES_MAX_IV_LEN];
   unsigned char KEY[AES_MAX_KEY_LEN];
   AES_init_salt(SALT, sizeof(SALT));
@@ -1097,7 +1093,8 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
   
   rv = RSA_public_key_encrypt((const unsigned char *)public_key, public_key_len,
 			      p_secret.m_buf(), p_secret.length(),
-			      rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len);
+			      rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len,
+			      RSA_padding, passphrase);
   if(rv != RSA_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "RSA encrypt public key error " << RSA_err_string(rv);

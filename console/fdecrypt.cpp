@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/29/2023
+// Date Last Modified: 11/30/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -120,7 +120,7 @@ void HelpMessage()
   cout << "          --outdir=dir (Specify and make output directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file decryption)" << "\n" << flush;
   cout << "          --rsa-key=key.pem (Use a private RSA key for decryption)" << "\n" << flush;
-  cout << "          --rsa-key-passphrase (Provide passpharse for private  RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase (Passpharse for private RSA key)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
   cout << "          --version (Display this programs version number)" << "\n" << flush;

@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/29/2023
+// Date Last Modified: 11/30/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -68,11 +68,13 @@ gxString output_dir_name;
 int gen_file_names = 0;
 int recurse = 0;
 int use_abs_path = 0;
-CryptSecretHdr CommandLinePassword;
-int use_input_arg_secret = 0;
-int use_input_arg_key_file = 0;
+int use_password = 0;
+int use_key_file = 0;
 gxString input_arg_key_file;
+MemoryBuffer aes_file_encrypt_secret;
 MemoryBuffer key;
+gxString password;
+gxString password2;
 gxString public_rsa_key_file;
 int add_rsa_key = 0;
 unsigned char rsa_ciphertext[8192];
@@ -80,6 +82,16 @@ unsigned rsa_ciphertext_len;
 gxString rsa_key_username;
 char public_key[RSA_max_keybuf_len];
 unsigned public_key_len = 0;
+gxString rsa_key_passphrase;
+int has_passphrase = 0;
+
+// Functions
+void DisplayVersion();
+void HelpMessage();
+int ProcessDashDashArg(gxString &arg);
+int ProcessArgs(char *arg);
+int DEBUG_m(char *message, int level = 1, int rv = 0);
+int ExitProgram(int rv = 0, char *exit_message = 0);
 
 void DisplayVersion()
 {
@@ -115,6 +127,10 @@ void HelpMessage()
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "          -x[ext] = Specify enc file(s) dot extension" << "\n" << flush;
   cout << "\n" << flush;
+
+  cout << "          --key=aes_key (Use a key file for symmetric file encryption)" << "\n" << flush;
+  cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
+  
   cout << "          --version (Display this programs version number)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
@@ -122,12 +138,13 @@ void HelpMessage()
   cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
   cout << "          --add-rsa-key=pubkey.pem (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase (Passpharse for public RSA key)" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
 int ProcessDashDashArg(gxString &arg)
 {
-  gxString sbuf, equal_arg;
+  gxString sbuf, equal_arg, ebuf;
   int has_valid_args = 0;
   int rv = 0;
   
@@ -158,6 +175,26 @@ int ProcessDashDashArg(gxString &arg)
     return 0; // Signal program to exit
   }
 
+  if(arg == "cache") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --cache requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(equal_arg.Atoi() <= 0) {
+      cerr << "ERROR: Invalid value passed to --iter" << "\n" << flush;
+      return 0;
+    }
+    num_buckets = equal_arg.Atoi();
+    if((num_buckets < 1) || (num_buckets > 65535)) {
+      cerr << "\n" << flush;
+      cerr << "ERROR: Bad number of cache buckets specified" << "\n" << flush;
+      cerr << "ERROR: Valid range = 1 to 65535 bytes" << "\n" << flush;
+      cerr << "\n" << flush;
+      return 0;
+    }
+    has_valid_args = 1;
+  }
+  
   if(arg == "debug") {
     if(!equal_arg.is_null()) {
       if(equal_arg.Atoi() <= 0) {
@@ -173,6 +210,37 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "verbose") {
     clientcfg->verbose_mode = 1;
+    has_valid_args = 1;
+  }
+
+  if(arg == "password") {
+    if(!equal_arg.is_null()) {
+      password = equal_arg;
+    }
+    use_password  = 1;
+    has_valid_args = 1;
+  }
+  
+  if(arg == "key") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --key requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    input_arg_key_file = equal_arg;
+    if(!futils_exists(input_arg_key_file.c_str())) {
+      cerr << "\n" << flush;
+      cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
+      cerr << "\n" << flush;
+      return 0;
+    }
+    DEBUG_m("Reading symmetric key file");
+    if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
+      cerr << "\n" << flush;
+      cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+      cerr << "\n" << flush;
+      return 0;
+    }
+    use_key_file  = 1;
     has_valid_args = 1;
   }
   
@@ -201,7 +269,8 @@ int ProcessDashDashArg(gxString &arg)
         cerr << "\n" << flush;
         return 0;
     }
-    rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len);
+    DEBUG_m("Reading RSA key file");
+    rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len, &has_passphrase);
     if(rv != RSA_NO_ERROR) {
       std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
       return 0;
@@ -216,6 +285,15 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     rsa_key_username = equal_arg;
+    has_valid_args = 1;
+  }
+
+  if(arg == "rsa-key-passphrase") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --rsa-key-passphrase requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    rsa_key_passphrase = equal_arg;
     has_valid_args = 1;
   }
 
@@ -251,29 +329,6 @@ int ProcessArgs(char *arg)
       if(en_dot_ext[0] != '.') {
 	en_dot_ext.InsertAt(0, ".", 1);
       }
-      break;
-
-    case 'd':
-      output_dir_name = arg+2;
-      if(!futils_exists(output_dir_name.c_str())) {
-	cerr << "\n" << flush;
-	cerr << "Bad output DIR specified" << "\n" << flush;
-	cerr << output_dir_name.c_str() << " does not exist" << "\n" << flush;
-	cerr << "\n" << flush;
-	return 0;
-      }
-      if(!futils_isdirectory(output_dir_name.c_str())) {
-	cerr << "\n" << flush;
-	cerr << "Bad output DIR specified" << "\n" << flush;
-	cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
-	cerr << "\n" << flush;
-	return 0;
-      }
-      break;
-
-    case 'p':
-      CommandLinePassword.secret.Load(arg+2, strlen(arg+2));
-      use_input_arg_secret = 1;
       break;
 
     case 'f':
@@ -327,24 +382,6 @@ int ProcessArgs(char *arg)
       clientcfg->verbose_mode = 1;
       break;
 
-    case 'k':
-      input_arg_key_file = arg+2;
-      if(!futils_exists(input_arg_key_file.c_str())) {
-	cerr << "\n" << flush;
-	cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
-	cerr << "\n" << flush;
-	return 0;
-      }
-      if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
-	cerr << "\n" << flush;
-	cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
-	cerr << "\n" << flush;
-	return 0;
-      }
-      CommandLinePassword.secret = key;
-      use_input_arg_key_file  = 1;
-      break;
-      
     case 'h': case 'H': case '?':
       HelpMessage();
       return 0;
@@ -368,7 +405,7 @@ int ProcessArgs(char *arg)
   return 1; // All command line arguments were valid
 }
 
-int DEBUG_m(char *message, int level=1, int rv = 0)
+int DEBUG_m(char *message, int level, int rv)
 {
   if(debug_mode && debug_level >= level) {
     if(!message) {
@@ -379,6 +416,26 @@ int DEBUG_m(char *message, int level=1, int rv = 0)
   }
   
   return rv; 
+}
+
+int ExitProgram(int rv, char *exit_message)
+{
+  // Clear and destory all global buffers
+  aes_file_encrypt_secret.Clear(1);
+  key.Clear(1);
+  password.Clear(1);
+  password2.Clear(1);
+  rsa_key_username.Clear(1);
+  memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
+  memset(public_key, 0, sizeof(public_key));
+  rsa_key_passphrase.Clear(1);
+  
+  if(!debug_message.is_null()) DEBUG_m(debug_message.c_str(), debug_level);
+  
+  if(!exit_message) {
+    cerr << exit_message << "\n" << flush;
+  }
+  return rv;
 }
 
 int main(int argc, char **argv)
@@ -414,14 +471,14 @@ int main(int argc, char **argv)
     cerr << "\n" << flush;
     cerr << "Encountered fatal fcrypt error" << "\n";
     cerr << "Error setting top present working DIR" << "\n";
-    return 1;
+    return ExitProgram(1);
   }
 
   if(argc >= 2) {
     while (narg < argc) {
       if (arg[0] != '\0') {
 	if (arg[0] == '-') { // Look for command line arguments
-	  if(!ProcessArgs(arg)) return 1; // Exit if argument is not valid
+	  if(!ProcessArgs(arg)) return ExitProgram(1); // Exit if argument is not valid
 	}
 	else { 
 	  // Process the command line string after last - argument
@@ -442,14 +499,14 @@ int main(int argc, char **argv)
 		cerr << "\n" << flush;
 		cerr << "Encountered fatal fcrypt error" << "\n";
 		cerr << err_str.c_str() << "\n";
-		return 1; 
+		return ExitProgram(1); 
 	      }
 
 	      if(futils_chdir(curr_pwd) != 0) {
 		cerr << "\n" << flush;
 		cerr << "Encountered fatal fcrypt error" << "\n";
 		cerr << "Error resetting current present working DIR" << "\n";
-		return 1;
+		return ExitProgram(1);
 	      }
 
 	    }
@@ -469,133 +526,126 @@ int main(int argc, char **argv)
     cerr << "\n" << flush;
     cerr << "Encountered fatal fcrypt error" << "\n";
     cerr << "No file name specified" << "\n";
-    return 1;
+    return ExitProgram(1);
   }
   
   if(futils_chdir(top_pwd) != 0) {
     cerr << "\n" << flush;
     cerr << "Encountered fatal fcrypt error" << "\n";
     cerr << "Error resetting top present working DIR" << "\n";
-    return 1;
+    return ExitProgram(1);
   }
 
-  CryptSecretHdr cp;
-  CryptSecretHdr tmp_cp;
-  gxString password, password2;
   
-  if(use_input_arg_key_file) {
+  if(use_key_file) {
+    aes_file_encrypt_secret.Clear(1);
+    aes_file_encrypt_secret.Cat(key.m_buf(), key.length());
     if(add_rsa_key) {
       cerr << "Using symmetric key to add an RSA user key to an encrypted file" << "\n" << flush;
-      cp.secret = CommandLinePassword.secret;
     }
     else {
       cerr << "Using symmetric key for file encryption" << "\n" << flush;
+      if(aes_file_encrypt_secret.length() < AES_MIN_SECRET_LEN) {
+	cerr << "Key does not meet length requirement" << "\n" << flush;
+	cerr << "Password must be at least " << AES_MIN_SECRET_LEN << " bytes" << "\n" << flush;
+	return ExitProgram(1);
+      }
     }
   }
   else {
     if(add_rsa_key) {
       cerr << "Using password to add an RSA user key to an encrypted file" << "\n" << flush;
-      if(CommandLinePassword.secret.is_null()) {
-	cerr << "Password: " << flush;
+      if(password.is_null()) {
+	cout << "Password: " << flush;
 	if(!consoleGetString(password, 1)) {
 	  password.Clear(1);
 	  cerr << "Invalid entry!" << "\n" << flush;
-	  return 1;
+	  return ExitProgram(1);
 	}
-	cp.secret.Load(password.c_str(), password.length());
-	password.Clear(1);
       }
-      else {
-	cp.secret = CommandLinePassword.secret;
-      }
+      aes_file_encrypt_secret.Clear(1);
+      aes_file_encrypt_secret.Cat(password.GetSPtr(), password.length());
     }
     else {
       cerr << "Using password for symmetric file encryption" << "\n" << flush;
+      if(password.is_null()) {
+	cout << "Password: " << flush;
+	if(!consoleGetString(password, 1)) {
+	  cerr << "Invalid entry!" << "\n" << flush;
+	  return ExitProgram(1);
+	}
+	cout << "\n" << flush;
+	cout << "Retype password: " << flush;
+	if(!consoleGetString(password2, 1)) {
+	  cerr << "Invalid entry!" << "\n" << flush;
+	  return ExitProgram(1);
+	}
+	cout << "\n" << flush;
+	if(password != password2) {
+	  cerr << "Passwords do not match" << "\n" << flush;
+	  return ExitProgram(1);
+	}
+      }
+      // Our password is set now check the length
+      if((int)password.length() < AES_MIN_SECRET_LEN) {
+	cerr << "Password does not meet length requirement" << "\n" << flush;
+	cerr << "Password must be at least " << AES_MIN_SECRET_LEN << " characters long" << "\n" << flush;
+	return ExitProgram(1);
+      }
+      aes_file_encrypt_secret.Clear(1);
+      aes_file_encrypt_secret.Cat(password.GetSPtr(), password.length());
     }
   }
 
+  if(add_rsa_key) {
+    if(has_passphrase) {
+      cout << "RSA key passphrase: " << flush;
+      if(!consoleGetString(rsa_key_passphrase, 1)) {
+	rsa_key_passphrase.Clear(1);
+	cout << "\n" << flush;
+	cerr << "Invalid entry!" << "\n" << flush;
+	return ExitProgram(1);
+      }
+      cout << "\n" << flush;
+    }
+  }
+  
   gxListNode<gxString> *ptr = file_list.GetHead();
-  tmp_cp = cp;
   rv = err = 0;
-  unsigned offset = 0;
 
   if(add_rsa_key) {
     if(rsa_key_username.is_null()) {
       cerr << "\n" << flush;
       cerr << "ERROR: --add-rsa-key requires --rsa-key-username" << "\n" << flush;
       cerr << "\n" << flush;
-      return 1;
+      return ExitProgram(1);
     }
 
     cerr << "Adding RSA key for user " << rsa_key_username.c_str() << " to encrypted file " << ptr->data.c_str() << "\n" << flush;
 
     RSA_openssl_init();
     memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
+    char *passphrase = 0;
+    if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
     rv = RSA_public_key_encrypt((const unsigned char *)public_key, public_key_len,
-				cp.secret.m_buf(), cp.secret.length(),
-				rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len);
+				aes_file_encrypt_secret.m_buf(), aes_file_encrypt_secret.length(),
+				rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len, RSA_padding, passphrase);
     if(rv != RSA_NO_ERROR) {
       std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
-      return 1;
+      return ExitProgram(1);
     }
 
     while(ptr) {
       FCryptCache fc(num_buckets);
       fc.key_iterations = key_iterations;
-      if(!fc.AddRSAKeyToStaticArea(ptr->data.c_str(), cp.secret, public_key, public_key_len, rsa_key_username.c_str())) {
+      if(!fc.AddRSAKeyToStaticArea(ptr->data.c_str(), aes_file_encrypt_secret, public_key, public_key_len, rsa_key_username.c_str())) {
 	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
-	return 0;
+	return ExitProgram(1);
       }
       cerr << "Public RSA key " << rsa_key_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
       ptr = ptr->next;
     }
-    return 0;
-  }
-
-  if(CommandLinePassword.secret.is_null()) {
-    cout << "Password: " << flush;
-    if(!consoleGetString(password, 1)) {
-      password.Clear(1);
-      cerr << "Invalid entry!" << "\n" << flush;
-      return 1;
-    }
-    cout << "\n" << flush;
-    if((int)password.length() < AES_MIN_SECRET_LEN) {
-      cerr << "Password does not meet length requirement" 
-	   << "\n" << flush;
-      cerr << "Password must be at least " << AES_MIN_SECRET_LEN 
-	   << " characters long" << "\n" << flush;
-      password.Clear(1);
-      return 1;
-    }
-    cout << "Retype password: " << flush;
-    if(!consoleGetString(password2, 1)) {
-      password.Clear(1);
-      password2.Clear(1);
-      cerr << "Invalid entry!" << "\n" << flush;
-      return 1;
-    }
-    cout << "\n" << flush;
-    if(password != password2) {
-      password.Clear(1);
-      password2.Clear(1);
-      cerr << "Passwords do not match" << "\n" << flush;
-      return 1;
-    }
-    cp.secret.Load(password.c_str(), password.length());
-    password.Clear(1);
-    password2.Clear(1);
-  }
-  else {
-    cp.secret = CommandLinePassword.secret;
-    CommandLinePassword.Reset();
-    if((int)cp.secret.length() < AES_MIN_SECRET_LEN) {
-      cerr << "Password does not meet length requirement" 
-	   << "\n" << flush;
-      cerr << "Password must be at least " << AES_MIN_SECRET_LEN 
-	   << " characters long" << "\n" << flush;
-      return 1;
-    }
+    return ExitProgram(1);
   }
   
   while(ptr) {
@@ -631,8 +681,7 @@ int main(int argc, char **argv)
     }
     if(fc.mode == 0) cerr << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
 
-    rv = fc.EncryptFile(ptr->data.c_str(), cp.secret);
-    cp = tmp_cp;
+    rv = fc.EncryptFile(ptr->data.c_str(), aes_file_encrypt_secret);
     if(!rv) {
       cerr << "File encryption failed" << "\n" << flush;
       cerr << fc.err.c_str() << "\n" << flush;
@@ -649,8 +698,7 @@ int main(int argc, char **argv)
 
     if(remove_src_file) {
       if(futils_remove(ptr->data.c_str()) != 0) {
-	cerr << "Error removing " << ptr->data.c_str() << " source file"
-	     << "\n" << flush;
+	cerr << "Error removing " << ptr->data.c_str() << " source file" << "\n" << flush;
       }
     }
 
@@ -659,16 +707,14 @@ int main(int argc, char **argv)
 
   if(err == 0) {
     if(num_files > 1) {
-      cerr << "Encrypted " << num_files << " files" 
-	   << "\n" << flush;
+      cerr << "Encrypted " << num_files << " files" << "\n" << flush;
     }
     if(num_dirs > 0) {
-      cerr << "Traversed " << num_dirs << " directories"  
-	   << "\n" << flush;
+      cerr << "Traversed " << num_dirs << " directories" << "\n" << flush;
     }
   }
 
-  return err;
+  return ExitProgram(err);
 }
 // ----------------------------------------------------------- // 
 // ------------------------------- //
