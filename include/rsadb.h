@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/25/2023
+// Date Last Modified: 11/29/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -89,13 +89,13 @@ enum {
 // Standalone functions
 int RSA_openssl_init();
 int RSA_fillrand(unsigned char *buf, unsigned int len);
+int RSA_find_pattern(const void *buf, int buf_len, const void *token, int token_len, int offset = 0);
 const char *RSA_err_string(int err);
 char *RSA_get_last_openssl_error(int &error_level);
 int RSA_passphrase_callback(char *buf, int size, int rwflag, void *userdata);
 int RSA_gen_key_files(const char *private_key_fname, const char *public_key_fname, int keysize = RSA_keysize,
 		      char *passphrase = 0, int passphrase_len = 0);
-int RSA_read_key_file(const char *fname, char keybuf[], const unsigned keybuf_len, unsigned *keybuf_final_len);
-
+int RSA_read_key_file(const char *fname, char keybuf[], const unsigned keybuf_len, unsigned *keybuf_final_len, int *has_passphrase = 0);
 int RSA_public_key_encrypt(const unsigned char key[], unsigned key_len,
 			   const unsigned char plaintext[], unsigned int plaintext_len,
 			   unsigned char ciphertext[], unsigned int ciphertext_len,

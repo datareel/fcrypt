@@ -1076,8 +1076,27 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
     
   memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
   RSA_openssl_init();  
+
+  StaticDataBlock static_data_block;
+  unsigned char SALT[AES_MAX_SALT_LEN];
+  unsigned char VERIFIER[AES_MAX_VERIFIER_LEN];
+  unsigned char HMAC[AES_MAX_HMAC_LEN];
+  unsigned char IV[AES_MAX_IV_LEN];
+  unsigned char KEY[AES_MAX_KEY_LEN];
+  AES_init_salt(SALT, sizeof(SALT));
+  
+  rv = AES_derive_key((const unsigned char*)secret.m_buf(), secret.length(), SALT, sizeof(SALT), KEY, sizeof(KEY), IV, sizeof(IV), 1000);
+  if(rv != AES_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Failed to generate derived key " << AES_err_string(rv);
+    return 0;
+  }
+  MemoryBuffer p_secret;
+  p_secret.Cat(SALT, AES_MAX_SALT_LEN);
+  p_secret.Cat(secret.m_buf(), secret.length());
+  
   rv = RSA_public_key_encrypt((const unsigned char *)public_key, public_key_len,
-			      secret.m_buf(), secret.length(),
+			      p_secret.m_buf(), p_secret.length(),
 			      rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len);
   if(rv != RSA_NO_ERROR) {
     ERROR_LEVEL = -1;
@@ -1119,14 +1138,13 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
   gxsBase64Encode(rsa_key_username, username_buf, strlen(rsa_key_username));
   username_buf_len = strlen(username_buf);
   static_data_block_header.username_len = username_buf_len;
-
-  StaticDataBlock static_data_block;
+  
   static_data_block.block_header = static_data_block_header;
   static_data_block.rsa_ciphertext.Cat(rsa_ciphertext, rsa_ciphertext_len);
-  rv = AES_HMAC(cp.secret.m_buf(), cp.secret.length(), rsa_ciphertext, rsa_ciphertext_len, hash, sizeof(hash));
+  rv = AES_HMAC(KEY, sizeof(KEY), rsa_ciphertext, rsa_ciphertext_len, hash, sizeof(hash));
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = -1;
-    err << clear << "Failed to generate HMAC for RSA ciphertext";
+    err << clear << "Failed to generate HMAC for RSA ciphertext " << AES_err_string(rv);
     return 0;
   }
 

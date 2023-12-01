@@ -370,7 +370,7 @@ int RSA_public_key_decrypt(const unsigned char key[], unsigned key_len,
   return RSA_NO_ERROR;
 }
 
-int RSA_read_key_file(const char *fname, char keybuf[], const unsigned keybuf_len, unsigned *keybuf_final_len)
+int RSA_read_key_file(const char *fname, char keybuf[], const unsigned keybuf_len, unsigned *keybuf_final_len, int *has_passphrase)
 {
   memset(keybuf, 0, keybuf_len);
 
@@ -401,9 +401,48 @@ int RSA_read_key_file(const char *fname, char keybuf[], const unsigned keybuf_le
   *(keybuf_final_len) = offset;
   
   memset(read_buf, 0, sizeof(read_buf));  
+
+  if(has_passphrase) { // Check the key for a passpharse
+    *(has_passphrase) = 0;
+    const char *pattern1 = "ENCRYPTED";
+    const char *pattern2 = "encrypted";
+    
+    if((RSA_find_pattern(keybuf, *(keybuf_final_len), pattern1, strlen(pattern1)) != -1) ||
+       (RSA_find_pattern(keybuf, *(keybuf_final_len), pattern2, strlen(pattern2)) != -1)) {
+      *(has_passphrase) = 1;
+    }
+  }
+  
   fclose(fp);
   
   return RSA_NO_ERROR;
+}
+
+int RSA_find_pattern(const void *buf, int buf_len, const void *token, int token_len, int offset)
+{
+  if(!buf) return -1;
+  if(offset > buf_len) return -1;
+  if(token_len > buf_len) return -1;
+
+  unsigned char *start = (unsigned char *)buf + offset; // Start of buf data
+  unsigned char *next = start; // Next buffer element
+  unsigned char *pattern = (unsigned char *)token; // Next pattern element
+  int i = offset, j = 1; // Buffer and pattern indexes
+  
+  while(i < buf_len && j <= token_len) {
+    if (*next == *pattern) {   // Matching character
+      if(j == token_len) return i; // Entire match was found
+      next++; pattern++; j++;
+    }
+    else { // Try next spot in buffer
+      i++;
+      start++;
+      next = start;
+      pattern = (unsigned char *)token; j = 1;
+    }
+  }
+  return -1; // No match was found
+
 }
 // ----------------------------------------------------------- // 
 // ------------------------------- //

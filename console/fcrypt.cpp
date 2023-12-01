@@ -53,6 +53,9 @@ using namespace std; // Use unqualified names for Standard C++ library
 #include "gxs_b64.h"
 
 // Globals
+gxString debug_message;
+int debug_mode = 0;
+int debug_level = 1;
 int num_buckets = 1024;
 int overwrite = 0;
 int mode = -1;
@@ -114,6 +117,8 @@ void HelpMessage()
   cout << "\n" << flush;
   cout << "          --version (Display this programs version number)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
+  cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
+  cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
   cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
   cout << "          --add-rsa-key=pubkey.pem (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
@@ -148,12 +153,29 @@ int ProcessDashDashArg(gxString &arg)
     HelpMessage();
     return 0; // Signal program to exit
   }
-
   if((arg == "version") || (arg == "ver")) {
     DisplayVersion();
     return 0; // Signal program to exit
   }
 
+  if(arg == "debug") {
+    if(!equal_arg.is_null()) {
+      if(equal_arg.Atoi() <= 0) {
+	cerr << "ERROR: Invalid value passed to --debug" << "\n" << flush;
+	return 0;
+      }
+      debug_level = equal_arg.Atoi();
+      clientcfg->verbose_mode = 1;
+      debug_mode = 1;
+    }
+    has_valid_args = 1;
+  }
+
+  if(arg == "verbose") {
+    clientcfg->verbose_mode = 1;
+    has_valid_args = 1;
+  }
+  
   if(arg == "iter") {
     if(equal_arg.is_null()) {
       cerr << "ERROR: --iter requires an input argument: --iter=10000" << "\n" << flush;
@@ -344,6 +366,19 @@ int ProcessArgs(char *arg)
   arg[0] = '\0';
 
   return 1; // All command line arguments were valid
+}
+
+int DEBUG_m(char *message, int level=1, int rv = 0)
+{
+  if(debug_mode && debug_level >= level) {
+    if(!message) {
+      cerr << debug_message << "\n" << flush;
+      return rv;
+    }
+    cerr << "DEBUG" << debug_level << ": " << message << "\n" << flush;
+  }
+  
+  return rv; 
 }
 
 int main(int argc, char **argv)
