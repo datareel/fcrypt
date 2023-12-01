@@ -51,19 +51,8 @@ FCryptCache::FCryptCache(unsigned CacheSize) : cache(CacheSize)
   bytes_wrote = (FAU_t)0;
   bytes_read = (FAU_t)0;
   crypt_stream = 1;
-  gen_file_names = 0;
   ERROR_LEVEL = 0;
   AES_fillrand(static_data, sizeof(static_data));
-}
-
-void FCryptCache::GenFileNames()
-{
-  if(!gen_file_names) {
-    gen_file_names = 1;
-  }
-  else {
-    gen_file_names = 0;
-  }
 }
 
 void FCryptCache::Read(void *buf, unsigned Bytes, gxDeviceTypes dev) 
@@ -276,11 +265,6 @@ int FCryptCache::OpenOutputFile()
   }
 
   ofname << en_dot_ext;
-
-  if(gen_file_names) {
-    unsigned long name_int = calcCRC32(ofname.c_str(), ofname.length());
-    ofname << clear << name_int;
-  }
 
   if(!output_dir_name.is_null()) {
 #if defined (__WIN32__) 

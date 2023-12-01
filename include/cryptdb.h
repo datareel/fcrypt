@@ -242,7 +242,6 @@ public: // Helper functions
   void SetOutputFileName(const char *s) { output_file_name = s; }
   FAU_t BytesWrote() { return bytes_wrote; }
   FAU_t BytesRead() { return bytes_read; }
-  void GenFileNames();
   
 private: // Internal processing functions
   void CloseOutputFile() {  
@@ -276,7 +275,6 @@ private: // Device cache
   int crypt_stream;
   FAU_t bytes_wrote;
   FAU_t bytes_read;
-  int gen_file_names;
 
 public: // Functions used to get the current device cache
   gxDeviceBucketCache *GetCache() { return &cache; }

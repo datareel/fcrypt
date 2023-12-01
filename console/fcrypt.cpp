@@ -65,7 +65,6 @@ gxList<gxString> file_list;
 gxString en_dot_ext(".enc");
 gxString output_file_name;
 gxString output_dir_name;
-int gen_file_names = 0;
 int recurse = 0;
 int use_abs_path = 0;
 int use_password = 0;
@@ -114,31 +113,27 @@ void HelpMessage()
   cout << "Switches: -? = Display this help message and exit." << "\n" << flush;  
   cout << "          -0 = No encryption for testing only." << "\n" << flush;
   cout << "          -3 = 256-bit encryption (default)." << "\n" << flush;
-  cout << "          -c[num] = Specify number of cache buckets" << "\n" << flush;
-  cout << "          -d[name] = Specify output DIR for enc file(s)" << "\n" << flush;
-  cout << "          -D[name] = Specify and make output DIR" << "\n" << flush;
-  cout << "          -f[name] = Specify output file and DIR name" << "\n" << flush;
-  cout << "          -g = Generate hashed output file names" << "\n" << flush;
-  cout << "          -k = Supply a key used to encrypt file" << "\n" << flush;
+  cout << "          -d  Enable debugging output" << "\n" << flush;  
+  cout << "          -h  Display this help message and exit." << "\n" << flush;
   cout << "          -o = Overwrite existing enc file(s)" << "\n" << flush;
-  cout << "          -p = Supply a password used to encrypt" << "\n" << flush;
   cout << "          -r = Remove unencrypted source file(s)" << "\n" << flush;
   cout << "          -R = Encrypt DIR including all files and subdirectories" << "\n" << flush;
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
-  cout << "          -x[ext] = Specify enc file(s) dot extension" << "\n" << flush;
   cout << "\n" << flush;
-
-  cout << "          --key=aes_key (Use a key file for symmetric file encryption)" << "\n" << flush;
-  cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
-  
-  cout << "          --version (Display this programs version number)" << "\n" << flush;
-  cout << "          --help (Display this help message and exit." << "\n" << flush;
-  cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
-  cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
-  cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
   cout << "          --add-rsa-key=pubkey.pem (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
+  cout << "          --cache=size (Specify number of cache buckets)" << "\n" << flush;
+  cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
+  cout << "          --ext=.enc (Dot extension used for encrypted files)" << "\n" << flush;
+  cout << "          --help (Display this help message and exit." << "\n" << flush;
+  cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
+  cout << "          --key=aes_key (Use a key file for symmetric file encryption)" << "\n" << flush;
+  cout << "          --outfile=fname (Write decrypt output to specified file name)" << "\n" << flush;
+  cout << "          --outdir=dir (Specify and make output directory)" << "\n" << flush;
+  cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
   cout << "          --rsa-key-passphrase (Passpharse for public RSA key)" << "\n" << flush;
+  cout << "          --verbose (Turn on verbose output)" << "\n" << flush;  
+  cout << "          --version (Display this programs version number)" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -297,6 +292,51 @@ int ProcessDashDashArg(gxString &arg)
     has_valid_args = 1;
   }
 
+  if(arg == "ext") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --ext requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    en_dot_ext = equal_arg;
+    if(en_dot_ext[0] != '.') {
+      en_dot_ext.InsertAt(0, ".", 1);
+    }
+    has_valid_args = 1;
+  }
+  
+  if(arg == "outdir") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --outdir requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    output_dir_name = equal_arg;
+    if(!futils_exists(output_dir_name.c_str())) {
+      if(futils_mkdir(output_dir_name.c_str()) != 0) {
+	cerr << "\n" << flush;
+	cerr << "Error making directory" << "\n" << flush;
+	cerr << "\n" << flush;
+	return 0;
+      }
+    }
+    if(!futils_isdirectory(output_dir_name.c_str())) {
+      cerr << "\n" << flush;
+      cerr << "Bad output DIR specified" << "\n" << flush;
+      cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
+	cerr << "\n" << flush;
+	return 0;
+    }
+    has_valid_args = 1;
+  }
+
+  if(arg == "outfile") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --outfile requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    output_file_name = equal_arg;
+    has_valid_args = 1;
+  }
+  
   if(!has_valid_args) {
     cerr << "\n" << flush;
     cerr << "Unknown or invalid --" << arg.c_str() << "\n" << flush;
@@ -313,49 +353,9 @@ int ProcessArgs(char *arg)
   gxString sbuf;
   gxString ebuf;
   switch(arg[1]) {
-    case 'c':
-      num_buckets = (gxsPort_t)atoi(arg+2); 
-      if((num_buckets < 1) || (num_buckets > 65535)) {
-	cerr << "\n" << flush;
-	cerr << "Bad number of cache buckets specified" << "\n" << flush;
-	cerr << "Valid range = 1 to 65535 bytes" << "\n" << flush;
-	cerr << "\n" << flush;
-	return 0;
-      }
-      break;
-      
-    case 'x':
-      en_dot_ext = arg+2;
-      if(en_dot_ext[0] != '.') {
-	en_dot_ext.InsertAt(0, ".", 1);
-      }
-      break;
-
-    case 'f':
-      output_file_name = arg+2;
-      break;
-
-    case 'g':
-      gen_file_names = 1;
-      break;
-
-    case 'D':
-      output_dir_name = arg+2;
-      if(!futils_exists(output_dir_name.c_str())) {
-	if(futils_mkdir(output_dir_name.c_str()) != 0) {
-	  cerr << "\n" << flush;
-	  cerr << "Error making directory" << "\n" << flush;
-	  cerr << "\n" << flush;
-	  return 0;
-	}
-      }
-      if(!futils_isdirectory(output_dir_name.c_str())) {
-	cerr << "\n" << flush;
-	cerr << "Bad output DIR specified" << "\n" << flush;
-	cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
-	cerr << "\n" << flush;
-	return 0;
-      }
+    case 'd':
+      clientcfg->verbose_mode = 1;
+      debug_mode = 1;
       break;
 
     case '0': 
@@ -659,9 +659,6 @@ int main(int argc, char **argv)
     }
     if(!output_file_name.is_null()) {
       fc.SetOutputFileName(output_file_name.c_str());
-    }
-    if(gen_file_names) {
-      fc.GenFileNames();
     }
     gxString sbuf;
 
