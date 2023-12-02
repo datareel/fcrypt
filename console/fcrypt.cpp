@@ -114,8 +114,10 @@ void HelpMessage()
   cout << "\n" << flush;
   cout << "Usage: " << clientcfg->executable_name.c_str() << " [switches] " << "filename" << "\n" << flush;
   cout << "Switches: -? = Display this help message and exit." << "\n" << flush;  
-  cout << "          -0 = No encryption for testing only." << "\n" << flush;
-  cout << "          -3 = 256-bit encryption (default)." << "\n" << flush;
+  if(debug_mode) {
+    cout << "          -0 = No encryption for testing only." << "\n" << flush;
+    cout << "          -3 = 256-bit encryption (default)." << "\n" << flush;
+  }
   cout << "          -d  Enable debugging output" << "\n" << flush;  
   cout << "          -h  Display this help message and exit." << "\n" << flush;
   cout << "          -o = Overwrite existing enc file(s)" << "\n" << flush;
@@ -124,15 +126,15 @@ void HelpMessage()
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "\n" << flush;
   cout << "          --add-rsa-key (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
-  cout << "          --add-rsa-key input args can be a public file name or a pipe" << "\n" << flush;
+  cout << "          --add-rsa-key input args can be a public key file name or a pipe" << "\n" << flush;
   cout << "          --cache=size (Specify number of cache buckets)" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
   cout << "          --ext=.enc (Dot extension used for encrypted files)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
   cout << "          --key=aes_key (Use a key file for symmetric file encryption)" << "\n" << flush;
-  cout << "          --outfile=fname (Write decrypt output to specified file name)" << "\n" << flush;
-  cout << "          --outdir=dir (Specify and make output directory)" << "\n" << flush;
+  cout << "          --outfile=fname (Write encrypted output to specified file name)" << "\n" << flush;
+  cout << "          --outdir=dir (Write encrypted output to this directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
   cout << "          --rsa-key-passphrase (Passpharse for public RSA key)" << "\n" << flush;
@@ -492,7 +494,6 @@ int main(int argc, char **argv)
   }
 
   if(bytes_read > 0) {
-    DEBUG_m("Public RSA key read from stdin");
     public_rsa_key_file = "STDIN";
     public_key_len = bytes_read;
   }

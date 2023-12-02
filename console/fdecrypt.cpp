@@ -116,10 +116,11 @@ void HelpMessage()
   cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
   cout << "          --key=aes_key (Use a key file for symmetric file decryption)" << "\n" << flush;
-  cout << "          --outfile=fname (Write decrypt output to specified file name)" << "\n" << flush;
-  cout << "          --outdir=dir (Specify and make output directory)" << "\n" << flush;
+  cout << "          --outfile=fname (Write decrypted output to specified file name)" << "\n" << flush;
+  cout << "          --outdir=dir (Write decrypted output to this directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file decryption)" << "\n" << flush;
-  cout << "          --rsa-key=key.pem (Use a private RSA key for decryption)" << "\n" << flush;
+  cout << "          --rsa-key (Use your private RSA key for decryption)" << "\n" << flush;
+  cout << "          --rsa-key input args can be a private key file name or a pipe" << "\n" << flush;
   cout << "          --rsa-key-passphrase (Passpharse for private RSA key)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
@@ -286,25 +287,32 @@ int ProcessDashDashArg(gxString &arg)
   }
   
   if(arg == "rsa-key") {
-    if(equal_arg.is_null()) {
-      cerr << "ERROR: --rsa-key missing filename: --rsa-key=/$HOME/keys/rsa_key.pem" << "\n" << flush;
-      return 0;
+    if(private_rsa_key_file == "STDIN") {
+      use_private_rsa_key = 1;
+      has_valid_args = 1;
+      
     }
-    private_rsa_key_file = equal_arg;
-    if(!futils_exists(private_rsa_key_file.c_str())) {
+    else {
+      if(equal_arg.is_null()) {
+	cerr << "ERROR: --rsa-key missing filename: --rsa-key=/$HOME/keys/rsa_key.pem" << "\n" << flush;
+	return 0;
+      }
+      private_rsa_key_file = equal_arg;
+      if(!futils_exists(private_rsa_key_file.c_str())) {
 	cerr << "\n" << flush;
 	cerr << "ERROR: Private RSA key file " << private_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
 	cerr << "\n" << flush;
 	return 0;
+      }
+      DEBUG_m("Reading RSA key file");
+      rv = RSA_read_key_file(private_rsa_key_file.c_str(), private_key, sizeof(private_key), &private_key_len, &has_passphrase);
+      if(rv != RSA_NO_ERROR) {
+	cerr << "ERROR: " << RSA_err_string(rv) << "\n" << flush;
+	return 0;
+      }
+      use_private_rsa_key = 1;
+      has_valid_args = 1;
     }
-    DEBUG_m("Reading RSA key file");
-    rv = RSA_read_key_file(private_rsa_key_file.c_str(), private_key, sizeof(private_key), &private_key_len, &has_passphrase);
-    if(rv != RSA_NO_ERROR) {
-      cerr << "ERROR: " << RSA_err_string(rv) << "\n" << flush;
-      return 0;
-    }
-    use_private_rsa_key = 1;
-    has_valid_args = 1;
   }
   
   if(arg == "stdout") {
@@ -377,13 +385,9 @@ int ProcessArgs(char *arg)
 int DEBUG_m(char *message, int level, int rv)
 {
   if(debug_mode && debug_level >= level) {
-    if(!message) {
-      cerr << debug_message << "\n" << flush;
-      return rv;
-    }
-    cerr << "DEBUG" << debug_level << ": " << message << "\n" << flush;
+    if(message) cerr << "DEBUG" << debug_level << ": " << message << "\n" << flush; 
+    if(!debug_message.is_null()) cerr << debug_message << "\n" << flush;
   }
-  
   return rv; 
 }
 
@@ -399,6 +403,14 @@ int ExitProgram(int rv, char *exit_message)
 
   if(!debug_message.is_null()) DEBUG_m(debug_message.c_str(), debug_level);
 
+  if(debug_mode) {
+    char err[1024];
+    memset(err, 0, sizeof(err));
+    ERR_load_crypto_strings();
+    ERR_error_string(ERR_get_error(), err);
+    std::cerr << err << "\n";
+  }
+
   if(!exit_message) {
     cerr << exit_message << "\n" << flush;
   }
@@ -411,6 +423,38 @@ int main(int argc, char **argv)
   InitLeakTest();
 #endif
 
+  fd_set readfds, writefds, exceptfds;
+  struct timeval timeout;
+  
+  FD_ZERO(&readfds);
+  FD_ZERO(&writefds);
+  FD_ZERO(&exceptfds);
+  FD_SET(fileno(stdin), &readfds);
+  timeout.tv_sec  = 0;
+  timeout.tv_usec = 5000;
+
+  int selectRetVal = select(1, &readfds, &writefds, &exceptfds, &timeout);
+  char buf[1];
+  unsigned bytes_read;
+  
+  if(selectRetVal > 0) {
+    if(FD_ISSET(fileno(stdin), &readfds)) {
+      while(read(0, buf, sizeof(buf)) > 0) {
+	if(bytes_read > sizeof(private_key)) {
+	  cerr << "ERROR: Public key size has exceeded " <<  sizeof(private_key) << " bytes" << "\n" << flush;
+	  return 1;
+	}
+	private_key[bytes_read] = buf[0];
+	bytes_read++;
+      }
+    }
+  }
+
+  if(bytes_read > 0) {
+    private_rsa_key_file = "STDIN";
+    private_key_len = bytes_read;
+  }
+  
   AES_openssl_init();
   
   // Set the program information
