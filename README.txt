@@ -65,25 +65,68 @@ USING RSA KEYS FOR MULTI USER ACCESS TO THE ENCRYPTED FILE
 
 Use openssl to make some test keys:
 
-
-> openssl genrsa -aes256 -out private.pem 2048
-> chmod 600 private.pem
-> openssl rsa -in private.pem -outform PEM -pubout -out public.pem
+> mkdir ${HOME}/.keys
+> chmod 700 ${HOME}/.keys
+> openssl genrsa -aes256 -outp ${HOME}/.keys/private.pem 2048
+> chmod 600 ${HOME}/.keys/private.pem
+> openssl rsa -in private.pem -outform PEM -pubout -out ${HOME}/.keys/public.pem
 
 Create a master file encryption key:
 
-> dd if=/dev/urandom of=master.key bs=1 count=128
-> chmod 600 master.key
+> dd if=/dev/urandom of=${HOME}/.keys/master.key bs=1 count=128
+> chmod 600 ${HOME}/.keys/master.key
 
 Encrypt a file:
 
-> ./fcrypt --key=master.key testfile.txt
+> ./fcrypt --key=${HOME}/.keys/master.key testfile.txt
 
 Add your RSA key:
 
-> ./fcrypt --key=master.key --add-rsa-key=public.pem --rsa-key-username=testuser testfile.enc
+> ./fcrypt --key=${HOME}/.keys/master.key --add-rsa-key=${HOME}/.keys/public.pem --rsa-key-username=testuser testfile.enc
 
-Decrypt the file:
+Decrypt the file using your private key that is passpharse protected
+and ensure you private key is never shared with anyone:
 
-> ./fdecrypt --rsa-key=private.pem testfile.enc
+> ./fdecrypt --rsa-key=${HOME}/.keys/private.pem testfile.enc
+
+USING SSH-RSA FOR MULTI USER ACCESS TO THE ENCRYPTED FILE
+---------------------------------------------------------
+Create a temp key to encrypt the file
+
+> mkdir ${HOME}/.keys
+> chmod 700 ${HOME}/.keys
+> dd if=/dev/urandom of=${HOME}/.keys/temp.key bs=1 count=128
+> chmod 600 ${HOME}/.keys/temp.key
+
+Encrypt a file:
+
+> ./fcrypt --key=${HOME}/.keys/temp.key testfile.txt
+
+Add your SSH-RSA key to the encrypted file:
+
+> ssh-keygen -f ~/.ssh/id_rsa.pub -m 'PKCS8' -e | ./fcrypt --key=${HOME}/.keys/temp.key --add-rsa-key --rsa-key-username=testuser testfile.enc
+
+Decrypt the file using your SSH-RSA private key:
+
+> ./fdecrypt --rsa-key=${HOME}/.ssh/id_rsa testfile.enc
+
+Have your users that need access to the encrypted file give you a copy
+of their public ~/.ssh/id_rsa.pub SSH-RSA key.
+
+Once you have a copy of all the public RSA keys that need access the
+encrypt file add each key. After all the user are added you can remove
+the file encrytion key:
+
+> rm -fv ${HOME}/.keys/temp.key
+
+
+All users will only be able to decrypt the file using their SSH-RSA
+prviate key. All user should ensure their private key is passphrase
+protected and never shared with anyone.  
+
+For users that do not have passphare protected keys a passpharse can be
+added with the following command:
+
+> ssh-keygen -p -f ~/.ssh/id_rsa
+
 
