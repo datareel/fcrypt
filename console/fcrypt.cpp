@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 11/30/2023
+// Date Last Modified: 12/01/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -51,6 +51,9 @@ using namespace std; // Use unqualified names for Standard C++ library
 #include "gxbstree.h"
 #include "bstreei.h"
 #include "gxs_b64.h"
+
+#include <unistd.h>
+#include <fcntl.h>
 
 // Globals
 gxString debug_message;
@@ -120,7 +123,8 @@ void HelpMessage()
   cout << "          -R = Encrypt DIR including all files and subdirectories" << "\n" << flush;
   cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
   cout << "\n" << flush;
-  cout << "          --add-rsa-key=pubkey.pem (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
+  cout << "          --add-rsa-key (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
+  cout << "          --add-rsa-key input args can be a public file name or a pipe" << "\n" << flush;
   cout << "          --cache=size (Specify number of cache buckets)" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
   cout << "          --ext=.enc (Dot extension used for encrypted files)" << "\n" << flush;
@@ -142,7 +146,9 @@ int ProcessDashDashArg(gxString &arg)
   gxString sbuf, equal_arg, ebuf;
   int has_valid_args = 0;
   int rv = 0;
-  
+  char buf[1];
+  unsigned bytes_read;
+
   if(arg.Find("=") != -1) {
     // Look for equal arguments
     // --log-file="/var/log/my_service.log"
@@ -228,12 +234,14 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "\n" << flush;
       return 0;
     }
-    DEBUG_m("Reading symmetric key file");
-    if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
-      cerr << "\n" << flush;
-      cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
-      cerr << "\n" << flush;
-      return 0;
+    else {
+      DEBUG_m("Reading symmetric key file");
+      if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
+	cerr << "\n" << flush;
+	cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+	cerr << "\n" << flush;
+	return 0;
+      }
     }
     use_key_file  = 1;
     has_valid_args = 1;
@@ -253,25 +261,33 @@ int ProcessDashDashArg(gxString &arg)
   }
 
   if(arg == "add-rsa-key") {
-    if(equal_arg.is_null()) {
-      cerr << "ERROR: --add-rsa-key missing filename: --add-rsa-key=/$HOME/keys/rsa_pubkey.pem" << "\n" << flush;
-      return 0;
+    if(public_rsa_key_file == "STDIN") {
+      add_rsa_key = 1;
+      has_valid_args = 1;
+      
     }
-    public_rsa_key_file = equal_arg;
-    if(!futils_exists(public_rsa_key_file.c_str())) {
-        cerr << "\n" << flush;
-        cerr << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
-        cerr << "\n" << flush;
-        return 0;
+    else {
+      if(equal_arg.is_null()) {
+	cerr << "ERROR: --add-rsa-key missing filename: --add-rsa-key=/$HOME/keys/rsa_pubkey.pem" << "\n" << flush;
+	return 0;
+      }
+      public_rsa_key_file = equal_arg;
+      
+      DEBUG_m("Reading RSA key file");
+      if(!futils_exists(public_rsa_key_file.c_str())) {
+	cerr << "\n" << flush;
+	cerr << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
+	cerr << "\n" << flush;
+	return 0;
+      }
+      rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len, &has_passphrase);
+      if(rv != RSA_NO_ERROR) {
+	std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
+	return 0;
+      }
+      add_rsa_key = 1;
+      has_valid_args = 1;
     }
-    DEBUG_m("Reading RSA key file");
-    rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len, &has_passphrase);
-    if(rv != RSA_NO_ERROR) {
-      std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
-      return 0;
-    }
-    add_rsa_key = 1;
-    has_valid_args = 1;
   }
   
   if(arg == "rsa-key-username") {
@@ -408,13 +424,9 @@ int ProcessArgs(char *arg)
 int DEBUG_m(char *message, int level, int rv)
 {
   if(debug_mode && debug_level >= level) {
-    if(!message) {
-      cerr << debug_message << "\n" << flush;
-      return rv;
-    }
-    cerr << "DEBUG" << debug_level << ": " << message << "\n" << flush;
+    if(message) cerr << "DEBUG" << debug_level << ": " << message << "\n" << flush; 
+    if(!debug_message.is_null()) cerr << debug_message << "\n" << flush;
   }
-  
   return rv; 
 }
 
@@ -431,6 +443,14 @@ int ExitProgram(int rv, char *exit_message)
   rsa_key_passphrase.Clear(1);
   
   if(!debug_message.is_null()) DEBUG_m(debug_message.c_str(), debug_level);
+
+  if(debug_mode) {
+    char err[1024];
+    memset(err, 0, sizeof(err));
+    ERR_load_crypto_strings();
+    ERR_error_string(ERR_get_error(), err);
+    std::cerr << err << "\n";
+  }
   
   if(!exit_message) {
     cerr << exit_message << "\n" << flush;
@@ -444,6 +464,39 @@ int main(int argc, char **argv)
   InitLeakTest();
 #endif
 
+  fd_set readfds, writefds, exceptfds;
+  struct timeval timeout;
+  
+  FD_ZERO(&readfds);
+  FD_ZERO(&writefds);
+  FD_ZERO(&exceptfds);
+  FD_SET(fileno(stdin), &readfds);
+  timeout.tv_sec  = 0;
+  timeout.tv_usec = 5000;
+
+  int selectRetVal = select(1, &readfds, &writefds, &exceptfds, &timeout);
+  char buf[1];
+  unsigned bytes_read;
+  
+  if(selectRetVal > 0) {
+    if(FD_ISSET(fileno(stdin), &readfds)) {
+      while(read(0, buf, sizeof(buf)) > 0) {
+	if(bytes_read > sizeof(public_key)) {
+	  cerr << "ERROR: Public key size has exceeded " <<  sizeof(public_key) << " bytes" << "\n" << flush;
+	  return 1;
+	}
+	public_key[bytes_read] = buf[0];
+	bytes_read++;
+      }
+    }
+  }
+
+  if(bytes_read > 0) {
+    DEBUG_m("Public RSA key read from stdin");
+    public_rsa_key_file = "STDIN";
+    public_key_len = bytes_read;
+  }
+   
   AES_openssl_init();
   
   // Set the program information
