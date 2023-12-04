@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/29/2023
+// Date Last Modified: 12/03/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -53,10 +53,56 @@ Encryption routes generate encryption certificates and authenticate users.
 #include "gxs_b64.h"
 
 const unsigned STATIC_DATA_AREA_SIZE = 65536;
+const unsigned DEFAULT_STATIC_DATA_AREA_SIZE = 16384;
 const unsigned MAX_FILENAME_LEN = 256;
 const unsigned MAX_USERNAME_LEN = 64;
+const gxUINT32 STATIC_DATA_VERSION = 2023103;
 const gxUINT32 STATIC_DATA_BLOCK_VERSION = 2023103;
 const gxUINT32 CRYPT_FILE_VERSION = 2023103;
+
+struct GXDLCODE_API StaticDataHeader
+{
+  StaticDataHeader() { FormatHeader(); }
+  ~StaticDataHeader() { WipeHeader(); }
+  StaticDataHeader(const StaticDataHeader &ob) { Copy(ob); }
+  StaticDataHeader &operator=(const StaticDataHeader &ob) {
+    if(&ob == this) return *this;
+    Copy(ob);
+    return *this;
+  }
+  
+  int FormatHeader() { // Setup header to be written 
+    version = STATIC_DATA_VERSION;
+    start_checkword = 0xABAB;
+    end_checkword = 0xFEFE;
+    static_area_len = start_of_static_data = (gxUINT32)0;
+    AES_fillrand(reserved, sizeof(reserved));
+    return 0;
+  }
+  int WipeHeader() { // Clear header to be read
+    version = start_checkword = end_checkword = (gxUINT32)0;
+    static_area_len = start_of_static_data = (gxUINT32)0;
+    memset(reserved, 0, sizeof(reserved));
+    return 0;
+  }
+  int Copy(const StaticDataHeader &ob) {
+    WipeHeader();
+    version = ob.version;
+    start_checkword = ob.start_checkword;
+    end_checkword = ob.end_checkword;
+    static_area_len = ob.static_area_len;
+    start_of_static_data = ob.start_of_static_data;
+    memmove(reserved, ob.reserved, sizeof(reserved));
+    return 0;
+  }
+  
+  gxUINT32 version;
+  gxUINT32 start_checkword;
+  gxUINT32 static_area_len;
+  gxUINT32 start_of_static_data;
+  unsigned char reserved[256]; // Reserved for future use
+  gxUINT32 end_checkword;
+};
 
 struct GXDLCODE_API StaticDataBlockHdr
 {
@@ -220,6 +266,7 @@ public: // Decrypt fucntions
   int DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, gxString &crypt_file_name);
 
 public: // RSA key functions
+  int TestStaticDataHeader(const StaticDataHeader &sd_header_read);
   int UpdateStaticData();
   int WriteStaticDataAreaToFile(const char *fname);
   int AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &secret,

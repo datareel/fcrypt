@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 11/29/2023
+// Date Last Modified: 12/03/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -377,6 +377,20 @@ int FCryptCache::OpenOutputFile()
 
   // Adding a static data area
   // Write the static data area to disk
+  StaticDataHeader sd_header;
+  sd_header.FormatHeader();
+  sd_header.start_of_static_data = sizeof(sd_header);
+  sd_header.static_area_len = sizeof(static_data);
+
+  outfile.df_Write(&sd_header, sizeof(sd_header));
+  if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error writing static data header to file " << ofname;
+    CloseOutputFile();
+    return 0;
+  } 
+  bytes_wrote += sizeof(sd_header);
+
   outfile.df_Write(static_data, sizeof(static_data));
   if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
     ERROR_LEVEL = -1;
@@ -386,8 +400,8 @@ int FCryptCache::OpenOutputFile()
   } 
   bytes_wrote += sizeof(static_data);
   
-  // Adding a file header with meta data
-  // Write the file header to disk
+  // Adding a crypt file header with meta data
+  // Write the crypt file header to disk
   outfile.df_Write(crypt_buf, len);
   if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
     ERROR_LEVEL = -1;
@@ -422,6 +436,31 @@ int FCryptCache::TestVersion(CryptFileHdr hdr, gxUINT32 &version)
   return 1;
 }
 
+int FCryptCache::TestStaticDataHeader(const StaticDataHeader &sd_header_read)
+{
+  StaticDataHeader sd_header;
+  sd_header.FormatHeader();
+
+    if(sd_header_read.version != sd_header.version){
+    ERROR_LEVEL = -1;
+    err << clear << "Bad static data header version";
+    return 0;
+  }
+
+  if(sd_header_read.start_checkword != sd_header.start_checkword){
+    ERROR_LEVEL = -1;
+    err << clear << "Bad static data header start checkword";
+    return 0;
+  }
+  if(sd_header_read.end_checkword != sd_header.end_checkword){
+    ERROR_LEVEL = -1;
+    err << clear << "Bad static data header start checkword";
+    return 0;
+  }
+
+  return 1;
+}
+
 int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const MemoryBuffer &secret, gxUINT32 &version)
 {
   err.Clear();
@@ -447,7 +486,29 @@ int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const M
   }
 
   // Read the static data area
-  if(infile.df_Read(static_data, sizeof(static_data)) != 
+  StaticDataHeader sd_header_read;
+  sd_header_read.WipeHeader();
+
+  if(infile.df_Read(&sd_header_read, sizeof(sd_header_read)) != DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error reading static data area header";
+    return 0;
+  }
+  if(infile.df_gcount() != sizeof(sd_header_read)) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error reading file static data header";
+    return 0;
+  }
+
+  if(!TestStaticDataHeader(sd_header_read)) return 0;
+
+  if(infile.df_Seek(sd_header_read.start_of_static_data) != DiskFileB::df_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "File seek Error reading file static data area";
+    return 0;
+  }
+
+  if(infile.df_Read(static_data, sd_header_read.static_area_len) != 
      DiskFileB::df_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Error reading file static data area";
@@ -891,10 +952,28 @@ int FCryptCache::WriteStaticDataAreaToFile(const char *fname)
   
   rewind(fp);
 
-  unsigned num_bytes = fwrite((const void*)static_data, sizeof(unsigned char), sizeof(static_data), fp);
-  if(num_bytes != sizeof(static_data)) {
+  StaticDataHeader sd_header_read;
+  sd_header_read.FormatHeader();
+
+  unsigned num_bytes_read = fread((const void*)&sd_header_read, sizeof(unsigned char), sizeof(sd_header_read), fp);
+
+  if(!TestStaticDataHeader(sd_header_read)) {
+    fclose(fp);
+    return 0;
+  }
+
+  if(fseek(fp, sd_header_read.start_of_static_data, SEEK_SET) != 0) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error seeking to static data start " << fname;
+    fclose(fp);
+    return 0;
+  }
+  
+  unsigned num_bytes = fwrite((const void*)static_data, sizeof(unsigned char), sd_header_read.static_area_len, fp);
+  if(num_bytes != sd_header_read.static_area_len) {
     ERROR_LEVEL = -1;
     err << clear << "Error writing static data to file " << fname;
+    fclose(fp);
     return 0;
   }
 
@@ -954,10 +1033,27 @@ int FCryptCache::LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, u
     return 0;
   }
 
-  unsigned input_bytes_read = fread(static_data, 1, sizeof(static_data), fp);
+    StaticDataHeader sd_header_read;
+    sd_header_read.FormatHeader();
+
+  unsigned num_bytes_read = fread((const void*)&sd_header_read, sizeof(unsigned char), sizeof(sd_header_read), fp);
+
+  if(!TestStaticDataHeader(sd_header_read)) {
+    fclose(fp);
+    return 0;
+  }
+
+  if(fseek(fp, sd_header_read.start_of_static_data, SEEK_SET) != 0) {
+    ERROR_LEVEL = -1;
+    err << clear << "Error seeking to static data start " << fname;
+    fclose(fp);
+    return 0;
+  }
+  
+  unsigned input_bytes_read = fread(static_data, 1, sd_header_read.static_area_len, fp);
   fclose(fp);
 
-  if(input_bytes_read != sizeof(static_data)) {
+  if(input_bytes_read != sd_header_read.static_area_len) {
     ERROR_LEVEL = -1;
     err << clear << "Error reading static data area from file " << fname;
   }
@@ -977,7 +1073,6 @@ int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write
   int read_static_area = 1;
   char username_buf[1024];
   char username[1024];
-  int rv;
 
   num_blocks = 0;
   next_write_address = 0;
