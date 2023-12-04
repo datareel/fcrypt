@@ -38,7 +38,7 @@ Encryption routes generate encryption certificates and authenticate users.
 #include "cryptdb.h"
 #include "gxcrc32.h"
 
-FCryptCache::FCryptCache(unsigned CacheSize) : cache(CacheSize) 
+FCryptCache::FCryptCache(unsigned CacheSize, unsigned size_of_static_data_area) : cache(CacheSize) 
 { 
   ready_for_writing = 1; 
   ready_for_reading = 1;
@@ -52,7 +52,16 @@ FCryptCache::FCryptCache(unsigned CacheSize) : cache(CacheSize)
   bytes_read = (FAU_t)0;
   crypt_stream = 1;
   ERROR_LEVEL = 0;
-  AES_fillrand(static_data, sizeof(static_data));
+  static_data = new unsigned char[size_of_static_data_area];
+  static_data_size = size_of_static_data_area;
+  AES_fillrand(static_data, sizeof(size_of_static_data_area));
+}
+
+FCryptCache::~FCryptCache()
+{
+  if(static_data) delete static_data;
+  static_data_size = 0;
+  static_data = 0;
 }
 
 void FCryptCache::Read(void *buf, unsigned Bytes, gxDeviceTypes dev) 
@@ -336,13 +345,15 @@ int FCryptCache::OpenOutputFile()
   // Init the file header
   CryptFileHdr hdr;
   hdr.mode = mode;
-  hdr.name_len = filename.length();
+  if(decrypted_output_filename.is_null()) decrypted_output_filename = filename;
+  
+  hdr.name_len = decrypted_output_filename.length();
   if(hdr.name_len > AES_MAX_NAME_LEN) {
     ERROR_LEVEL = -1;
     err << clear << "File name greater than maximum length " << AES_MAX_NAME_LEN;
     return 0;
   }
-  memmove(hdr.fname, filename.GetSPtr(), filename.length());
+  memmove(hdr.fname, decrypted_output_filename.GetSPtr(), decrypted_output_filename.length());
 
   // Encrypt the file header
   // Put the header in file block that will be written at the top of the file
@@ -380,7 +391,7 @@ int FCryptCache::OpenOutputFile()
   StaticDataHeader sd_header;
   sd_header.FormatHeader();
   sd_header.start_of_static_data = sizeof(sd_header);
-  sd_header.static_area_len = sizeof(static_data);
+  sd_header.static_area_len = static_data_size;
 
   outfile.df_Write(&sd_header, sizeof(sd_header));
   if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
@@ -391,14 +402,14 @@ int FCryptCache::OpenOutputFile()
   } 
   bytes_wrote += sizeof(sd_header);
 
-  outfile.df_Write(static_data, sizeof(static_data));
+  outfile.df_Write(static_data, static_data_size);
   if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Error writing static data area to file " << ofname;
     CloseOutputFile();
     return 0;
   } 
-  bytes_wrote += sizeof(static_data);
+  bytes_wrote += static_data_size;
   
   // Adding a crypt file header with meta data
   // Write the crypt file header to disk
@@ -502,6 +513,12 @@ int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const M
 
   if(!TestStaticDataHeader(sd_header_read)) return 0;
 
+  if(sd_header_read.static_area_len != static_data_size) {
+    static_data_size = sd_header_read.static_area_len;
+    delete static_data;
+    static_data = new unsigned char[static_data_size];
+  }
+  
   if(infile.df_Seek(sd_header_read.start_of_static_data) != DiskFileB::df_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "File seek Error reading file static data area";
@@ -515,7 +532,7 @@ int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const M
     return 0;
   }
 
-  if(infile.df_gcount() != sizeof(static_data)) {
+  if(infile.df_gcount() != sd_header_read.static_area_len) {
     ERROR_LEVEL = -1;
     err << clear << "Error reading file static data area";
     return 0;
@@ -594,6 +611,10 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
   }
   else { 
     ofname.SetString(hdr.fname, hdr.name_len);
+    if(ofname == "stdout" || ofname == "stderr") {
+      ofname << clear << sbuf;
+      o_device = gxDEVICE_CONSOLE;
+    }
   }
   
   if(!output_dir_name.is_null() && o_device == gxDEVICE_DISK_FILE) {
@@ -992,8 +1013,8 @@ int FCryptCache::UpdateStaticData()
   
   if(!ptr) return 1;
 
-  AES_fillrand(static_data, sizeof(static_data));
-
+  AES_fillrand(static_data, static_data_size);
+  
   offset = 0;
   while(ptr) {
     mbuf.Clear(1);
@@ -1001,8 +1022,8 @@ int FCryptCache::UpdateStaticData()
     mbuf.Cat(ptr->data.rsa_ciphertext.m_buf(), ptr->data.rsa_ciphertext.length());
     mbuf.Cat(ptr->data.hmac.m_buf(), ptr->data.hmac.length());
     mbuf.Cat(ptr->data.username_encoded.c_str(), ptr->data.username_encoded.length());
-    if(offset > (sizeof(static_data) - mbuf.length())) {
-      ERROR_LEVEL = -11;
+    if((static_data_size < mbuf.length()) || (offset > (static_data_size - mbuf.length()))) {
+      ERROR_LEVEL = -1;
       err << clear << "Out of free space in static data area";
       mbuf.Clear(1);
       return 0;
@@ -1043,6 +1064,12 @@ int FCryptCache::LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, u
     return 0;
   }
 
+  if(sd_header_read.static_area_len != static_data_size) {
+    static_data_size = sd_header_read.static_area_len;
+    delete static_data;
+    static_data = new unsigned char[static_data_size];
+  }
+  
   if(fseek(fp, sd_header_read.start_of_static_data, SEEK_SET) != 0) {
     ERROR_LEVEL = -1;
     err << clear << "Error seeking to static data start " << fname;
@@ -1079,7 +1106,7 @@ int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write
   static_block_list.Clear();
 
   while(read_static_area) {
-    if(offset >= (STATIC_DATA_AREA_SIZE-sizeof(static_data_block_header))) {
+    if((static_data_size < sizeof(static_data_block_header)) || (offset >= (static_data_size-sizeof(static_data_block_header)))) {
       end_of_static_data = 1;
       read_static_area = 0;
       break;
@@ -1088,7 +1115,7 @@ int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write
     found_block = 0;
     block_offset = offset;
     while(!found_block) {
-      if(block_offset >= (STATIC_DATA_AREA_SIZE-sizeof(static_data_block_header))) {
+      if(block_offset >= (static_data_size-sizeof(static_data_block_header))) {
 	end_of_static_data = 1;
 	read_static_area = 0;
 	break;
@@ -1150,7 +1177,7 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
 
   if(!DecryptOnlyTheFileName(fname, secret, version, sbuf)) return 0;
   if(ERROR_LEVEL != 0) return 0;
-    
+
   memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
   RSA_openssl_init();  
 

@@ -52,8 +52,9 @@ Encryption routes generate encryption certificates and authenticate users.
 #include "gxlist.h"
 #include "gxs_b64.h"
 
-const unsigned STATIC_DATA_AREA_SIZE = 65536;
 const unsigned DEFAULT_STATIC_DATA_AREA_SIZE = 16384;
+const unsigned MIN_STATIC_DATA_AREA_SIZE = 1;
+const unsigned MAX_STATIC_DATA_AREA_SIZE = 65535;
 const unsigned MAX_FILENAME_LEN = 256;
 const unsigned MAX_USERNAME_LEN = 64;
 const gxUINT32 STATIC_DATA_VERSION = 2023103;
@@ -254,8 +255,8 @@ struct GXDLCODE_API CryptSecretHdr
 class GXDLCODE_API FCryptCache : public gxDeviceCache
 {
 public:
-  FCryptCache(unsigned CacheSize = 1024);
-  ~FCryptCache() { }
+  FCryptCache(unsigned CacheSize = 1024, unsigned size_of_static_data_area = DEFAULT_STATIC_DATA_AREA_SIZE);
+  ~FCryptCache();
 
 public: // Encrypt functions
   int EncryptFile(const char *fname, const MemoryBuffer &secret);
@@ -335,8 +336,10 @@ public:
   gxString err;
   CryptSecretHdr cp;
   AESStreamCrypt aesdb;
-  unsigned char static_data[STATIC_DATA_AREA_SIZE];
+  unsigned char *static_data;
+  unsigned int static_data_size;
   gxList<StaticDataBlock> static_block_list;
+  gxString decrypted_output_filename;
 };
 
 // Standalone functions

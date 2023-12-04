@@ -460,7 +460,7 @@ int main(int argc, char **argv)
   // Set the program information
   clientcfg->executable_name = "fdecrypt";
   clientcfg->program_name = "File Decrypt";
-  clientcfg->version_str = "2023.103";
+  clientcfg->version_str = "2023.104";
 
   if(argc < 2) {
     HelpMessage();

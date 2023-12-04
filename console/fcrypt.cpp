@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 12/01/2023
+// Date Last Modified: 12/03/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -86,6 +86,8 @@ char public_key[RSA_max_keybuf_len];
 unsigned public_key_len = 0;
 gxString rsa_key_passphrase;
 int has_passphrase = 0;
+unsigned static_data_size = DEFAULT_STATIC_DATA_AREA_SIZE;
+gxString decrypted_output_filename;
 
 // Functions
 void DisplayVersion();
@@ -129,6 +131,7 @@ void HelpMessage()
   cout << "          --add-rsa-key input args can be a public key file name or a pipe" << "\n" << flush;
   cout << "          --cache=size (Specify number of cache buckets)" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
+  cout << "          --decrypted-outfile=fname (Tell fdecrypt to write the decrypted output to specified file name)" << "\n" << flush;
   cout << "          --ext=.enc (Dot extension used for encrypted files)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
@@ -138,6 +141,7 @@ void HelpMessage()
   cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
   cout << "          --rsa-key-passphrase (Passpharse for public RSA key)" << "\n" << flush;
+  cout << "          --static-data-size=num (Set the size of the static data storage area)" << "\n" << flush;  
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;  
   cout << "          --version (Display this programs version number)" << "\n" << flush;
   cout << "\n"; // End of list
@@ -184,7 +188,7 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     if(equal_arg.Atoi() <= 0) {
-      cerr << "ERROR: Invalid value passed to --iter" << "\n" << flush;
+      cerr << "ERROR: Invalid value passed to --cache" << "\n" << flush;
       return 0;
     }
     num_buckets = equal_arg.Atoi();
@@ -192,6 +196,27 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "\n" << flush;
       cerr << "ERROR: Bad number of cache buckets specified" << "\n" << flush;
       cerr << "ERROR: Valid range = 1 to 65535 bytes" << "\n" << flush;
+      cerr << "\n" << flush;
+      return 0;
+    }
+    has_valid_args = 1;
+  }
+
+  if(arg == "static-data-size") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --static-data-size requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(equal_arg.Atoi() < 1) {
+      cerr << "ERROR: Invalid value passed to --static-data-size" << "\n" << flush;
+      return 0;
+    }
+
+    static_data_size = equal_arg.Atoi();
+    if((static_data_size < MIN_STATIC_DATA_AREA_SIZE) || (static_data_size > MAX_STATIC_DATA_AREA_SIZE)) {
+      cerr << "\n" << flush;
+      cerr << "ERROR: Bad static data storage value specified" << "\n" << flush;
+      cerr << "ERROR: Valid range = " << MIN_STATIC_DATA_AREA_SIZE << " to " << MAX_STATIC_DATA_AREA_SIZE << " bytes" << "\n" << flush;
       cerr << "\n" << flush;
       return 0;
     }
@@ -221,6 +246,15 @@ int ProcessDashDashArg(gxString &arg)
       password = equal_arg;
     }
     use_password  = 1;
+    has_valid_args = 1;
+  }
+
+  if(arg == "decrypted-outfile") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --decrypted-outfile requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    decrypted_output_filename = equal_arg;
     has_valid_args = 1;
   }
   
@@ -503,7 +537,7 @@ int main(int argc, char **argv)
   // Set the program information
   clientcfg->executable_name = "fcrypt";
   clientcfg->program_name = "File Encrypt";
-  clientcfg->version_str = "2023.103";
+  clientcfg->version_str = "2023.104";
 
   if(argc < 2) {
     HelpMessage();
@@ -703,7 +737,7 @@ int main(int argc, char **argv)
   }
   
   while(ptr) {
-    FCryptCache fc(num_buckets);
+    FCryptCache fc(num_buckets, static_data_size);
     fc.mode = mode;
     fc.key_iterations = key_iterations;
     fc.SetOverWrite(overwrite);
@@ -714,6 +748,10 @@ int main(int argc, char **argv)
     if(!output_file_name.is_null()) {
       fc.SetOutputFileName(output_file_name.c_str());
     }
+    if(!decrypted_output_filename.is_null()) {
+      fc.decrypted_output_filename = decrypted_output_filename;
+    }
+    
     gxString sbuf;
 
     if(clientcfg->verbose_mode) {
