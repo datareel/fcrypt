@@ -226,31 +226,6 @@ struct GXDLCODE_API CryptFileHdr
   unsigned char reserved[32]; // Reserved for future use
 };
 
-struct GXDLCODE_API CryptSecretHdr
-{
-  CryptSecretHdr() { }
-  ~CryptSecretHdr() { Reset(); }
-  CryptSecretHdr(const CryptSecretHdr &ob) { Copy(ob); }
-  CryptSecretHdr &operator=(const CryptSecretHdr &ob) {
-    if(&ob == this) return *this;
-    Copy(ob);
-    return *this;
-  }
-
-  void Reset() {
-    secret.Clear(1);
-    cbuf.Clear(1);
-  }
-  void Copy(const CryptSecretHdr &ob) {
-    Reset();
-    secret = ob.secret;
-    cbuf = ob.cbuf;
-  }
-
-  MemoryBuffer secret;
-  MemoryBuffer cbuf;
-};
-
 // Cached file encryption class
 class GXDLCODE_API FCryptCache : public gxDeviceCache
 {
@@ -275,7 +250,7 @@ public: // RSA key functions
 			    const char *rsa_key_username, char *passphrase = 0);
   int LoadStaticDataBlocks(const char *fname);
   int LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, unsigned &next_write_address);
-  int LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write_address);
+  int LoadStaticDataBlocks();
   
   
 public: // Helper functions
@@ -334,12 +309,15 @@ public:
   int mode;
   unsigned key_iterations;
   gxString err;
-  CryptSecretHdr cp;
+  //  CryptSecretHdr cp;
+  MemoryBuffer cryptdb_secret;
   AESStreamCrypt aesdb;
   unsigned char *static_data;
   unsigned int static_data_size;
   gxList<StaticDataBlock> static_block_list;
   gxString decrypted_output_filename;
+  unsigned static_data_bytes_used;
+  unsigned num_static_data_blocks;
 };
 
 // Standalone functions

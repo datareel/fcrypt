@@ -334,7 +334,6 @@ int ProcessDashDashArg(gxString &arg)
 int ProcessArgs(char *arg)
 {
   gxString sbuf;
-  CryptSecretHdr cp;
   gxString ebuf;
   
   switch(arg[1]) {

@@ -54,12 +54,19 @@ FCryptCache::FCryptCache(unsigned CacheSize, unsigned size_of_static_data_area) 
   ERROR_LEVEL = 0;
   static_data = new unsigned char[size_of_static_data_area];
   static_data_size = size_of_static_data_area;
-  AES_fillrand(static_data, sizeof(size_of_static_data_area));
+  static_data_bytes_used = 0;
+  num_static_data_blocks = 0;
+  AES_fillrand(static_data, size_of_static_data_area);
 }
 
 FCryptCache::~FCryptCache()
 {
-  if(static_data) delete static_data;
+  cryptdb_secret.Clear(1);
+  
+  if(static_data) {
+    AES_fillrand(static_data, static_data_size);
+    delete static_data;
+  }
   static_data_size = 0;
   static_data = 0;
 }
@@ -161,14 +168,14 @@ int FCryptCache::EncryptFile(const char *fname, const MemoryBuffer &secret)
   if(!cache) {
     ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
-    cp.secret.Clear(1);
+    cryptdb_secret.Clear(1);
     return 0;
   }
 
   if(!OpenInputFile(fname)) return 0;
-  cp.secret = secret; 
+  cryptdb_secret = secret; 
   if(!OpenOutputFile()) {
-    cp.secret.Clear(1);
+    cryptdb_secret.Clear(1);
     return 0;
   }
   
@@ -185,13 +192,13 @@ int FCryptCache::EncryptFile(const char *fname, const MemoryBuffer &secret)
       ERROR_LEVEL = -1;
       err << clear << "Error encrypting " << filename;
     }
-    cp.secret.Clear(1);
+    cryptdb_secret.Clear(1);
     CloseInputFile();
     return 0;
   }
   Flush(); // Ensure all the buckets a written to the output device
   
-  cp.secret.Clear(1);
+  cryptdb_secret.Clear(1);
   CloseOutputFile();
 
   if(bytes_read != infile.df_Length()) {
@@ -373,7 +380,7 @@ int FCryptCache::OpenOutputFile()
     crypt_mode = mode;
   }
   
-  rv =  AES_Encrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length(), crypt_mode, key_iterations);
+  rv =  AES_Encrypt(crypt_buf, &len, (char *)cryptdb_secret.m_buf(), cryptdb_secret.length(), crypt_mode, key_iterations);
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = rv;
     err << clear << "File header crypt error " << AES_err_string(rv);
@@ -483,11 +490,11 @@ int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const M
   if(!cache) {
     ERROR_LEVEL = -1;
     err << clear << "No cache buffers available";
-    cp.secret.Clear(1);
+    cryptdb_secret.Clear(1);
     return 0;
   }
 
-  cp.secret = secret; 
+  cryptdb_secret = secret; 
   if(!OpenInputFile(fname)) return 0;
 
   if(infile.df_Length() < (sizeof(gxUINT32)*4)) {
@@ -554,7 +561,7 @@ int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const M
   }
   unsigned len = infile.df_gcount();
 
-  rv =  AES_Decrypt(crypt_buf, &len, (char *)cp.secret.m_buf(), cp.secret.length(), mode, key_iterations);
+  rv =  AES_Decrypt(crypt_buf, &len, (char *)cryptdb_secret.m_buf(), cryptdb_secret.length(), mode, key_iterations);
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
@@ -660,13 +667,13 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
       ERROR_LEVEL = -1;
       err << clear << "Error decrypting " << filename;
     }
-    cp.secret.Clear(1);
+    cryptdb_secret.Clear(1);
     CloseInputFile();
     return 0;
   }
 
   Flush(); // Ensure all the buckets a written to the output device
-  cp.secret.Clear(1);
+  cryptdb_secret.Clear(1);
   CloseOutputFile();
   CloseInputFile();
   return 1;
@@ -1039,12 +1046,6 @@ int FCryptCache::UpdateStaticData()
 
 int FCryptCache::LoadStaticDataBlocks(const char *fname)
 {
-  unsigned num_blocks, next_write_address;
-  return LoadStaticDataBlocks(fname, num_blocks, next_write_address);
-}
-
-int FCryptCache::LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, unsigned &next_write_address)
-{
   ERROR_LEVEL = 0;
   FILE *fp;
   fp = fopen(fname, "rb");
@@ -1085,10 +1086,10 @@ int FCryptCache::LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, u
     err << clear << "Error reading static data area from file " << fname;
   }
 
-  return LoadStaticDataBlocks(num_blocks, next_write_address);
+  return LoadStaticDataBlocks();
 }
 
-int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write_address)
+int FCryptCache::LoadStaticDataBlocks()
 {
   ERROR_LEVEL = 0;
   StaticDataBlockHdr static_data_block_header;
@@ -1101,8 +1102,9 @@ int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write
   char username_buf[1024];
   char username[1024];
 
-  num_blocks = 0;
-  next_write_address = 0;
+  
+  num_static_data_blocks = 0;
+  static_data_bytes_used = 0;
   static_block_list.Clear();
 
   while(read_static_area) {
@@ -1127,7 +1129,7 @@ int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write
       if((static_data_block_header.version == STATIC_DATA_BLOCK_VERSION) && (static_data_block_header.checkword == 0xFEFE)) {
 	// Found a valid block
 	found_block = 1;
-	num_blocks++;
+	num_static_data_blocks++;
 	break;
       }
     }
@@ -1157,8 +1159,8 @@ int FCryptCache::LoadStaticDataBlocks(unsigned &num_blocks, unsigned &next_write
       static_block_list.Add(static_data_block);
     }
   }
-  if(num_blocks == 0) offset = 0;
-  next_write_address = offset;
+  if(num_static_data_blocks == 0) offset = 0;
+  static_data_bytes_used = offset;
   
   return 1;
 }
@@ -1207,10 +1209,7 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
     return 0;
   }
 
-  unsigned num_blocks = 0;
-  unsigned next_write_address = 0;
-
-  if(!LoadStaticDataBlocks(num_blocks, next_write_address)) return 0;
+  if(!LoadStaticDataBlocks()) return 0;
   if(ERROR_LEVEL != 0) return 0;
 
   gxListNode<StaticDataBlock> *ptr = static_block_list.GetHead();

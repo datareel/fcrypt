@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 12/03/2023
+// Date Last Modified: 12/04/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -731,9 +731,25 @@ int main(int argc, char **argv)
 	return ExitProgram(1);
       }
       cerr << "Public RSA key " << rsa_key_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
-      ptr = ptr->next;
+
+      if(clientcfg->verbose_mode) {
+	fc.LoadStaticDataBlocks();
+	cerr << "Static data size  = " << fc.static_data_size << "\n" << flush;
+	cerr << "Num static blocks = " << fc.num_static_data_blocks << "\n" << flush;
+	cerr << "Static data bytes used = " << fc.static_data_bytes_used  << "\n" << flush;
+	cerr << "Static data bytes left = " << (fc.static_data_size - fc.static_data_bytes_used) << "\n" << flush;
+	cerr << "Authorized users list = ";
+	gxListNode<StaticDataBlock> *list_ptr = fc.static_block_list.GetHead();
+	while(list_ptr) {
+	  cerr << list_ptr->data.username.c_str();
+	  list_ptr = list_ptr->next;
+	  if(list_ptr) cerr << ", ";
+	}
+	cerr << "\n" << flush;
+      }
+      ptr = ptr->next; // Go the next file
     }
-    return ExitProgram(1);
+    return ExitProgram(0); // Key was added, exit program here
   }
   
   while(ptr) {
