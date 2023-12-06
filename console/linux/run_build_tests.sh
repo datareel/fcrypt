@@ -2,10 +2,6 @@
 
 RHEL_VERSION=0
 
-# Check for rhel5
-/bin/cat /etc/redhat-release | grep -i Tikanga >/dev/null 2>&1
-if [ $? -eq 0 ]; then RHEL_VERSION=5; fi
-
 # Check for rhel6
 /bin/cat /etc/redhat-release | grep -i Santiago >/dev/null 2>&1
 if [ $? -eq 0 ]; then RHEL_VERSION=6; fi
@@ -21,12 +17,6 @@ if [ $? -eq 0 ]; then RHEL_VERSION=8; fi
 # Check for rhel9
 /bin/cat /etc/redhat-release | grep -i Plow >/dev/null 2>&1
 if [ $? -eq 0 ]; then RHEL_VERSION=9; fi
-
-## This error condition is assuming we are only using RHEL releases
-#if [ ${RHEL_VERSION} -eq 0 ]; then
-#    echo "ERROR - Cannot determine if the RHEL release number"
-#    exit 1
-#fi
 
 testDIR=${HOME}/tmp/fcrypt_testing_$(date +%Y_%m_%d_%H%M%S)
 logFILE=${testDIR}/fcrypt_decrypt_testing.log
@@ -132,7 +122,7 @@ echo "Passed" | tee -a ${logFILE}
 echo "" | tee -a ${logFILE}
 
 # NOTE: The ssh-keygen -m option is not in RHEL 6 and below
-if [ ${RHEL_VERSION} -ne 5 ] || [ ${RHEL_VERSION} -ne 6 ]; then
+if [ ${RHEL_VERSION} -ne 6 ]; then
     USERNAME="testuser2"
     echo "Testing multi user access using an SSH-RSA key" | tee -a ${logFILE}
     ssh-keygen -t rsa -f ${testDIR}/${USERNAME}_id_rsa -N 'password' &>> ${logFILE}
