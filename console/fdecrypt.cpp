@@ -434,7 +434,7 @@ int main(int argc, char **argv)
 
   int selectRetVal = select(1, &readfds, &writefds, &exceptfds, &timeout);
   char buf[1];
-  unsigned bytes_read;
+  unsigned bytes_read = 0;
   
   if(selectRetVal > 0) {
     if(FD_ISSET(fileno(stdin), &readfds)) {
