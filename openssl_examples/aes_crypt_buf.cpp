@@ -74,13 +74,27 @@ int main(int argc, char *argv[])
   cout << "\n";
   cout << "Data: " <<  data << "\n";
   cout << "Data len: " << strlen(data) << "\n";
-  
-  HMAC_CTX *hmac = HMAC_CTX_new();
+
+  HMAC_CTX *hmac = 0;
+  // grep OPENSSL_VERSION_NUMBER /usr/include/openssl/opensslv.h
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  HMAC_CTX hmac_ob;
+  hmac = &hmac_ob;
+  HMAC_CTX_init(hmac);
+#else  
+  hmac = HMAC_CTX_new();
+#endif
+
   HMAC_Init_ex(hmac, key, EVP_CIPHER_key_length(cipher), EVP_sha256(), 0);
   HMAC_Update(hmac, (const unsigned char *)data, strlen(data));
   unsigned int len = 32;
   HMAC_Final(hmac, hash, &len);
+
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  HMAC_CTX_cleanup(hmac);
+#else
   HMAC_CTX_free(hmac);
+#endif
 
   cout << "\n";
   printf("HMAC: "); for(i = 0; i <  sizeof(hash); ++i) { printf("%02x", hash[i]); } printf("\n");
@@ -195,12 +209,26 @@ int main(int argc, char *argv[])
   cout << "Unencrypted data len: " << unencrypted_data_len << "\n";
 
   unsigned char d_hash[32];
-  HMAC_CTX *d_hmac = HMAC_CTX_new();
+
+  HMAC_CTX *d_hmac = 0;
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  HMAC_CTX d_hmac_ob;
+  d_hmac = &d_hmac_ob;
+  HMAC_CTX_init(d_hmac);
+#else
+  d_hmac = HMAC_CTX_new();
+#endif
+
   HMAC_Init_ex(d_hmac, key, EVP_CIPHER_key_length(cipher), EVP_sha256(), 0);
   HMAC_Update(d_hmac, (const unsigned char *)plaintext, unencrypted_data_len);
   len = 32;
   HMAC_Final(d_hmac, d_hash, &len);
+
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  HMAC_CTX_cleanup(d_hmac);
+#else
   HMAC_CTX_free(d_hmac);
+#endif
 
   cout << "\n";
   printf("HMAC: "); for(i = 0; i <  sizeof(d_hash); ++i) { printf("%02x", d_hash[i]); } printf("\n");

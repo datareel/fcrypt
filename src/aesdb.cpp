@@ -159,18 +159,30 @@ int AES_HMAC(const unsigned char key[], unsigned int key_len,
   cipher = EVP_get_cipherbyname("aes-256-cbc");
   if(!cipher) return AES_ERROR_NO_SUCH_CIPHER;
 
+  // grep OPENSSL_VERSION_NUMBER /usr/include/openssl/opensslv.h
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  HMAC_CTX hmac_ob;
+  HMAC_CTX *hmac = &hmac_ob;
+  HMAC_CTX_init(hmac);
+#else
   HMAC_CTX *hmac = HMAC_CTX_new();
   if(!hmac) {
     return AES_ERROR_HMAC_INIT_FAILED;
   }
+#endif
   
   HMAC_Init_ex(hmac, key, EVP_CIPHER_key_length(cipher), EVP_sha256(), 0);
   HMAC_Update(hmac, data, data_len);
   
   unsigned int len = hash_len;
   HMAC_Final(hmac, hash, &len);
-  
+
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  HMAC_CTX_cleanup(hmac);
+#else  
   HMAC_CTX_free(hmac);
+#endif
+
   return AES_NO_ERROR;
 }
 

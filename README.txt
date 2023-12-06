@@ -67,9 +67,9 @@ Use openssl to make some test keys:
 
 > mkdir ${HOME}/.keys
 > chmod 700 ${HOME}/.keys
-> openssl genrsa -aes256 -outp ${HOME}/.keys/private.pem 2048
+> openssl genrsa -aes256 -out ${HOME}/.keys/private.pem 2048
 > chmod 600 ${HOME}/.keys/private.pem
-> openssl rsa -in private.pem -outform PEM -pubout -out ${HOME}/.keys/public.pem
+> openssl rsa -in ${HOME}/.keys/private.pem -outform PEM -pubout -out ${HOME}/.keys/public.pem
 
 Create a master file encryption key:
 

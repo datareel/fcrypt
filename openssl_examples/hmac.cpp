@@ -80,25 +80,53 @@ int main(int argc, char *argv[])
   char data[256];
   memset(data, 0, 255);
   strcpy(data, "The quick brown fox jumps over the lazy dog 0123456789");
-  
-  HMAC_CTX *hmac = HMAC_CTX_new();
+
+  HMAC_CTX *hmac = 0;
+  // grep OPENSSL_VERSION_NUMBER /usr/include/openssl/opensslv.h
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  std::cout << "Calling HMAC_CTX_init()" << "\n";
+  HMAC_CTX hmac_ob;
+  hmac = &hmac_ob;
+  HMAC_CTX_init(hmac);
+#else  
+  std::cout << "Calling HMAC_CTX_new()" << "\n";
+  hmac = HMAC_CTX_new();
+#endif
+
   HMAC_Init_ex(hmac, key, EVP_CIPHER_key_length(cipher2), EVP_sha256(), 0);
   HMAC_Update(hmac, (const unsigned char *)data, strlen(data));
   unsigned int len = 32;
   HMAC_Final(hmac, hash, &len);
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  std::cout << "Calling HMAC_CTX_cleanup()" << "\n";
+  HMAC_CTX_cleanup(hmac);
+#else
+  std::cout << "Calling HMAC_CTX_free()" << "\n";
   HMAC_CTX_free(hmac);
+#endif
 
   cout << "\n";
   
   printf("HMAC: "); for(i = 0; i <  sizeof(hash); ++i) { printf("%02x", hash[i]); } printf("\n");
-  
+  HMAC_CTX *hmac2 = 0;
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  HMAC_CTX hmac_ob2;
+  hmac2 = &hmac_ob2;
+  HMAC_CTX_init(hmac2);
+#else
   HMAC_CTX *hmac2 = HMAC_CTX_new();
+#endif
+
   HMAC_Init_ex(hmac2, key, EVP_CIPHER_key_length(cipher2), EVP_sha256(), 0);
   HMAC_Update(hmac2, (const unsigned char *)data, strlen(data));
   len = 32;
   HMAC_Final(hmac2, hash2, &len);
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  HMAC_CTX_cleanup(hmac2);
+#else
   HMAC_CTX_free(hmac2);
-  
+#endif
+
   printf("HMAC from key: "); for(i = 0; i <  sizeof(hash2); ++i) { printf("%02x", hash2[i]); } printf("\n");
   
   return 0;
