@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 12/04/2023
+// Date Last Modified: 12/06/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -122,14 +122,14 @@ void HelpMessage()
   }
   cout << "          -d  Enable debugging output" << "\n" << flush;  
   cout << "          -h  Display this help message and exit." << "\n" << flush;
-  cout << "          -o = Overwrite existing enc file(s)" << "\n" << flush;
-  cout << "          -r = Remove unencrypted source file(s)" << "\n" << flush;
-  cout << "          -R = Encrypt DIR including all files and subdirectories" << "\n" << flush;
-  cout << "          -v = Enable verbose messages to the console" << "\n" << flush;
+  cout << "          -o  Overwrite existing enc file(s)" << "\n" << flush;
+  cout << "          -r  Remove unencrypted source file(s)" << "\n" << flush;
+  cout << "          -R  Encrypt DIR including all files and subdirectories" << "\n" << flush;
+  cout << "          -v  Enable verbose messages to the console" << "\n" << flush;
   cout << "\n" << flush;
-  cout << "          --add-rsa-key (Add access to an encrypted file for another users RSA key)" << "\n" << flush;
+  cout << "          --add-rsa-key (Add access to an encrypted file for another users public RSA key)" << "\n" << flush;
   cout << "          --add-rsa-key input args can be a public key file name or a pipe" << "\n" << flush;
-  cout << "          --cache=size (Specify number of cache buckets)" << "\n" << flush;
+  cout << "          --cache=size (Set the cache size)" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
   cout << "          --decrypted-outfile=fname (Tell fdecrypt to write the decrypted output to specified file name)" << "\n" << flush;
   cout << "          --ext=.enc (Dot extension used for encrypted files)" << "\n" << flush;
@@ -140,10 +140,10 @@ void HelpMessage()
   cout << "          --outdir=dir (Write encrypted output to this directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
-  cout << "          --rsa-key-passphrase (Passpharse for public RSA key)" << "\n" << flush;
-  cout << "          --static-data-size=num (Set the size of the static data storage area)" << "\n" << flush;  
+  cout << "          --rsa-key-passphrase (Passphrase for public RSA key)" << "\n" << flush;
+  cout << "          --static-data-size=num (Set size of static data storage area)" << "\n" << flush;  
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;  
-  cout << "          --version (Display this programs version number)" << "\n" << flush;
+  cout << "          --version (Display program version number)" << "\n" << flush;
   cout << "\n"; // End of list
 }
 
@@ -193,10 +193,8 @@ int ProcessDashDashArg(gxString &arg)
     }
     num_buckets = equal_arg.Atoi();
     if((num_buckets < 1) || (num_buckets > 65535)) {
-      cerr << "\n" << flush;
       cerr << "ERROR: Bad number of cache buckets specified" << "\n" << flush;
       cerr << "ERROR: Valid range = 1 to 65535 bytes" << "\n" << flush;
-      cerr << "\n" << flush;
       return 0;
     }
     has_valid_args = 1;
@@ -214,10 +212,8 @@ int ProcessDashDashArg(gxString &arg)
 
     static_data_size = equal_arg.Atoi();
     if((static_data_size < MIN_STATIC_DATA_AREA_SIZE) || (static_data_size > MAX_STATIC_DATA_AREA_SIZE)) {
-      cerr << "\n" << flush;
       cerr << "ERROR: Bad static data storage value specified" << "\n" << flush;
       cerr << "ERROR: Valid range = " << MIN_STATIC_DATA_AREA_SIZE << " to " << MAX_STATIC_DATA_AREA_SIZE << " bytes" << "\n" << flush;
-      cerr << "\n" << flush;
       return 0;
     }
     has_valid_args = 1;
@@ -264,18 +260,14 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     input_arg_key_file = equal_arg;
-    if(!futils_exists(input_arg_key_file.c_str())) {
-      cerr << "\n" << flush;
-      cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
-      cerr << "\n" << flush;
+    if(!futils_exists(input_arg_key_file.c_str()) || !futils_isfile(input_arg_key_file.c_str())) {
+      cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
       return 0;
     }
     else {
       DEBUG_m("Reading symmetric key file");
       if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
-	cerr << "\n" << flush;
 	cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
-	cerr << "\n" << flush;
 	return 0;
       }
     }
@@ -310,10 +302,8 @@ int ProcessDashDashArg(gxString &arg)
       public_rsa_key_file = equal_arg;
       
       DEBUG_m("Reading RSA key file");
-      if(!futils_exists(public_rsa_key_file.c_str())) {
-	cerr << "\n" << flush;
-	cerr << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
-	cerr << "\n" << flush;
+      if(!futils_exists(public_rsa_key_file.c_str()) || !futils_isfile(public_rsa_key_file.c_str())) {
+	cerr << "ERROR: Public RSA key file " << public_rsa_key_file.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
 	return 0;
       }
       rv = RSA_read_key_file(public_rsa_key_file.c_str(), public_key, sizeof(public_key), &public_key_len, &has_passphrase);
@@ -364,18 +354,14 @@ int ProcessDashDashArg(gxString &arg)
     output_dir_name = equal_arg;
     if(!futils_exists(output_dir_name.c_str())) {
       if(futils_mkdir(output_dir_name.c_str()) != 0) {
-	cerr << "\n" << flush;
 	cerr << "Error making directory" << "\n" << flush;
-	cerr << "\n" << flush;
 	return 0;
       }
     }
     if(!futils_isdirectory(output_dir_name.c_str())) {
-      cerr << "\n" << flush;
       cerr << "Bad output DIR specified" << "\n" << flush;
       cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
-	cerr << "\n" << flush;
-	return 0;
+      return 0;
     }
     has_valid_args = 1;
   }
@@ -390,10 +376,8 @@ int ProcessDashDashArg(gxString &arg)
   }
   
   if(!has_valid_args) {
-    cerr << "\n" << flush;
     cerr << "Unknown or invalid --" << arg.c_str() << "\n" << flush;
     cerr << "Exiting..." << "\n" << flush;
-    cerr << "\n" << flush;
   }
 
   arg.Clear();
@@ -446,10 +430,8 @@ int ProcessArgs(char *arg)
       break;
       
     default:
-      cerr << "\n" << flush;
       cerr << "Unknown switch " << arg << "\n" << flush;
       cerr << "Exiting..." << "\n" << flush;
-      cerr << "\n" << flush;
       return 0;
   }
   arg[0] = '\0';
@@ -534,10 +516,9 @@ int main(int argc, char **argv)
    
   AES_openssl_init();
   
-  // Set the program information
+  // Set this programs information
   clientcfg->executable_name = "fcrypt";
   clientcfg->program_name = "File Encrypt";
-  clientcfg->version_str = "2023.104";
 
   if(argc < 2) {
     HelpMessage();
@@ -556,7 +537,6 @@ int main(int argc, char **argv)
   char top_pwd[futils_MAX_DIR_LENGTH];
   char curr_pwd[futils_MAX_DIR_LENGTH];
   if(futils_getcwd(top_pwd, futils_MAX_DIR_LENGTH) != 0) {
-    cerr << "\n" << flush;
     cerr << "Encountered fatal fcrypt error" << "\n";
     cerr << "Error setting top present working DIR" << "\n";
     return ExitProgram(1);
@@ -575,7 +555,6 @@ int main(int argc, char **argv)
 	    if(recurse) {
 	      if(use_abs_path) cryptdb_makeabspath(fn);
 	      if(futils_getcwd(curr_pwd, futils_MAX_DIR_LENGTH) != 0) {
-		cerr << "\n" << flush;
 		cerr << "Encountered fatal fcrypt error" << "\n";
 		cerr << "Error setting current present working DIR" << "\n";
 		return 1;
@@ -584,14 +563,12 @@ int main(int argc, char **argv)
 	      num_dirs++;
 	      if(!cryptdb_getdircontents(fn, err_str, file_list, 
 					 num_files, num_dirs)) {
-		cerr << "\n" << flush;
 		cerr << "Encountered fatal fcrypt error" << "\n";
 		cerr << err_str.c_str() << "\n";
 		return ExitProgram(1); 
 	      }
 
 	      if(futils_chdir(curr_pwd) != 0) {
-		cerr << "\n" << flush;
 		cerr << "Encountered fatal fcrypt error" << "\n";
 		cerr << "Error resetting current present working DIR" << "\n";
 		return ExitProgram(1);
@@ -611,14 +588,12 @@ int main(int argc, char **argv)
   }
 
   if(num_files == 0) {
-    cerr << "\n" << flush;
     cerr << "Encountered fatal fcrypt error" << "\n";
     cerr << "No file name specified" << "\n";
     return ExitProgram(1);
   }
   
   if(futils_chdir(top_pwd) != 0) {
-    cerr << "\n" << flush;
     cerr << "Encountered fatal fcrypt error" << "\n";
     cerr << "Error resetting top present working DIR" << "\n";
     return ExitProgram(1);
@@ -686,7 +661,7 @@ int main(int argc, char **argv)
   }
 
   if(add_rsa_key) {
-    if(has_passphrase) {
+    if(has_passphrase && rsa_key_passphrase.is_null()) {
       cout << "RSA key passphrase: " << flush;
       if(!consoleGetString(rsa_key_passphrase, 1)) {
 	rsa_key_passphrase.Clear(1);
@@ -703,9 +678,7 @@ int main(int argc, char **argv)
 
   if(add_rsa_key) {
     if(rsa_key_username.is_null()) {
-      cerr << "\n" << flush;
       cerr << "ERROR: --add-rsa-key requires --rsa-key-username" << "\n" << flush;
-      cerr << "\n" << flush;
       return ExitProgram(1);
     }
 

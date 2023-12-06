@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // Date Last Modified: 03/21/2004
-// Date Last Modified: 11/16/2023
+// Date Last Modified: 12/06/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -196,7 +196,7 @@ int consoleGetString(char *s, int password)
       if(!consoleGetChar(key)) return -1;
       if(key == 72) { // Arrow up
 	if(clientcfg->prev_command < 0) {
-	  for(i = (OP_HISTORY_LEN-1); i > -1; i--) {
+	  for(i = (COMMAND_HISTORY_LEN-1); i > -1; i--) {
 	    if(!clientcfg->history[i].is_null()) {
 	      clientcfg->prev_command = i;
 	      break;
@@ -224,7 +224,7 @@ int consoleGetString(char *s, int password)
 	clientcfg->prev_command--;
       }
       if(key == 80) { // Arrow down
-	if(clientcfg->next_command > (OP_HISTORY_LEN-1)) {
+	if(clientcfg->next_command > (COMMAND_HISTORY_LEN-1)) {
 	  clientcfg->next_command = 0;
 	}
 	slen = strlen(p);
@@ -241,7 +241,7 @@ int consoleGetString(char *s, int password)
 	charcount = strlen(p);
 	pos = (p + charcount); // Reset the string pointer
 	clientcfg->next_command++;
-	if(clientcfg->next_command > (OP_HISTORY_LEN-1)) {
+	if(clientcfg->next_command > (COMMAND_HISTORY_LEN-1)) {
 	  clientcfg->next_command = 0;
 	}
 	if(clientcfg->next_command > 0) {
@@ -285,73 +285,9 @@ int consoleGetString(char *s, int password)
       }
     }
   }
-#endif // __CONSOLE__
+#endif
   return 1;
 }
-
-void consoleClear()
-{
-#if defined (__CONSOLE__)
-#if defined (__WIN32__)
-  system("cls");
-#elif defined (__UNIX__)
-  system("clear");
-#else
-#error You must define a target platform: __WIN32__ or __UNIX__
-#endif
-#endif // __CONSOLE__
-}
-
-void consoleShell()
-{
-#if defined (__CONSOLE__)
-  GXSTD::cout << "\n" << GXSTD::flush;
-  GXSTD::cout << "\n" << GXSTD::flush;
-  GXSTD::cout << clientcfg->program_name << "\n" << GXSTD::flush;
-  GXSTD::cout << "Shell to command line" << "\n" << GXSTD::flush;
-  GXSTD::cout << "Enter exit to return" << "\n" << GXSTD::flush;
-  GXSTD::cout << "\n" << GXSTD::flush;
-
-#ifdef __LINUX__
-  GXSTD::cout << "You may need to enter tset or reset if\n" << GXSTD::flush;
-  GXSTD::cout << "your terminal type is not set correctly\n" << GXSTD::flush;
-  GXSTD::cout << "\n" << GXSTD::flush;
-#endif
-
-  char pwd[futils_MAX_DIR_LENGTH];
-  if(futils_getcwd(pwd, futils_MAX_DIR_LENGTH) != 0) {
-    GXSTD::cout << "Error obtaining PWD cannot open shell" << GXSTD::flush;
-    GXSTD::cout << "\n" << GXSTD::flush;
-    return;
-  }
-
-#if defined (__WIN32__)
-  system("cmd /k");
-#elif defined (__UNIX__)
-  system("/bin/sh");
-#else
-#error You must define a target platform: __WIN32__ or __UNIX__
-#endif
-
-  if(futils_chdir(pwd) != 0) {
-    GXSTD::cout << "\n" << GXSTD::flush;
-    GXSTD::cout << "Error restoring working DIR" << GXSTD::flush;
-    GXSTD::cout << "\n" << GXSTD::flush;
-    return;
-  }
-
-#endif // __CONSOLE__
-}
-
-void consoleDateTime()
-{
-#if defined (__CONSOLE__)
-  SysTime systime;
-  GXSTD::cout << "\n" << GXSTD::flush;
-  GXSTD::cout << systime.GetSystemDateTime() << "\n" << GXSTD::flush;
-#endif // __CONSOLE__
-}
-
 // ----------------------------------------------------------- // 
 // ------------------------------- //
 // --------- End of File --------- //

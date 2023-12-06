@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 12/01/2023
+// Date Last Modified: 12/06/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -111,7 +111,7 @@ void HelpMessage()
   cout << "          -R  Decrypt DIR including all files and subdirectories" << "\n" << flush;
   cout << "          -v  Enable verbose messages to the console" << "\n" << flush;
   cout << "\n" << flush;
-  cout << "          --cache=size (Specify number of cache buckets)" << "\n" << flush;
+  cout << "          --cache=size (Set the cache size)" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
@@ -121,10 +121,10 @@ void HelpMessage()
   cout << "          --password (Use a password for symmetric file decryption)" << "\n" << flush;
   cout << "          --rsa-key (Use your private RSA key for decryption)" << "\n" << flush;
   cout << "          --rsa-key input args can be a private key file name or a pipe" << "\n" << flush;
-  cout << "          --rsa-key-passphrase (Passpharse for private RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase (Passphrase for private RSA key)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
-  cout << "          --version (Display this programs version number)" << "\n" << flush;
+  cout << "          --version (Display program version number)" << "\n" << flush;
   cout << "\n" << flush; // End of list
 }
 
@@ -190,10 +190,8 @@ int ProcessDashDashArg(gxString &arg)
     }
     num_buckets = equal_arg.Atoi();
     if((num_buckets < 1) || (num_buckets > 65535)) {
-      cerr << "\n" << flush;
       cerr << "ERROR: Bad number of cache buckets specified" << "\n" << flush;
       cerr << "ERROR: Valid range = 1 to 65535 bytes" << "\n" << flush;
-      cerr << "\n" << flush;
       return 0;
     }
     has_valid_args = 1;
@@ -207,17 +205,13 @@ int ProcessDashDashArg(gxString &arg)
     output_dir_name = equal_arg;
     if(!futils_exists(output_dir_name.c_str())) {
       if(futils_mkdir(output_dir_name.c_str()) != 0) {
-	cerr << "\n" << flush;
 	cerr << "ERROR: Error making directory" << "\n" << flush;
-	cerr << "\n" << flush;
 	return 0;
       }
     }
     if(!futils_isdirectory(output_dir_name.c_str())) {
-      cerr << "\n" << flush;
       cerr << "ERROR: Bad output DIR specified" << "\n" << flush;
       cerr << output_dir_name.c_str() << " is a file name" << "\n" << flush;
-      cerr << "\n" << flush;
       return 0;
     }
     has_valid_args = 1;
@@ -269,17 +263,13 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     input_arg_key_file = equal_arg;
-    if(!futils_exists(input_arg_key_file.c_str())) {
-      cerr << "\n" << flush;
-      cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist" <<  "\n" << flush;
-      cerr << "\n" << flush;
+    if(!futils_exists(input_arg_key_file.c_str())|| !futils_isfile(input_arg_key_file.c_str())) {
+      cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
       return 0;
     }
     DEBUG_m("Reading symmetric key file");
     if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
-      cerr << "\n" << flush;
       cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
-      cerr << "\n" << flush;
       return 0;
     }
     use_key_file  = 1;
@@ -298,10 +288,8 @@ int ProcessDashDashArg(gxString &arg)
 	return 0;
       }
       private_rsa_key_file = equal_arg;
-      if(!futils_exists(private_rsa_key_file.c_str())) {
-	cerr << "\n" << flush;
-	cerr << "ERROR: Private RSA key file " << private_rsa_key_file.c_str() << " does not exist" <<  "\n" << flush;
-	cerr << "\n" << flush;
+      if(!futils_exists(private_rsa_key_file.c_str()) || !futils_isfile(private_rsa_key_file.c_str())) {
+	cerr << "ERROR: Private RSA key file " << private_rsa_key_file.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
 	return 0;
       }
       DEBUG_m("Reading RSA key file");
@@ -321,10 +309,8 @@ int ProcessDashDashArg(gxString &arg)
   }
   
   if(!has_valid_args) {
-    cerr << "\n" << flush;
     cerr << "Unknown or invalid --" << arg.c_str() << "\n" << flush;
     cerr << "Exiting..." << "\n" << flush;
-    cerr << "\n" << flush;
   }
 
   arg.Clear();
@@ -370,10 +356,8 @@ int ProcessArgs(char *arg)
       break;
 
     default:
-      cerr << "\n" << flush;
       cerr << "ERROR: Unknown switch " << arg << "\n" << flush;
       cerr << "Exiting..." << "\n" << flush;
-      cerr << "\n" << flush;
       return 0;
   }
   arg[0] = '\0';
@@ -440,7 +424,7 @@ int main(int argc, char **argv)
     if(FD_ISSET(fileno(stdin), &readfds)) {
       while(read(0, buf, sizeof(buf)) > 0) {
 	if(bytes_read > sizeof(private_key)) {
-	  cerr << "ERROR: Public key size has exceeded " <<  sizeof(private_key) << " bytes" << "\n" << flush;
+	  cerr << "ERROR: Private key size has exceeded " <<  sizeof(private_key) << " bytes" << "\n" << flush;
 	  return 1;
 	}
 	private_key[bytes_read] = buf[0];
@@ -456,10 +440,9 @@ int main(int argc, char **argv)
   
   AES_openssl_init();
   
-  // Set the program information
+  // Set this programs information
   clientcfg->executable_name = "fdecrypt";
   clientcfg->program_name = "File Decrypt";
-  clientcfg->version_str = "2023.104";
 
   if(argc < 2) {
     HelpMessage();
@@ -478,7 +461,6 @@ int main(int argc, char **argv)
   char top_pwd[futils_MAX_DIR_LENGTH];
   char curr_pwd[futils_MAX_DIR_LENGTH];
   if(futils_getcwd(top_pwd, futils_MAX_DIR_LENGTH) != 0) {
-    cerr << "\n" << flush;
     cerr << "Encountered fatal fcrypt error" << "\n";
     cerr << "Error setting top present working DIR" << "\n";
     return ExitProgram(1);
@@ -496,7 +478,6 @@ int main(int argc, char **argv)
 	    if(recurse) {
 	      if(use_abs_path) cryptdb_makeabspath(fn);
 	      if(futils_getcwd(curr_pwd, futils_MAX_DIR_LENGTH) != 0) {
-		cerr << "\n" << flush;
 		cerr << "Encountered fatal decrypt error" << "\n";
 		cerr << "Error setting current present working DIR" << "\n";
 		return ExitProgram(1);
@@ -505,14 +486,12 @@ int main(int argc, char **argv)
 	      num_dirs++;
 	      if(!cryptdb_getdircontents(fn, err_str, file_list, 
 					 num_files, num_dirs)) {
-		cerr << "\n" << flush;
 		cerr << "Encountered fatal decrypt error" << "\n";
 		cerr << err_str.c_str() << "\n";
 		return ExitProgram(1);
 	      }
 
 	      if(futils_chdir(curr_pwd) != 0) {
-		cerr << "\n" << flush;
 		cerr << "Encountered fatal decrypt error" << "\n";
 		cerr << "Error resetting current present working DIR" << "\n";
 		return ExitProgram(1);
@@ -532,7 +511,6 @@ int main(int argc, char **argv)
   }
 
   if(num_files == 0) {
-    cerr << "\n" << flush;
     cerr << "Encountered fatal decrypt error" << "\n";
     cerr << "No file name specified" << "\n";
     return ExitProgram(1);
@@ -545,7 +523,7 @@ int main(int argc, char **argv)
   }
   else if(use_private_rsa_key) {
     cerr << "Using private RSA key file for decryption" << "\n" << flush;
-    if(has_passphrase) {
+    if(has_passphrase && rsa_key_passphrase.is_null()) {
       cout << "RSA key passphrase: " << flush;
       if(!consoleGetString(rsa_key_passphrase, 1)) {
 	rsa_key_passphrase.Clear(1);

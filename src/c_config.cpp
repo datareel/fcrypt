@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 09/15/2003
-// Date Last Modified: 11/16/2023
+// Date Last Modified: 12/06/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -56,8 +56,8 @@ void ClientConfig::reset_all()
   verbose_mode = 0;   // Turn verbose mode off by default
   
   // Program information
-  version = 1.1;
-  version_str << clear << setp2 << version;
+  version = PROGRAM_VERSION_NUMBER;
+  version_str << clear << setp3 << version;
 
   program_name = "File crypt/decrypt utility";
   produced_by = "Datareel Open Source";
