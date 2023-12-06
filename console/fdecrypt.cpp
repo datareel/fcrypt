@@ -688,6 +688,7 @@ int main(int argc, char **argv)
       }
       if(!found_key) {
 	cerr << "ERROR: The private RSA key provided does not have access to decrypt file " << ptr->data.c_str() << "\n" << flush; ;
+	err = 1;
 	ptr = ptr->next;
 	continue;
       }
