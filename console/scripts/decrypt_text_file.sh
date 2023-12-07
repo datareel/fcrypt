@@ -19,7 +19,7 @@ if [ ! -f  ${FILE_TO_DECRYPT} ]; then
     exit 1
 fi
 
-${FDECRYPT} -v --debug=5 --rsa-key=${HOME}/.ssh/id_rsa ${FILE_TO_DECRYPT} --rsa-key-username=${USERNAME}
+${FDECRYPT} -v --debug=5 --rsa-key=${HOME}/.ssh/id_rsa --rsa-key-username=${USERNAME} ${FILE_TO_DECRYPT}
 if [ $? -ne 0 ]; then
     echo "ERROR: Error decrypting file: ${FILE_TO_DECRYPT}"
     exit 1
