@@ -20,7 +20,8 @@ ENCRYPTED_FILE_NAME="${2}"
 ENCRYPTED_FILE_NAME_tmp=$(basename ${ENCRYPTED_FILE_NAME})
 
 if [ ! -f  ${FILE_TO_ENCRYPT} ]; then
-    echo "ERROR: File to encrypt does not exist:  ${FILE_TO_ENCRYPT}"
+    echo "ERROR: File to encrypt does not exist: ${FILE_TO_ENCRYPT}"
+    exit 1
 fi
 
 PUBKEY_DB="rsa_key_access_db"

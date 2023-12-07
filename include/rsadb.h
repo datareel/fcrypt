@@ -48,7 +48,7 @@ RSA encryption and decryption routines.
 
 // Constants
 const int RSA_padding = RSA_PKCS1_PADDING;
-const int RSA_keysize = 2048;
+const int RSA_keysize = 4096;
 const unsigned int RSA_passphrase_len = 32;
 const unsigned int RSA_error_string_len = 1024;
 const unsigned int RSA_max_keybuf_len = 65536;

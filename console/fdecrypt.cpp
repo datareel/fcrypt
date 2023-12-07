@@ -76,6 +76,8 @@ char private_key[RSA_max_keybuf_len];
 unsigned private_key_len = 0;
 gxString rsa_key_passphrase;
 int has_passphrase = 0;
+gxString rsa_key_username;
+int list_rsa_key_users = 0;
 
 // Functions
 void DisplayVersion();
@@ -94,8 +96,13 @@ void DisplayVersion()
   cout << clientcfg->copyright.c_str() << " " 
        << clientcfg->copyright_dates.c_str() << "\n" << flush;
   cout << "Produced by: " << clientcfg->produced_by << "\n" << flush;
-  cout << clientcfg->support_email.c_str() << "\n" << flush;
   cout << clientcfg->default_url.c_str() << "\n" << flush;
+  if(debug_mode) {
+    cout << "\n" << flush;
+    cout << "Encryption engine: Openssl" << "\n" << flush;
+    cout << "Version string: " << OPENSSL_VERSION_TEXT << "\n" << flush;
+    cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << "\n" << flush;
+  }
 }
 
 void HelpMessage() 
@@ -116,12 +123,14 @@ void HelpMessage()
   cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
   cout << "          --key=aes_key (Use a key file for symmetric file decryption)" << "\n" << flush;
+  cout << "          --list-rsa-key-users (List the users that have RSA key access and exit)" << "\n" << flush;
   cout << "          --outfile=fname (Write decrypted output to specified file name)" << "\n" << flush;
   cout << "          --outdir=dir (Write decrypted output to this directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file decryption)" << "\n" << flush;
-  cout << "          --rsa-key (Use your private RSA key for decryption)" << "\n" << flush;
+  cout << "          --rsa-key (Use a private RSA key for decryption)" << "\n" << flush;
   cout << "          --rsa-key input args can be a private key file name or a pipe" << "\n" << flush;
   cout << "          --rsa-key-passphrase (Passphrase for private RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-username=name (Username that owns the private RSA key)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
   cout << "          --version (Display program version number)" << "\n" << flush;
@@ -302,7 +311,21 @@ int ProcessDashDashArg(gxString &arg)
       has_valid_args = 1;
     }
   }
-  
+
+  if(arg == "rsa-key-username") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --rsa-key-username missing name: --rsa-key-username=$(whoami)" << "\n" << flush;
+      return 0;
+    }
+    rsa_key_username = equal_arg;
+    has_valid_args = 1;
+  }
+
+  if(arg == "list-rsa-key-users") {
+    list_rsa_key_users = 1;
+    has_valid_args = 1;
+  }
+
   if(arg == "stdout") {
     write_to_stdout = 1;
     has_valid_args = 1;
@@ -522,6 +545,10 @@ int main(int argc, char **argv)
     aes_file_decrypt_secret = key;
   }
   else if(use_private_rsa_key) {
+    if(rsa_key_username.is_null()) {
+      cerr << "ERROR: --rsa-key requires --rsa-key-username" << "\n" << flush;
+      return ExitProgram(1);
+    }
     cerr << "Using private RSA key file for decryption" << "\n" << flush;
     if(has_passphrase && rsa_key_passphrase.is_null()) {
       cout << "RSA key passphrase: " << flush;
@@ -547,6 +574,9 @@ int main(int argc, char **argv)
     aes_file_decrypt_secret.Clear(1);
     aes_file_decrypt_secret.Cat(password.GetSPtr(), password.length());
   }
+  else if(list_rsa_key_users) {
+    DEBUG_m("No auth list RSA key users operation");
+  }
   else {
     cout << "No decryption method specifed, defaulting to password" << "\n" << flush;
     cout << "Password: " << flush;
@@ -563,9 +593,36 @@ int main(int argc, char **argv)
   gxListNode<gxString> *ptr = file_list.GetHead();
   err = 0;
 
-  while(ptr) {
-    cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
+  if(list_rsa_key_users) { // List user names found and exit program
+    while(ptr) {
+      cout << "Listing usernames with RSA key access to encrypted file " << ptr->data.c_str() << "\n" << flush;
+      FCryptCache fc(num_buckets);
+      if(!fc.LoadStaticDataBlocks(ptr->data.c_str())) {
+	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush; ;
+	err = 1;
+        ptr = ptr->next;
+        continue;
+      }
 
+      gxListNode<StaticDataBlock> *list_ptr = fc.static_block_list.GetHead();
+      if(!list_ptr) {
+	cerr << "ERROR: No authorized RSA users found in encrypted file " << ptr->data.c_str() << "\n" << flush; ;
+	ptr = ptr->next;
+	continue;
+      }
+      cout << "Encrypted file has stored username for users: " << "\n" << flush;
+      while(list_ptr) {
+	cout << list_ptr->data.username.c_str() << "\n" << flush;
+      	list_ptr = list_ptr->next;
+      }
+      ptr = ptr->next;
+    }  
+    return ExitProgram(err);
+  }
+  
+  while(ptr) { // Decrypt file and exit program
+    cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
+    
     FCryptCache fc(num_buckets);
     fc.key_iterations = key_iterations;
     if(!output_dir_name.is_null()) {
@@ -584,6 +641,7 @@ int main(int argc, char **argv)
     if(use_private_rsa_key) {
       if(!fc.LoadStaticDataBlocks(ptr->data.c_str())) {
 	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush; ;
+	err = 1;
         ptr = ptr->next;
         continue;
       }
@@ -592,6 +650,7 @@ int main(int argc, char **argv)
       if(!list_ptr) {
 	cerr << "ERROR: No authorized RSA users found in encrypted file " << ptr->data.c_str() << "\n" << flush; ;
 	ptr = ptr->next;
+	err = 1;
 	continue;
       }
 
@@ -601,18 +660,24 @@ int main(int argc, char **argv)
 	memset(hash, 0, sizeof(hash));
 	decrypted_data_len = 0;
 
-	if(clientcfg->verbose_mode) cerr << "Found stored RSA key for user " << list_ptr->data.username.c_str() << "\n" << flush;
-	char *passphrase = 0;
-	if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
-	rv = RSA_private_key_decrypt((const unsigned char *)private_key, private_key_len,
-				     list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(),
-				     rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len,
-				     RSA_padding, passphrase);
-	if(rv != RSA_ERROR_PRIVATE_KEY_DECRYPT) DEBUG_m(RSA_err_string(rv), 5);
-
-
-
-	if(rv == RSA_NO_ERROR) {
+	if(debug_mode) {
+	  cerr << "Encrypted file has stored username for user " << list_ptr->data.username.c_str() << "\n" << flush;
+	}
+	
+	if(rsa_key_username == list_ptr->data.username.c_str()) {
+	  if(clientcfg->verbose_mode) cerr << "Found stored RSA key for user " << list_ptr->data.username.c_str() << "\n" << flush;
+	  char *passphrase = 0;
+	  if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
+	  rv = RSA_private_key_decrypt((const unsigned char *)private_key, private_key_len,
+				       list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(),
+				       rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len,
+				       RSA_padding, passphrase);
+	  if(rv != RSA_NO_ERROR) {
+	    cerr << "RSA private key decrypt failed " << AES_err_string(rv) << "\n" << flush;
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
 	  found_key = 1;
 	  cerr << "RSA key decryption authorized for user " << list_ptr->data.username.c_str() << "\n" << flush; 
 	  memmove(SALT, rsa_decrypted_message, AES_MAX_SALT_LEN);
@@ -624,11 +689,12 @@ int main(int argc, char **argv)
 	  if(rv != AES_NO_ERROR) {
 	    cerr << "Failed to generate derived key " << AES_err_string(rv) << "\n" << flush;
 	    found_key = 0;
+	    err = 1;
 	    break;
 	  }
-
+	  
 	  rv = AES_HMAC(KEY, sizeof(KEY), list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(), hash, sizeof(hash));
-
+	  
 	  if(debug_mode && debug_level == 5) { // START debug code
 	    unsigned i;
 	    gxString HMAC1 = "HMAC GEN: ";
@@ -643,7 +709,7 @@ int main(int argc, char **argv)
 	    SHA256(aes_file_decrypt_secret.m_buf(), aes_file_decrypt_secret.length(), sha256_hash);
 	    SHA256_str << clear << "SHA256 PW: ";
 	    for(i = 0; i < sizeof(sha256_hash); ++i) { SHA256_str << hex << sha256_hash[i]; } DEBUG_m(SHA256_str.c_str(), 5);
-
+	    
 	    gxString RSACIPHERTEXT = "RSACIPHERTEXT: ";
 	    for(i = 0; i < list_ptr->data.rsa_ciphertext.length(); ++i) { RSACIPHERTEXT << hex << list_ptr->data.rsa_ciphertext.m_buf()[i]; }
 	    DEBUG_m(RSACIPHERTEXT.c_str(), 5);
@@ -653,11 +719,13 @@ int main(int argc, char **argv)
 	  if(rv != AES_NO_ERROR) {
 	    cerr << "ERROR: Failed to generate HMAC for RSA ciphertext " << AES_err_string(rv) << "\n" << flush;
 	    found_key = 0;
+	    err = 1;
 	    break;
 	  }
 	  if(memcmp(hash, list_ptr->data.hmac.m_buf(), sizeof(hash)) != 0) {
 	    cerr << "ERROR: Message authentication failed bad HMAC for RSA ciphertext" << "\n" << flush;
 	    found_key = 0;
+	    err = 1;
 	    break;
 	  }
 	  break;
@@ -665,7 +733,7 @@ int main(int argc, char **argv)
 	list_ptr = list_ptr->next;
       }
       if(!found_key) {
-	cerr << "ERROR: The private RSA key provided does not have access to decrypt file " << ptr->data.c_str() << "\n" << flush; ;
+	cerr << "ERROR: The private RSA key provided for user " << rsa_key_username.c_str() << " does not have access to decrypt file " << ptr->data.c_str() << "\n" << flush;
 	err = 1;
 	ptr = ptr->next;
 	continue;

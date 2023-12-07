@@ -106,8 +106,13 @@ void DisplayVersion()
   cout << clientcfg->copyright.c_str() << " " 
        << clientcfg->copyright_dates.c_str() << "\n" << flush;
   cout << "Produced by: " << clientcfg->produced_by << "\n" << flush;
-  cout << clientcfg->support_email.c_str() << "\n" << flush;
   cout << clientcfg->default_url.c_str() << "\n" << flush;
+  if(debug_mode) {
+    cout << "\n" << flush;
+    cout << "Encryption engine: Openssl" << "\n" << flush;
+    cout << "Version string: " << OPENSSL_VERSION_TEXT << "\n" << flush;
+    cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << "\n" << flush;
+  }
 }
 
 void HelpMessage() 
@@ -139,8 +144,8 @@ void HelpMessage()
   cout << "          --outfile=fname (Write encrypted output to specified file name)" << "\n" << flush;
   cout << "          --outdir=dir (Write encrypted output to this directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
-  cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
   cout << "          --rsa-key-passphrase (Passphrase for public RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
   cout << "          --static-data-size=num (Set size of static data storage area)" << "\n" << flush;  
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;  
   cout << "          --version (Display program version number)" << "\n" << flush;

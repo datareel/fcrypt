@@ -121,7 +121,7 @@ echo "" | tee -a ${logFILE}
 
 echo "Testing decryption RSA private key for ${USERNAME}" | tee -a ${logFILE}
 echo "${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_private_key.pem ${testDIR}/testfile.enc" >> ${logFILE}
-${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_private_key.pem ${testDIR}/testfile.enc &>> ${logFILE}
+${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_private_key.pem ${testDIR}/testfile.enc --rsa-key-username=${USERNAME} &>> ${logFILE}
 if [ $? -ne 0 ]; then
     echo "ERROR: RSA private key decryption test failed" | tee -a ${logFILE}
     echo "ERROR: See log ${logFILE}"
@@ -151,7 +151,7 @@ if [ ${RHEL_VERSION} -ne 6 ]; then
     
     echo "Testing decryption SSH-RSA private key for ${USERNAME}" | tee -a ${logFILE}
     echo "${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password ${testDIR}/testfile.enc" >> ${logFILE}
-    ${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password ${testDIR}/testfile.enc &>> ${logFILE}
+    ${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password --rsa-key-username=${USERNAME} ${testDIR}/testfile.enc &>> ${logFILE}
     if [ $? -ne 0 ]; then
 	echo "ERROR: SSH-RSA private key decryption test failed"
 	echo "ERROR: See log ${logFILE}"
