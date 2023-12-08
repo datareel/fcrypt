@@ -570,6 +570,7 @@ int main(int argc, char **argv)
 	cerr << "Invalid entry!" << "\n" << flush;
 	return ExitProgram(1);
       }
+      cout << "\n" << flush;
     }
     aes_file_decrypt_secret.Clear(1);
     aes_file_decrypt_secret.Cat(password.GetSPtr(), password.length());
@@ -578,7 +579,7 @@ int main(int argc, char **argv)
     DEBUG_m("No auth list RSA key users operation");
   }
   else {
-    cout << "No decryption method specifed, defaulting to password" << "\n" << flush;
+    if(clientcfg->verbose_mode) cout << "No decryption method specifed, defaulting to password" << "\n" << flush;
     cout << "Password: " << flush;
     if(!consoleGetString(password, 1)) {
       cout << "\n" << flush;
@@ -586,6 +587,7 @@ int main(int argc, char **argv)
       cerr << "Invalid entry!" << "\n" << flush;
       return ExitProgram(1);
     }
+    cout << "\n" << flush;
     aes_file_decrypt_secret.Clear(1);
     aes_file_decrypt_secret.Cat(password.GetSPtr(), password.length());
   }
@@ -621,7 +623,7 @@ int main(int argc, char **argv)
   }
   
   while(ptr) { // Decrypt file and exit program
-    cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
+    if(clientcfg->verbose_mode) cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
     
     FCryptCache fc(num_buckets);
     fc.key_iterations = key_iterations;
@@ -772,7 +774,7 @@ int main(int argc, char **argv)
       ptr = ptr->next;
       continue;
     }
-    cerr << "File decrypt successful" << "\n" << flush;
+    if(clientcfg->verbose_mode) cerr << "File decrypt successful" << "\n" << flush;
 
     if(list_file_names) {
       cout << "Decrypted name: " << sbuf.c_str() << "\n" << flush;
@@ -781,7 +783,7 @@ int main(int argc, char **argv)
     }
     
     sbuf << clear << wn << fc.BytesWrote();
-    cerr << "Wrote " << sbuf.c_str() << " bytes to " << fc.OutFileName() << "\n" << flush;
+    if(clientcfg->verbose_mode) cerr << "Wrote " << sbuf.c_str() << " bytes to " << fc.OutFileName() << "\n" << flush;
 
     if(remove_src_file) {
       if(futils_remove(ptr->data.c_str()) != 0) {
@@ -793,10 +795,10 @@ int main(int argc, char **argv)
 
   if(err == 0) {
     if(num_files > 1) {
-      cerr << "Decrypted " << num_files << " files" << "\n" << flush;
+      if(clientcfg->verbose_mode) cerr << "Decrypted " << num_files << " files" << "\n" << flush;
     }
     if(num_dirs > 0) {
-      cerr << "Traversed " << num_dirs << " directories"  << "\n" << flush;
+      if(clientcfg->verbose_mode) cerr << "Traversed " << num_dirs << " directories"  << "\n" << flush;
     }
   }
 
