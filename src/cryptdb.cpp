@@ -1177,6 +1177,13 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
   unsigned rsa_ciphertext_len;
   int rv;
 
+  // 12/07/2023 - Bug fix for seg fault if file does not exist
+  if(!futils_exists(fname) || !futils_isfile(fname)) {
+    ERROR_LEVEL = -1;
+    err << clear << "ERROR: Encrypted file " << fname << " does not exist or cannot be read";
+    return 0;
+  }
+  
   if(!DecryptOnlyTheFileName(fname, secret, version, sbuf)) return 0;
   if(ERROR_LEVEL != 0) return 0;
 
