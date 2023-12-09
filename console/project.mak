@@ -11,6 +11,8 @@ AESDB_DEP = $(APPINC_PATH)aesdb.h
 
 RSADB_DEP = $(APPINC_PATH)rsadb.h
 
+SMART_CARD_DEP = $(APPINC_PATH)smart_card.h
+
 GLOBALS_DEP = $(APPINC_PATH)globals.h
 
 C_CONFIG_DEP = $(APPINC_PATH)c_config.h $(APPINC_PATH)globals.h \
@@ -18,7 +20,7 @@ C_CONFIG_DEP = $(APPINC_PATH)c_config.h $(APPINC_PATH)globals.h \
 
 C_THREAD_DEP = $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
 	$(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h \
-	$(APPINC_PATH)rsadb.h
+	$(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
 PROJECT_DEP = $(C_THREAD_DEP) ../fcrypt.h
 # ===============================================================
@@ -31,6 +33,9 @@ aesdb$(OBJ_EXT):	$(APPSRC_PATH)aesdb.cpp $(AESDB_DEP)
 
 rsadb$(OBJ_EXT):	$(APPSRC_PATH)rsadb.cpp $(RSADB_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)rsadb.cpp
+
+smart_card$(OBJ_EXT):	$(APPSRC_PATH)smart_card.cpp $(SMART_CARD_DEP)
+	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)smart_card.cpp
 
 globals$(OBJ_EXT):	$(APPSRC_PATH)globals.cpp $(GLOBALS_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)globals.cpp
@@ -167,6 +172,7 @@ OBJECTS = $(PROJECT)$(OBJ_EXT) \
 	cryptdb$(OBJ_EXT) \
 	aesdb$(OBJ_EXT) \
 	rsadb$(OBJ_EXT) \
+	smart_card$(OBJ_EXT) \
 	c_config$(OBJ_EXT) \
 	c_thread$(OBJ_EXT)
 # ===============================================================
