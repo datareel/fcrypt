@@ -808,6 +808,24 @@ int main(int argc, char **argv)
       return ExitProgram(1);
     }
 
+    if(clientcfg->verbose_mode) {
+      cerr << "Smart card engine ID = " << sc.engine_ID << "\n" << flush;
+      cerr << "Smart card engine path = " << sc.enginePath << "\n" << flush;
+      cerr << "Smart card module path = " << sc.modulePath << "\n" << flush;
+      cerr << "Smart card cert ID = " << sc.cert_id << "\n"  << flush;
+    }
+    
+    if(!use_smartcard_cert_file) {
+      if(!futils_exists(sc.enginePath) || !futils_isfile(sc.enginePath)) {
+	cerr << "ERROR: Smart card engine " << sc.enginePath << " does not exist or cannot be read" <<  "\n" << flush;
+	return ExitProgram(1);
+      }
+      if(!futils_exists(sc.modulePath) || !futils_isfile(sc.modulePath)) {
+	cerr << "ERROR: Smart card provider " << sc.modulePath << " does not exist or cannot be read" <<  "\n" << flush;
+	return ExitProgram(1);
+      }
+    }
+    
     cerr << "Adding smart card cert for user " << smartcard_cert_username.c_str() << " to encrypted file " << ptr->data.c_str() << "\n" << flush;
 
     if(debug_mode) sc.verbose_mode = 1;

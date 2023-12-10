@@ -35,6 +35,8 @@ int main()
       return print_last_error("Error engine error selecting pkcs11");
     }
 
+    // RHEL 8 = char *enginePath = "/usr/lib64/engines-1.1/pkcs11.so";
+    // RHEL 9 = char *enginePath = "/usr/lib64/engines-3/pkcs11.so";
     char *enginePath = "/usr/lib64/engines-1.1/pkcs11.so";
     char *modulePath = "/usr/lib64/opensc-pkcs11.so";
    

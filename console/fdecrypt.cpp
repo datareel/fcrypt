@@ -629,7 +629,7 @@ int main(int argc, char **argv)
   }
   
   if(use_key_file) {
-    cerr << "Using key file for decryption" << "\n" << flush;
+    if(clientcfg->verbose_mode) cerr << "Using key file for decryption" << "\n" << flush;
     aes_file_decrypt_secret.Clear(1);
     aes_file_decrypt_secret = key;
   }
@@ -638,7 +638,7 @@ int main(int argc, char **argv)
       cerr << "ERROR: --rsa-key requires --rsa-key-username" << "\n" << flush;
       return ExitProgram(1);
     }
-    cerr << "Using private RSA key file for decryption" << "\n" << flush;
+    if(clientcfg->verbose_mode) cerr << "Using private RSA key file for decryption" << "\n" << flush;
     if(has_passphrase && rsa_key_passphrase.is_null()) {
       cout << "RSA key passphrase: " << flush;
       if(!consoleGetString(rsa_key_passphrase, 1)) {
@@ -656,7 +656,24 @@ int main(int argc, char **argv)
       cerr << "ERROR: --smartcard-cert requires --smartcard-username" << "\n" << flush;
       return ExitProgram(1);
     }
-    cerr << "Using private smart card cert for decryption" << "\n" << flush;
+    if(clientcfg->verbose_mode) cerr << "Using smart card cert for decryption" << "\n" << flush;
+
+    if(clientcfg->verbose_mode) {
+      cerr << "Smart card engine ID = " << sc.engine_ID << "\n" << flush;
+      cerr << "Smart card engine path = " << sc.enginePath << "\n" << flush;
+      cerr << "Smart card module path = " << sc.modulePath << "\n" << flush;
+      cerr << "Smart card cert ID = " << sc.cert_id << "\n"  << flush;
+    }
+
+    if(!futils_exists(sc.enginePath) || !futils_isfile(sc.enginePath)) {
+      cerr << "ERROR: Smart card engine " << sc.enginePath << " does not exist or cannot be read" <<  "\n" << flush;
+      return ExitProgram(1);
+    }
+    if(!futils_exists(sc.modulePath) || !futils_isfile(sc.modulePath)) {
+      cerr << "ERROR: Smart card provider " << sc.modulePath << " does not exist or cannot be read" <<  "\n" << flush;
+      return ExitProgram(1);
+    }
+
     if(debug_mode) sc.verbose_mode = 1;
     gxString pin_buf;
     if(sc.pin[0] == 0) {

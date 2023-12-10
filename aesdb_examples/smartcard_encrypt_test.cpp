@@ -56,6 +56,9 @@ int main(int argc, char *argv[])
     std::cout << "Using exported smart card cert file for public key encryption" << "\n";
     std::cout.write(sc.cert_file_buf, sc.cert_file_buf_len);
   }
+
+  // For RHEL 9
+  // sc.SetEnginePath("/usr/lib64/engines-3/pkcs11.so");
   
   std::cout << "Openssl engine ID = " << sc.engine_ID << "\n";
   std::cout << "Engine path = " << sc.enginePath << "\n";

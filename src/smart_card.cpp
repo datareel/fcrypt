@@ -36,8 +36,14 @@ Smartcard encryption and decryption routines.
 
 #include <smart_card.h>
 
-
+#if defined (__RHEL8__)
 const char *SC_default_enginePath = "/usr/lib64/engines-1.1/pkcs11.so";
+#elif defined (__RHEL9__)
+const char *SC_default_enginePath = "/usr/lib64/engines-3/pkcs11.so";
+#else
+const char *SC_default_enginePath = "/usr/lib64/engines/pkcs11.so";
+#endif
+
 const char *SC_default_modulePath = "/usr/lib64/opensc-pkcs11.so";
 const char *SC_default_engine_ID = "pkcs11";
 const char *SC_default_error_message = "No smart card object errors reported";

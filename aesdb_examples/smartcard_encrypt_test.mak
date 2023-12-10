@@ -17,7 +17,7 @@ CPP = g++
 LINKER = ld
 
 # Define compiler and linker flags macros
-CFLAGS := -v -Wall $(CFLAGS) -I../include -I./
+CFLAGS := -v -Wall $(CFLAGS) -I../include -I./ -D__ENABLE_SMART_CARD__
 FFLAGS := $(FFLAGS)
 COMPILE_ONLY = -c
 OUTPUT = -o
