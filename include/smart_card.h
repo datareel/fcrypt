@@ -56,13 +56,12 @@ const unsigned SC_max_engine_id_size = 32;
 const unsigned SC_max_path_size = 64;
 const unsigned SC_err_string_size = 255;
 const int SC_RSA_padding = RSA_PKCS1_PADDING;
+const unsigned SC_max_cert_file_len = 8192;
 
 struct SmartCardOB
 {
   SmartCardOB();
-  ~SmartCardOB() {
-    memset(pin, 0, sizeof(pin));
-  }
+  ~SmartCardOB();
 
   void SetEnginePath(char *p) { strncpy(enginePath, p, (sizeof(enginePath)-1)); }
   void SetModulePath(char *p) { strncpy(modulePath, p, (sizeof(modulePath)-1)); }
@@ -79,6 +78,8 @@ struct SmartCardOB
   char engine_ID[SC_max_engine_id_size];
   char enginePath[SC_max_path_size];
   char modulePath[SC_max_path_size];
+  char cert_file_buf[SC_max_cert_file_len];
+  unsigned cert_file_buf_len;
 };
 
 int SC_public_key_encrypt(SmartCardOB *sc,
@@ -90,7 +91,11 @@ int SC_private_key_decrypt(SmartCardOB *sc,
 			   unsigned char plaintext[], unsigned int plaintext_len,
 			   unsigned *unencrypted_data_len,
 			   int padding = SC_RSA_padding);
-
+int SC_read_cert_file(SmartCardOB *sc, const char *fname);
+int SC_cert_file_public_key_encrypt(SmartCardOB *sc,
+				    const unsigned char plaintext[], unsigned int plaintext_len,
+				    unsigned char ciphertext[], unsigned int ciphertext_len,
+				    unsigned *encrypted_data_len, int padding =SC_RSA_padding);
 #endif // __ENABLE_SMART_CARD__
 
 #endif //__SMART_CARD_HPP__

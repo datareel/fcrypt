@@ -40,6 +40,7 @@ Smartcard encryption and decryption routines.
 const char *SC_default_enginePath = "/usr/lib64/engines-1.1/pkcs11.so";
 const char *SC_default_modulePath = "/usr/lib64/opensc-pkcs11.so";
 const char *SC_default_engine_ID = "pkcs11";
+const char *SC_default_error_message = "No smart card object errors reported";
 
 SmartCardOB::SmartCardOB()
 {
@@ -52,8 +53,17 @@ SmartCardOB::SmartCardOB()
   strncpy(engine_ID, SC_default_engine_ID, (sizeof(engine_ID)-1));
   strncpy(enginePath, SC_default_enginePath, (sizeof(enginePath)-1));
   strncpy(modulePath, SC_default_modulePath, (sizeof(modulePath)-1));
+  strncpy(err_string, SC_default_error_message, (sizeof(err_string)-1));
   verbose_mode = 0;
   error_level = 0;
+  memset(cert_file_buf, 0, SC_max_cert_file_len);
+  cert_file_buf_len = 0;
+}
+
+SmartCardOB::~SmartCardOB()
+{
+  memset(pin, 0, sizeof(pin));
+  memset(cert_file_buf, 0, SC_max_cert_file_len);
 }
 
 int SmartCardOB::SetError(char *message, int level)
@@ -181,6 +191,96 @@ int SC_private_key_decrypt(SmartCardOB *sc,
 
   return 0;
 }
+
+int SC_read_cert_file(SmartCardOB *sc, const char *fname)
+{
+  memset(sc->cert_file_buf, 0, SC_max_cert_file_len);
+
+  FILE *fp;
+  fp = fopen(fname, "rb");
+  if(!fp) {
+    return sc->SetError("Error opening smart card cert file");
+  }
+
+  char read_buf[1024];
+  unsigned input_bytes_read = 0;
+  unsigned offset = 0;
+  
+  while(!feof(fp)) {
+    memset(read_buf, 0, sizeof(read_buf));
+    input_bytes_read = fread((unsigned char *)read_buf, 1, sizeof(read_buf), fp);
+    if(input_bytes_read < 0) {
+      fclose(fp);
+      memset(read_buf, 0, sizeof(read_buf));  
+      return sc->SetError("Error reading from smart card cert file");
+    }
+    if(offset > SC_max_cert_file_len) {
+      fclose(fp);
+      memset(read_buf, 0, sizeof(read_buf));  
+      return sc->SetError("Smart card cert file exceeds max buffer length");
+    }
+    memmove(sc->cert_file_buf+offset, read_buf, input_bytes_read);
+    offset += input_bytes_read;
+  }
+
+  sc-> cert_file_buf_len = offset;
+  
+  memset(read_buf, 0, sizeof(read_buf));  
+  fclose(fp);
+  
+  return 0;
+}
+
+int SC_cert_file_public_key_encrypt(SmartCardOB *sc,
+				    const unsigned char plaintext[], unsigned int plaintext_len,
+				    unsigned char ciphertext[], unsigned int ciphertext_len,
+				    unsigned *encrypted_data_len, int padding)
+{
+  if(sc->cert_file_buf_len == 0) {
+    return sc->SetError("Error no smart card cert file is loaded");
+  }
+
+  BIO *keybio = BIO_new_mem_buf((const void *)sc->cert_file_buf, sc->cert_file_buf_len);
+  if(!keybio) {
+    return sc->SetError("Error creating bio object for smart card cert file");
+  }
+  X509 *x509 = PEM_read_bio_X509(keybio, NULL, NULL, NULL);
+  if(!x509) {
+    BIO_free(keybio);
+    return sc->SetError("Error creating x509 object for smart card cert file");
+  }
+
+ EVP_PKEY *evkey=X509_get_pubkey(x509);
+ if(!evkey) {
+   BIO_free(keybio);
+   X509_free(x509);
+   return sc->SetError("Error creating public key object for smart card cert file");
+ }
+ 
+ RSA *rsa = EVP_PKEY_get1_RSA(evkey);
+ if(!rsa) {
+   BIO_free(keybio);
+   X509_free(x509);
+   EVP_PKEY_free(evkey);
+   return sc->SetError("Error creating RSA public key");
+ }
+ 
+ int len = RSA_public_encrypt(plaintext_len, plaintext, ciphertext, rsa, padding);
+ if(len == -1) {
+   BIO_free(keybio);
+   X509_free(x509);
+   EVP_PKEY_free(evkey);
+   return sc->SetError("Public key encrypt failed");
+ }
+ *(encrypted_data_len) = len;
+
+ BIO_free(keybio);
+ X509_free(x509);
+ EVP_PKEY_free(evkey);
+  
+  return 0;
+}
+
 #endif // __ENABLE_SMART_CARD__
 // ----------------------------------------------------------- // 
 // ------------------------------- //
