@@ -41,6 +41,12 @@ const char *SC_default_enginePath = "/usr/lib64/engines-1.1/pkcs11.so";
 const char *SC_default_modulePath = "/usr/lib64/opensc-pkcs11.so";
 const char *SC_default_engine_ID = "pkcs11";
 const char *SC_default_error_message = "No smart card object errors reported";
+const char *SC_default_cert_id = "01";
+
+const char *SC_get_default_enginePath() { return SC_default_enginePath; }
+const char *SC_get_default_modulePath() { return SC_default_modulePath; }
+const char *SC_get_default_engine_ID() { return SC_default_engine_ID; }
+const char *SC_get_default_cert_id() { return SC_default_cert_id; }
 
 SmartCardOB::SmartCardOB()
 {
@@ -54,6 +60,7 @@ SmartCardOB::SmartCardOB()
   strncpy(enginePath, SC_default_enginePath, (sizeof(enginePath)-1));
   strncpy(modulePath, SC_default_modulePath, (sizeof(modulePath)-1));
   strncpy(err_string, SC_default_error_message, (sizeof(err_string)-1));
+  strncpy(cert_id, SC_default_cert_id, (sizeof(cert_id)-1));
   verbose_mode = 0;
   error_level = 0;
   memset(cert_file_buf, 0, SC_max_cert_file_len);

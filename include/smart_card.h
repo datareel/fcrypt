@@ -82,6 +82,11 @@ struct SmartCardOB
   unsigned cert_file_buf_len;
 };
 
+const char *SC_get_default_enginePath();
+const char *SC_get_default_modulePath();
+const char *SC_get_default_engine_ID();
+const char *SC_get_default_cert_id();
+
 int SC_public_key_encrypt(SmartCardOB *sc,
 			  const unsigned char plaintext[], unsigned int plaintext_len,
 			  unsigned char ciphertext[], unsigned int ciphertext_len,

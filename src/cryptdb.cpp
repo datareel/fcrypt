@@ -1270,6 +1270,114 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
 
   return 1;
 }
+
+#ifdef __ENABLE_SMART_CARD__
+int FCryptCache::AddSmartCardCertToStaticArea(SmartCardOB *sc, int use_cert_file,
+					      const char *fname, const MemoryBuffer &secret, const char *smartcard_cert_username)
+{
+  gxString sbuf;
+  gxUINT32 version;
+  StaticDataBlockHdr static_data_block_header;
+  char username_buf[1024];
+  unsigned char ciphertext[8192];
+  unsigned ciphertext_len;
+  int rv;
+
+  if(!futils_exists(fname) || !futils_isfile(fname)) {
+    ERROR_LEVEL = -1;
+    err << clear << "ERROR: Encrypted file " << fname << " does not exist or cannot be read";
+    return 0;
+  }
+  
+  if(!DecryptOnlyTheFileName(fname, secret, version, sbuf)) return 0;
+  if(ERROR_LEVEL != 0) return 0;
+
+  memset(ciphertext, 0, sizeof(ciphertext));
+
+  StaticDataBlock static_data_block;
+  unsigned char SALT[AES_MAX_SALT_LEN];
+  unsigned char IV[AES_MAX_IV_LEN];
+  unsigned char KEY[AES_MAX_KEY_LEN];
+  AES_init_salt(SALT, sizeof(SALT));
+  
+  rv = AES_derive_key((const unsigned char*)secret.m_buf(), secret.length(), SALT, sizeof(SALT), KEY, sizeof(KEY), IV, sizeof(IV), 1000);
+  if(rv != AES_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Failed to generate derived key " << AES_err_string(rv);
+    return 0;
+  }
+  MemoryBuffer p_secret;
+  p_secret.Cat(SALT, AES_MAX_SALT_LEN);
+  p_secret.Cat(secret.m_buf(), secret.length());
+
+  if(use_cert_file) {
+    rv =  SC_cert_file_public_key_encrypt(sc, p_secret.m_buf(), p_secret.length(), ciphertext, sizeof(ciphertext), &ciphertext_len);
+  }
+  else {
+    rv =  SC_public_key_encrypt(sc, p_secret.m_buf(), p_secret.length(), ciphertext, sizeof(ciphertext), &ciphertext_len);
+  }
+  
+  if(rv != 0) {
+    ERROR_LEVEL = -1;
+    err << clear << "Smart card cert encrypt error " << sc->err_string;
+    return 0;
+  }
+
+  if(!LoadStaticDataBlocks()) return 0;
+  if(ERROR_LEVEL != 0) return 0;
+
+  gxListNode<StaticDataBlock> *ptr = static_block_list.GetHead();
+
+  while(ptr) {
+    sbuf << clear << smartcard_cert_username;
+    if(ptr->data.username == sbuf) {
+      ERROR_LEVEL = 1;
+      err << clear << "A smart card cert for username " << ptr->data.username.c_str() << " already exists";
+      return 0;
+    }
+    ptr = ptr->next;
+  }
+
+  static_data_block_header.FormatHeader();
+  unsigned char hash[AES_MAX_HMAC_LEN];
+  memset(username_buf, 0, sizeof(username_buf));
+  unsigned username_buf_len = 0;
+  
+  static_data_block_header.block_len = 0;
+  static_data_block_header.block_type = 2;
+  static_data_block_header.block_status = 1;
+  
+  static_data_block_header.ciphertext_len = ciphertext_len;
+  static_data_block_header.block_len += ciphertext_len;
+  static_data_block_header.block_len += sizeof(hash);
+
+  gxsBase64Encode(smartcard_cert_username, username_buf, strlen(smartcard_cert_username));
+  username_buf_len = strlen(username_buf);
+  static_data_block_header.username_len = username_buf_len;
+  
+  static_data_block.block_header = static_data_block_header;
+  static_data_block.rsa_ciphertext.Cat(ciphertext, ciphertext_len);
+  rv = AES_HMAC(KEY, sizeof(KEY), ciphertext, ciphertext_len, hash, sizeof(hash));
+  if(rv != AES_NO_ERROR) {
+    ERROR_LEVEL = -1;
+    err << clear << "Failed to generate HMAC for smart card ciphertext " << AES_err_string(rv);
+    return 0;
+  }
+
+  static_data_block.hmac.Cat(hash, sizeof(hash));
+  static_data_block.username = smartcard_cert_username;
+  static_data_block.username_encoded = username_buf;
+
+  static_block_list.Add(static_data_block);
+
+  if(!UpdateStaticData()) return 0;
+  if(ERROR_LEVEL != 0) return 0;
+
+  if(!WriteStaticDataAreaToFile(fname)) return 0;
+
+  return 1;
+}
+#endif
 // ----------------------------------------------------------- // 
 // ------------------------------- //
 // --------- End of File --------- //

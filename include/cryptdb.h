@@ -39,6 +39,7 @@ Encryption routes generate encryption certificates and authenticate users.
 
 #include "aesdb.h"
 #include "rsadb.h"
+#include "smart_card.h"
 
 // DataReel include files
 #include "gxdlcode.h"
@@ -144,7 +145,7 @@ struct GXDLCODE_API StaticDataBlockHdr
   
   gxUINT32 version;        // Header version number
   gxUINT32 checkword;      // Header checkword
-  gxUINT32 block_type;     // Application specific block type
+  gxUINT32 block_type;     // Application specific block type (1 = RSA key, 2 = Smart card cert)
   gxUINT32 block_status;   // Application specific block status
   gxUINT32 block_len;      // Variable length of this data block excluding this header
   gxUINT32 ciphertext_len; // Variable length of the encrypted data
@@ -251,7 +252,12 @@ public: // RSA key functions
   int LoadStaticDataBlocks(const char *fname);
   int LoadStaticDataBlocks(const char *fname, unsigned &num_blocks, unsigned &next_write_address);
   int LoadStaticDataBlocks();
-  
+
+#ifdef __ENABLE_SMART_CARD__
+public: // Smart card functions 
+  int AddSmartCardCertToStaticArea(SmartCardOB *sc, int use_cert_file,
+				   const char *fname, const MemoryBuffer &secret, const char *smartcard_cert_username);
+#endif
   
 public: // Helper functions
   void Flush() { cache.Flush(); } // Flush the cache buckets

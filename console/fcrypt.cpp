@@ -88,6 +88,14 @@ gxString rsa_key_passphrase;
 int has_passphrase = 0;
 unsigned static_data_size = DEFAULT_STATIC_DATA_AREA_SIZE;
 gxString decrypted_output_filename;
+#ifdef __ENABLE_SMART_CARD__
+SmartCardOB sc;
+gxString smartcard_cert_username;
+int add_smart_card = 0;
+int use_smartcard_cert = 0;
+int use_smartcard_cert_file = 0;
+gxString smartcard_cert_file;
+#endif
 
 // Functions
 void DisplayVersion();
@@ -149,6 +157,19 @@ void HelpMessage()
   cout << "          --static-data-size=num (Set size of static data storage area)" << "\n" << flush;  
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;  
   cout << "          --version (Display program version number)" << "\n" << flush;
+#ifdef __ENABLE_SMART_CARD__
+  cout << "\n" << flush;
+  cout << "          --add-smartcard-cert (Add access to encrypted file for a smartcard)" << "\n" << flush;
+  cout << "          --smartcard-username=name (Assign a name to smartcard cert)" << "\n" << flush;
+  cout << "          --smartcard-cert-id=" << SC_get_default_cert_id() << " (Set the ID number for the smartcard cert)" << "\n" << flush;
+  cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smartcard engine path)" << "\n" << flush;
+  cout << "          --smartcard-provider=" << SC_get_default_modulePath() << " (Set the smartcard provider)" << "\n" << flush;
+  cout << "\n" << flush;
+  cout << "          --add-smartcard-cert-file (Add access to an encrypted file for another users exported smart card cert)" << "\n" << flush;
+  cout << "          --add-smartcard-cert-file input arg must be a file name" << "\n" << flush;
+
+#endif // __ENABLE_SMART_CARD__
+
   cout << "\n"; // End of list
 }
 
@@ -379,6 +400,77 @@ int ProcessDashDashArg(gxString &arg)
     output_file_name = equal_arg;
     has_valid_args = 1;
   }
+
+#ifdef __ENABLE_SMART_CARD__
+  if(arg == "add-smartcard-cert") {
+    add_smart_card = 1;
+    use_smartcard_cert = 1;
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-username") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-username missing name: --smartcard-username=$(whoami)" << "\n" << flush;
+      return 0;
+    }
+    smartcard_cert_username = equal_arg;
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-cert-id") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-cert-id missing ID: --smartcard-cert-id=01" << "\n" << flush;
+      return 0;
+    }
+    sc.SetCertID(equal_arg.c_str());
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-engine") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-engine missing path: --smartcard-engine=" <<  SC_get_default_enginePath() << "\n" << flush;
+      return 0;
+    }
+    sc.SetEnginePath(equal_arg.c_str());
+    if(!futils_exists(sc.enginePath) || !futils_isfile(sc.enginePath)) {
+      cerr << "ERROR: Smart card engine " << sc.enginePath << " does not exist or cannot be read" <<  "\n" << flush;
+      return 0;
+    }
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-provider") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-provider missing path: --smartcard-provider=" <<  SC_get_default_modulePath() << "\n" << flush;
+      return 0;
+    }
+    sc.SetModulePath(equal_arg.c_str());
+    if(!futils_exists(sc.modulePath) || !futils_isfile(sc.modulePath)) {
+      cerr << "ERROR: Smart card provider " << sc.modulePath << " does not exist or cannot be read" <<  "\n" << flush;
+      return 0;
+    }
+    has_valid_args = 1;
+  }
+
+  if(arg == "add-smartcard-cert-file") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --add-smartcard-cert-file missing filename: --add-smartcard-cert-file=${HOME}/certs/certfile.pem" << "\n" << flush;
+      return 0;
+    }
+    add_smart_card = 1;
+    use_smartcard_cert_file = 1;
+    smartcard_cert_file = equal_arg;
+    if(!futils_exists(smartcard_cert_file.c_str()) || !futils_isfile(smartcard_cert_file.c_str())) {
+      cerr << "ERROR: Smart card cert file " << smartcard_cert_file.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
+      return 0;
+    }
+    if(SC_read_cert_file(&sc, smartcard_cert_file.c_str()) != 0) {
+      cerr << "ERROR: " << sc.err_string << "\n" << flush;
+      return 0;
+    }
+    has_valid_args = 1;
+  }
+#endif
   
   if(!has_valid_args) {
     cerr << "Unknown or invalid --" << arg.c_str() << "\n" << flush;
@@ -468,11 +560,14 @@ int ExitProgram(int rv, char *exit_message)
   if(!debug_message.is_null()) DEBUG_m(debug_message.c_str(), debug_level);
 
   if(debug_mode) {
+#ifdef __ENABLE_SMART_CARD__
+    cerr << sc.err_string << "\n" << flush;
+#endif
     char err[1024];
     memset(err, 0, sizeof(err));
     ERR_load_crypto_strings();
     ERR_error_string(ERR_get_error(), err);
-    std::cerr << err << "\n";
+    cerr << err << "\n" << flush;
   }
   
   if(!exit_message) {
@@ -604,13 +699,20 @@ int main(int argc, char **argv)
     return ExitProgram(1);
   }
 
-  
+  gxListNode<gxString> *ptr = file_list.GetHead();
+  rv = err = 0;
+
   if(use_key_file) {
     aes_file_encrypt_secret.Clear(1);
     aes_file_encrypt_secret.Cat(key.m_buf(), key.length());
     if(add_rsa_key) {
       cerr << "Using symmetric key to add an RSA user key to an encrypted file" << "\n" << flush;
     }
+#ifdef __ENABLE_SMART_CARD__
+    else if(add_smart_card) {
+      cerr << "Using symmetric key to add a smartcard cert to an encrypted file" << "\n" << flush;
+    }
+#endif
     else {
       cerr << "Using symmetric key for file encryption" << "\n" << flush;
       if(aes_file_encrypt_secret.length() < AES_MIN_SECRET_LEN) {
@@ -630,10 +732,27 @@ int main(int argc, char **argv)
 	  cerr << "Invalid entry!" << "\n" << flush;
 	  return ExitProgram(1);
 	}
+	cout << "\n" << flush;
       }
       aes_file_encrypt_secret.Clear(1);
       aes_file_encrypt_secret.Cat(password.GetSPtr(), password.length());
     }
+#ifdef __ENABLE_SMART_CARD__
+    else if(add_smart_card) {
+      cerr << "Using password to add a smartcard cert to an encrypted file" << "\n" << flush;
+      if(password.is_null()) {
+	cout << "Password: " << flush;
+	if(!consoleGetString(password, 1)) {
+	  password.Clear(1);
+	  cerr << "Invalid entry!" << "\n" << flush;
+	  return ExitProgram(1);
+	}
+	cout << "\n" << flush;
+      }
+      aes_file_encrypt_secret.Clear(1);
+      aes_file_encrypt_secret.Cat(password.GetSPtr(), password.length());
+    }
+#endif
     else {
       cerr << "Using password for symmetric file encryption" << "\n" << flush;
       if(password.is_null()) {
@@ -677,10 +796,48 @@ int main(int argc, char **argv)
       cout << "\n" << flush;
     }
   }
-  
-  gxListNode<gxString> *ptr = file_list.GetHead();
-  rv = err = 0;
 
+#ifdef __ENABLE_SMART_CARD__
+  if(add_smart_card) {
+    if(smartcard_cert_username.is_null()) {
+      cerr << "ERROR: --add-smartcard-cert requires --smartcard-username" << "\n" << flush;
+      return ExitProgram(1);
+    }
+
+    cerr << "Adding smart card cert for user " << smartcard_cert_username.c_str() << " to encrypted file " << ptr->data.c_str() << "\n" << flush;
+
+    if(debug_mode) sc.verbose_mode = 1;
+    
+    while(ptr) {
+      FCryptCache fc(num_buckets);
+      fc.key_iterations = key_iterations;
+      if(!fc.AddSmartCardCertToStaticArea(&sc, use_smartcard_cert_file, ptr->data.c_str(), aes_file_encrypt_secret, smartcard_cert_username.c_str())) {
+	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
+	return ExitProgram(1);
+      }
+      cerr << "Smart card cert for user " << smartcard_cert_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+
+      if(clientcfg->verbose_mode) {
+	fc.LoadStaticDataBlocks();
+	cerr << "Static data size  = " << fc.static_data_size << "\n" << flush;
+	cerr << "Num static blocks = " << fc.num_static_data_blocks << "\n" << flush;
+	cerr << "Static data bytes used = " << fc.static_data_bytes_used  << "\n" << flush;
+	cerr << "Static data bytes left = " << (fc.static_data_size - fc.static_data_bytes_used) << "\n" << flush;
+	cerr << "Authorized users list = ";
+	gxListNode<StaticDataBlock> *list_ptr = fc.static_block_list.GetHead();
+	while(list_ptr) {
+	  cerr << list_ptr->data.username.c_str();
+	  list_ptr = list_ptr->next;
+	  if(list_ptr) cerr << ", ";
+	}
+	cerr << "\n" << flush;
+      }
+      ptr = ptr->next; // Go the next file
+    }
+    return ExitProgram(0); // Smart card cert was added, exit program here
+  }
+#endif
+  
   if(add_rsa_key) {
     if(rsa_key_username.is_null()) {
       cerr << "ERROR: --add-rsa-key requires --rsa-key-username" << "\n" << flush;
@@ -688,18 +845,6 @@ int main(int argc, char **argv)
     }
 
     cerr << "Adding RSA key for user " << rsa_key_username.c_str() << " to encrypted file " << ptr->data.c_str() << "\n" << flush;
-
-    RSA_openssl_init();
-    memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
-    char *passphrase = 0;
-    if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
-    rv = RSA_public_key_encrypt((const unsigned char *)public_key, public_key_len,
-				aes_file_encrypt_secret.m_buf(), aes_file_encrypt_secret.length(),
-				rsa_ciphertext, sizeof(rsa_ciphertext), &rsa_ciphertext_len, RSA_padding, passphrase);
-    if(rv != RSA_NO_ERROR) {
-      std::cerr << "ERROR: " << RSA_err_string(rv) << "\n" << std::flush;
-      return ExitProgram(1);
-    }
 
     while(ptr) {
       FCryptCache fc(num_buckets);
