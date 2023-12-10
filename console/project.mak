@@ -5,7 +5,7 @@ APPSRC_PATH = ../../src/
 
 # Build dependency rules
 # ===============================================================
-CRYPTDB_DEP = $(APPINC_PATH)cryptdb.h $(APPINC_PATH)aesdb.h
+CRYPTDB_DEP = $(APPINC_PATH)cryptdb.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
 AESDB_DEP = $(APPINC_PATH)aesdb.h
 
@@ -13,16 +13,19 @@ RSADB_DEP = $(APPINC_PATH)rsadb.h
 
 SMART_CARD_DEP = $(APPINC_PATH)smart_card.h
 
-GLOBALS_DEP = $(APPINC_PATH)globals.h
+GLOBALS_DEP = $(APPINC_PATH)globals.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
-C_CONFIG_DEP = $(APPINC_PATH)c_config.h $(APPINC_PATH)globals.h \
-	$(APPINC_PATH)c_thread.h
+C_CONFIG_DEP = $(APPINC_PATH)c_config.h $(APPINC_PATH)globals.h $(APPINC_PATH)c_thread.h \
+	     $(APPINC_PATH)aesdb.h $(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
 C_THREAD_DEP = $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
 	$(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h \
 	$(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
-PROJECT_DEP = $(C_THREAD_DEP) ../fcrypt.h
+PROJECT_DEP = ../fcrypt.h \
+	    $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
+	    $(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h \
+	    $(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 # ===============================================================
 
 cryptdb$(OBJ_EXT):	$(APPSRC_PATH)cryptdb.cpp $(CRYPTDB_DEP)

@@ -109,6 +109,9 @@ void DisplayVersion()
 #ifdef __ENABLE_SMART_CARD__
   cout << "\n" << flush;
   cout << "Smart card enabled for " << SC_get_default_engine_ID() << "\n" << flush;
+#else
+  cout << "\n" << flush;
+  cout << "Smart card support is not enabled" << "\n" << flush;
 #endif
 }
 

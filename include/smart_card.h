@@ -33,8 +33,6 @@ Smartcard encryption and decryption routines.
 #ifndef __SMART_CARD_HPP__
 #define __SMART_CARD_HPP__
 
-#define __ENABLE_SMART_CARD__
-
 #ifdef __ENABLE_SMART_CARD__
 
 // OpenSSL include files
