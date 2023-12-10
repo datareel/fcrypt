@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 12/06/2023
+// Date Last Modified: 12/10/2023
 // Copyright (c) 2001-2023 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -77,7 +77,7 @@ unsigned private_key_len = 0;
 gxString rsa_key_passphrase;
 int has_passphrase = 0;
 gxString rsa_key_username;
-int list_rsa_key_users = 0;
+int list_users = 0;
 #ifdef __ENABLE_SMART_CARD__
 SmartCardOB sc;
 gxString smartcard_cert_username;
@@ -130,7 +130,11 @@ void HelpMessage()
   cout << "          --help (Display this help message and exit." << "\n" << flush;
   cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
   cout << "          --key=aes_key (Use a key file for symmetric file decryption)" << "\n" << flush;
-  cout << "          --list-rsa-key-users (List the users that have RSA key access and exit)" << "\n" << flush;
+#ifdef __ENABLE_SMART_CARD__
+  cout << "          --list-users (List the users with RSA key of Smart Card cert access and exit)" << "\n" << flush;
+#else
+  cout << "          --list-users (List the users with RSA key access and exit)" << "\n" << flush;
+#endif
   cout << "          --outfile=fname (Write decrypted output to specified file name)" << "\n" << flush;
   cout << "          --outdir=dir (Write decrypted output to this directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file decryption)" << "\n" << flush;
@@ -339,8 +343,8 @@ int ProcessDashDashArg(gxString &arg)
     has_valid_args = 1;
   }
 
-  if(arg == "list-rsa-key-users") {
-    list_rsa_key_users = 1;
+  if(arg == "list-rsa-key-users" || arg == "list-users" ) {
+    list_users = 1;
     has_valid_args = 1;
   }
 
@@ -680,8 +684,8 @@ int main(int argc, char **argv)
     aes_file_decrypt_secret.Clear(1);
     aes_file_decrypt_secret.Cat(password.GetSPtr(), password.length());
   }
-  else if(list_rsa_key_users) {
-    DEBUG_m("No auth list RSA key users operation");
+  else if(list_users) {
+    DEBUG_m("No auth list users operation");
   }
   else {
     if(clientcfg->verbose_mode) cout << "No decryption method specifed, defaulting to password" << "\n" << flush;
@@ -700,7 +704,7 @@ int main(int argc, char **argv)
   gxListNode<gxString> *ptr = file_list.GetHead();
   err = 0;
 
-  if(list_rsa_key_users) { // List user names found and exit program
+  if(list_users) { // List user names found and exit program
     while(ptr) {
       cout << "Listing usernames with RSA key access to encrypted file " << ptr->data.c_str() << "\n" << flush;
       FCryptCache fc(num_buckets);
@@ -717,9 +721,12 @@ int main(int argc, char **argv)
 	ptr = ptr->next;
 	continue;
       }
-      cout << "Encrypted file has stored username for users: " << "\n" << flush;
+      cout << "Encrypted file username inventory " << "\n" << flush;
+      gxString access_type = "Unknown";
       while(list_ptr) {
-	cout << list_ptr->data.username.c_str() << "\n" << flush;
+	if(list_ptr->data.block_header.block_type == 1) access_type = "RSA key";
+	if(list_ptr->data.block_header.block_type == 2) access_type = "Smart Card";
+	cout << "Username: " << list_ptr->data.username.c_str() << " Access: " << access_type.c_str() << "\n" << flush;
       	list_ptr = list_ptr->next;
       }
       ptr = ptr->next;
@@ -772,6 +779,17 @@ int main(int argc, char **argv)
 	}
 	
 	if(rsa_key_username == list_ptr->data.username.c_str()) {
+	  if(list_ptr->data.block_header.block_type != 1) {
+	    if(list_ptr->data.block_header.block_type == 2) {
+	      cerr << "ERROR: User " << list_ptr->data.username.c_str() << " access type is smart card" << "\n" << flush;
+	    }
+	    else {
+	      cerr << "ERROR: User " << list_ptr->data.username.c_str() << " access type is not RSA key" << "\n" << flush;
+	    }
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
 	  if(clientcfg->verbose_mode) cerr << "Found stored RSA key for user " << list_ptr->data.username.c_str() << "\n" << flush;
 	  char *passphrase = 0;
 	  if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
@@ -875,6 +893,17 @@ int main(int argc, char **argv)
 	}
 	
 	if(smartcard_cert_username == list_ptr->data.username.c_str()) {
+	  if(list_ptr->data.block_header.block_type != 2) {
+	    if(list_ptr->data.block_header.block_type == 1) {
+	      cerr << "ERROR: User " << list_ptr->data.username.c_str() << " access type is RSA key" << "\n" << flush;
+	    }
+	    else {
+	      cerr << "ERROR: User " << list_ptr->data.username.c_str() << " access type is not smart card" << "\n" << flush;
+	    }
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
 	  if(clientcfg->verbose_mode) cerr << "Found stored smart card cert for user " << list_ptr->data.username.c_str() << "\n" << flush;
 
 	  rv = SC_private_key_decrypt(&sc, list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(),
