@@ -78,6 +78,11 @@ gxString rsa_key_passphrase;
 int has_passphrase = 0;
 gxString rsa_key_username;
 int list_rsa_key_users = 0;
+#ifdef __ENABLE_SMART_CARD__
+SmartCardOB sc;
+gxString smartcard_cert_username;
+int use_smartcard_cert = 0;
+#endif
 
 // Functions
 void DisplayVersion();
@@ -97,12 +102,14 @@ void DisplayVersion()
        << clientcfg->copyright_dates.c_str() << "\n" << flush;
   cout << "Produced by: " << clientcfg->produced_by << "\n" << flush;
   cout << clientcfg->default_url.c_str() << "\n" << flush;
-  if(debug_mode) {
-    cout << "\n" << flush;
-    cout << "Encryption engine: Openssl" << "\n" << flush;
-    cout << "Version string: " << OPENSSL_VERSION_TEXT << "\n" << flush;
-    cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << "\n" << flush;
-  }
+  cout << "\n" << flush;
+  cout << "Encryption engine: Openssl" << "\n" << flush;
+  cout << "Version string: " << OPENSSL_VERSION_TEXT << "\n" << flush;
+  cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << "\n" << flush;
+#ifdef __ENABLE_SMART_CARD__
+  cout << "\n" << flush;
+  cout << "Smart card enabled for " << SC_get_default_engine_ID() << "\n" << flush;
+#endif
 }
 
 void HelpMessage() 
@@ -134,6 +141,17 @@ void HelpMessage()
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
   cout << "          --version (Display program version number)" << "\n" << flush;
+#ifdef __ENABLE_SMART_CARD__
+  cout << "\n" << flush;
+  cout << "          --smartcard-cert (Use a smart card for decryption)" << "\n" << flush;
+  cout << "          --smartcard-pin=pin (Supply smart card PIN on the command line for scripting, use with caution)" << "\n" << flush;
+  cout << "          --smartcard-username=name (Username assigned to the smart card cert)" << "\n" << flush;
+  cout << "          --smartcard-cert-id=" << SC_get_default_cert_id() << " (Set the ID number for the smartcard cert)" << "\n" << flush;
+  cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smartcard engine path)" << "\n" << flush;
+  cout << "          --smartcard-provider=" << SC_get_default_modulePath() << " (Set the smartcard provider)" << "\n" << flush;
+#endif // __ENABLE_SMART_CARD__
+
+  
   cout << "\n" << flush; // End of list
 }
 
@@ -330,7 +348,68 @@ int ProcessDashDashArg(gxString &arg)
     write_to_stdout = 1;
     has_valid_args = 1;
   }
-  
+
+
+  #ifdef __ENABLE_SMART_CARD__
+  if(arg == "smartcard-cert") {
+    use_smartcard_cert = 1;
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-username") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-username missing name: --smartcard-username=$(whoami)" << "\n" << flush;
+      return 0;
+    }
+    smartcard_cert_username = equal_arg;
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-cert-id") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-cert-id missing ID: --smartcard-cert-id=01" << "\n" << flush;
+      return 0;
+    }
+    sc.SetCertID(equal_arg.c_str());
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-engine") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-engine missing path: --smartcard-engine=" <<  SC_get_default_enginePath() << "\n" << flush;
+      return 0;
+    }
+    sc.SetEnginePath(equal_arg.c_str());
+    if(!futils_exists(sc.enginePath) || !futils_isfile(sc.enginePath)) {
+      cerr << "ERROR: Smart card engine " << sc.enginePath << " does not exist or cannot be read" <<  "\n" << flush;
+      return 0;
+    }
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-provider") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-provider missing path: --smartcard-provider=" <<  SC_get_default_modulePath() << "\n" << flush;
+      return 0;
+    }
+    sc.SetModulePath(equal_arg.c_str());
+    if(!futils_exists(sc.modulePath) || !futils_isfile(sc.modulePath)) {
+      cerr << "ERROR: Smart card provider " << sc.modulePath << " does not exist or cannot be read" <<  "\n" << flush;
+      return 0;
+    }
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-pin") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-pin missing pin number: --smartcard-pin=12345" << "\n" << flush;
+      return 0;
+    }
+    sc.SetPin(equal_arg.c_str());
+    has_valid_args = 1;
+  }
+#endif
+
   if(!has_valid_args) {
     cerr << "Unknown or invalid --" << arg.c_str() << "\n" << flush;
     cerr << "Exiting..." << "\n" << flush;
@@ -410,11 +489,14 @@ int ExitProgram(int rv, char *exit_message)
   if(!debug_message.is_null()) DEBUG_m(debug_message.c_str(), debug_level);
 
   if(debug_mode) {
+#ifdef __ENABLE_SMART_CARD__
+    cerr << "Smart card: " << sc.err_string << "\n" << flush;
+#endif
     char err[1024];
     memset(err, 0, sizeof(err));
     ERR_load_crypto_strings();
     ERR_error_string(ERR_get_error(), err);
-    std::cerr << err << "\n";
+    cerr << "Openssl " << err << "\n" << flush;
   }
 
   if(!exit_message) {
@@ -561,6 +643,29 @@ int main(int argc, char **argv)
       cout << "\n" << flush;
     }
   }
+#ifdef __ENABLE_SMART_CARD__
+  else if(use_smartcard_cert) {
+    if(smartcard_cert_username.is_null()) {
+      cerr << "ERROR: --smartcard-cert requires --smartcard-username" << "\n" << flush;
+      return ExitProgram(1);
+    }
+    cerr << "Using private smart card cert for decryption" << "\n" << flush;
+    if(debug_mode) sc.verbose_mode = 1;
+    gxString pin_buf;
+    if(sc.pin[0] == 0) {
+      cout << "Smart card PIN: " << flush;
+      if(!consoleGetString(pin_buf, 1)) {
+	pin_buf.Clear(1);
+	cout << "\n" << flush;
+	cerr << "Invalid entry!" << "\n" << flush;
+	return ExitProgram(1);
+      }
+      sc.SetPin(pin_buf.c_str());
+      pin_buf.Clear(1);
+      cout << "\n" << flush;
+    }
+  }
+#endif
   else if(use_password) {
     if(password.is_null()) {
       cout << "Password: " << flush;
@@ -675,13 +780,13 @@ int main(int argc, char **argv)
 				       rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len,
 				       RSA_padding, passphrase);
 	  if(rv != RSA_NO_ERROR) {
-	    cerr << "RSA private key decrypt failed " << AES_err_string(rv) << "\n" << flush;
+	    cerr << "RSA private key decrypt failed " << RSA_err_string(rv) << "\n" << flush;
 	    found_key = 0;
 	    err = 1;
 	    break;
 	  }
 	  found_key = 1;
-	  cerr << "RSA key decryption authorized for user " << list_ptr->data.username.c_str() << "\n" << flush; 
+	  if(clientcfg->verbose_mode) cerr << "RSA key decryption authorized for user " << list_ptr->data.username.c_str() << "\n" << flush; 
 	  memmove(SALT, rsa_decrypted_message, AES_MAX_SALT_LEN);
 	  aes_file_decrypt_secret.Clear(1);
 	  aes_file_decrypt_secret.Cat(rsa_decrypted_message+AES_MAX_SALT_LEN, (decrypted_data_len-AES_MAX_SALT_LEN));
@@ -699,13 +804,13 @@ int main(int argc, char **argv)
 	  
 	  if(debug_mode && debug_level == 5) { // START debug code
 	    unsigned i;
-	    gxString HMAC1 = "HMAC GEN: ";
-	    gxString HMAC2 = "HMAC PTR: ";
+	    gxString HMAC1 = "RSA HMAC GEN: ";
+	    gxString HMAC2 = "RSA HMAC PTR: ";
 	    for(i = 0; i < sizeof(hash); ++i) { HMAC1 << hex << hash[i]; } DEBUG_m(HMAC1.c_str(), 5);
 	    for(i = 0; i < sizeof(hash); ++i) { HMAC2 << hex << list_ptr->data.hmac.m_buf()[i]; } DEBUG_m(HMAC2.c_str(), 5);
 	    unsigned char sha256_hash[SHA256_DIGEST_LENGTH];
 	    SHA256(list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(), sha256_hash);
-	    gxString SHA256_str = "SHA256 CT: ";
+	    gxString SHA256_str = "SHA256 RSA CT: ";
 	    for(i = 0; i < sizeof(sha256_hash); ++i) { SHA256_str << hex << sha256_hash[i]; } DEBUG_m(SHA256_str.c_str(), 5);
 #ifdef __DEBUG_ONLY__
 	    SHA256(aes_file_decrypt_secret.m_buf(), aes_file_decrypt_secret.length(), sha256_hash);
@@ -742,6 +847,108 @@ int main(int argc, char **argv)
       }
     }
 
+#ifdef __ENABLE_SMART_CARD__
+    if(use_smartcard_cert) {
+      if(!fc.LoadStaticDataBlocks(ptr->data.c_str())) {
+	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush; ;
+	err = 1;
+        ptr = ptr->next;
+        continue;
+      }
+
+      gxListNode<StaticDataBlock> *list_ptr = fc.static_block_list.GetHead();
+      if(!list_ptr) {
+	cerr << "ERROR: No authorized smart card users found in encrypted file " << ptr->data.c_str() << "\n" << flush; ;
+	ptr = ptr->next;
+	err = 1;
+	continue;
+      }
+
+      int found_key = 0;
+      while(list_ptr) {
+	memset(rsa_decrypted_message, 0, sizeof(rsa_decrypted_message));
+	memset(hash, 0, sizeof(hash));
+	decrypted_data_len = 0;
+
+	if(debug_mode) {
+	  cerr << "Encrypted file has stored username for user " << list_ptr->data.username.c_str() << "\n" << flush;
+	}
+	
+	if(smartcard_cert_username == list_ptr->data.username.c_str()) {
+	  if(clientcfg->verbose_mode) cerr << "Found stored smart card cert for user " << list_ptr->data.username.c_str() << "\n" << flush;
+
+	  rv = SC_private_key_decrypt(&sc, list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(),
+				      rsa_decrypted_message, sizeof(rsa_decrypted_message), &decrypted_data_len);
+	  if(rv != 0) {
+	    cerr << "ERROR: Smart card private key decrypt failed for cert ID " << sc.cert_id << "\n" << flush;
+	    cerr << "ERROR: " << sc.err_string << "\n" << flush;
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
+	  found_key = 1;
+	  if(clientcfg->verbose_mode) cerr << "Smart card prviate key decryption authorized for user " << list_ptr->data.username.c_str() << "\n" << flush; 
+	  memmove(SALT, rsa_decrypted_message, AES_MAX_SALT_LEN);
+	  aes_file_decrypt_secret.Clear(1);
+	  aes_file_decrypt_secret.Cat(rsa_decrypted_message+AES_MAX_SALT_LEN, (decrypted_data_len-AES_MAX_SALT_LEN));
+
+	  rv = AES_derive_key((const unsigned char*)aes_file_decrypt_secret.m_buf(), aes_file_decrypt_secret.length(),
+			      SALT, sizeof(SALT), KEY, sizeof(KEY), IV, sizeof(IV), 1000);
+	  if(rv != AES_NO_ERROR) {
+	    cerr << "Failed to generate derived key " << AES_err_string(rv) << "\n" << flush;
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
+	  
+	  rv = AES_HMAC(KEY, sizeof(KEY), list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(), hash, sizeof(hash));
+	  
+	  if(debug_mode && debug_level == 5) { // START debug code
+	    unsigned i;
+	    gxString HMAC1 = "SC HMAC GEN: ";
+	    gxString HMAC2 = "SC HMAC PTR: ";
+	    for(i = 0; i < sizeof(hash); ++i) { HMAC1 << hex << hash[i]; } DEBUG_m(HMAC1.c_str(), 5);
+	    for(i = 0; i < sizeof(hash); ++i) { HMAC2 << hex << list_ptr->data.hmac.m_buf()[i]; } DEBUG_m(HMAC2.c_str(), 5);
+	    unsigned char sha256_hash[SHA256_DIGEST_LENGTH];
+	    SHA256(list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(), sha256_hash);
+	    gxString SHA256_str = "SHA256 SC CT: ";
+	    for(i = 0; i < sizeof(sha256_hash); ++i) { SHA256_str << hex << sha256_hash[i]; } DEBUG_m(SHA256_str.c_str(), 5);
+#ifdef __DEBUG_ONLY__
+	    SHA256(aes_file_decrypt_secret.m_buf(), aes_file_decrypt_secret.length(), sha256_hash);
+	    SHA256_str << clear << "SHA256 PW: ";
+	    for(i = 0; i < sizeof(sha256_hash); ++i) { SHA256_str << hex << sha256_hash[i]; } DEBUG_m(SHA256_str.c_str(), 5);
+	    
+	    gxString RSACIPHERTEXT = "RSACIPHERTEXT: ";
+	    for(i = 0; i < list_ptr->data.rsa_ciphertext.length(); ++i) { RSACIPHERTEXT << hex << list_ptr->data.rsa_ciphertext.m_buf()[i]; }
+	    DEBUG_m(RSACIPHERTEXT.c_str(), 5);
+#endif
+	  } // END debug code
+	  
+	  if(rv != AES_NO_ERROR) {
+	    cerr << "ERROR: Failed to generate HMAC for smart card ciphertext " << AES_err_string(rv) << "\n" << flush;
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
+	  if(memcmp(hash, list_ptr->data.hmac.m_buf(), sizeof(hash)) != 0) {
+	    cerr << "ERROR: Message authentication failed bad HMAC for smart card ciphertext" << "\n" << flush;
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
+	  break;
+	}
+	list_ptr = list_ptr->next;
+      }
+      if(!found_key) {
+	cerr << "ERROR: Smart card for user " << rsa_key_username.c_str() << " does not have access to decrypt file " << ptr->data.c_str() << "\n" << flush;
+	err = 1;
+	ptr = ptr->next;
+	continue;
+      }
+    }
+#endif
+    
     // List the file names and return
     if(list_file_names) {
       rv = fc.DecryptOnlyTheFileName(ptr->data.c_str(), aes_file_decrypt_secret, version, sbuf);

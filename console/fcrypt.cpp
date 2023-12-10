@@ -115,12 +115,14 @@ void DisplayVersion()
        << clientcfg->copyright_dates.c_str() << "\n" << flush;
   cout << "Produced by: " << clientcfg->produced_by << "\n" << flush;
   cout << clientcfg->default_url.c_str() << "\n" << flush;
-  if(debug_mode) {
-    cout << "\n" << flush;
-    cout << "Encryption engine: Openssl" << "\n" << flush;
-    cout << "Version string: " << OPENSSL_VERSION_TEXT << "\n" << flush;
-    cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << "\n" << flush;
-  }
+  cout << "\n" << flush;
+  cout << "Encryption engine: Openssl" << "\n" << flush;
+  cout << "Version string: " << OPENSSL_VERSION_TEXT << "\n" << flush;
+  cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << "\n" << flush;
+#ifdef __ENABLE_SMART_CARD__
+  cout << "\n" << flush;
+  cout << "Smart card enabled for " << SC_get_default_engine_ID() << "\n" << flush;
+#endif
 }
 
 void HelpMessage() 
@@ -159,15 +161,14 @@ void HelpMessage()
   cout << "          --version (Display program version number)" << "\n" << flush;
 #ifdef __ENABLE_SMART_CARD__
   cout << "\n" << flush;
-  cout << "          --add-smartcard-cert (Add access to encrypted file for a smartcard)" << "\n" << flush;
-  cout << "          --smartcard-username=name (Assign a name to smartcard cert)" << "\n" << flush;
-  cout << "          --smartcard-cert-id=" << SC_get_default_cert_id() << " (Set the ID number for the smartcard cert)" << "\n" << flush;
-  cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smartcard engine path)" << "\n" << flush;
-  cout << "          --smartcard-provider=" << SC_get_default_modulePath() << " (Set the smartcard provider)" << "\n" << flush;
+  cout << "          --add-smartcard-cert (Add access to encrypted file for a smart card)" << "\n" << flush;
+  cout << "          --smartcard-username=name (Assign a name to smart card cert)" << "\n" << flush;
+  cout << "          --smartcard-cert-id=" << SC_get_default_cert_id() << " (Set the ID number for the smart card cert)" << "\n" << flush;
+  cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smart card engine path)" << "\n" << flush;
+  cout << "          --smartcard-provider=" << SC_get_default_modulePath() << " (Set the smart card provider)" << "\n" << flush;
   cout << "\n" << flush;
   cout << "          --add-smartcard-cert-file (Add access to an encrypted file for another users exported smart card cert)" << "\n" << flush;
   cout << "          --add-smartcard-cert-file input arg must be a file name" << "\n" << flush;
-
 #endif // __ENABLE_SMART_CARD__
 
   cout << "\n"; // End of list
@@ -561,13 +562,13 @@ int ExitProgram(int rv, char *exit_message)
 
   if(debug_mode) {
 #ifdef __ENABLE_SMART_CARD__
-    cerr << sc.err_string << "\n" << flush;
+    cerr << "Smart card: " << sc.err_string << "\n" << flush;
 #endif
     char err[1024];
     memset(err, 0, sizeof(err));
     ERR_load_crypto_strings();
     ERR_error_string(ERR_get_error(), err);
-    cerr << err << "\n" << flush;
+    cerr << "Openssl " << err << "\n" << flush;
   }
   
   if(!exit_message) {
