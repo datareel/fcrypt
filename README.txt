@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-This source code is used to build the fcrypt and fecrypt utilities
+This source code is used to build the fcrypt and fdecrypt utilities
 that are used to encrypt existing files using the AES CBC 256 bit
 encryption algorithm based on the OpenSSL implementation.
 
@@ -33,11 +33,11 @@ $ git clone https://github.com/datareel/fcrypt.git
 $ cd fcrypt/console/linux
 $ make
 
-To run a simple test of the utilites:
+To run a simple test of the utilities:
 
 $ ./fcrypt testfile.txt
 
-The above command will encrypt the input file and creates a .enc file with the same file name.
+The above command will encrypt the input file and create a .enc file with the same file name.
 
 To decrypt the file:
 
@@ -83,7 +83,7 @@ Add your RSA key:
 
 > ./fcrypt --key=${HOME}/.keys/master.key --add-rsa-key=${HOME}/.keys/public.pem --rsa-key-username=testuser testfile.enc
 
-Decrypt the file using your private key that is passpharse protected
+Decrypt the file using your private key that is passphrase protected
 and ensure you private key is never shared with anyone:
 
 > ./fdecrypt --rsa-key=${HOME}/.keys/private.pem --rsa-key-username=testuser testfile.enc
@@ -112,18 +112,18 @@ Decrypt the file using your SSH-RSA private key:
 Have your users that need access to the encrypted file give you a copy
 of their public ~/.ssh/id_rsa.pub SSH-RSA key.
 
-Once you have a copy of all the public RSA keys that need access the
-encrypt file add each key. After all the user are added you can remove
+Once you have a copy of all the public RSA keys that need access to the
+encrypted file add each key. After all the user are added you can remove
 the file encrytion key:
 
 > rm -fv ${HOME}/.keys/temp.key
 
 
 All users will only be able to decrypt the file using their SSH-RSA
-prviate key. All user should ensure their private key is passphrase
+private key. All user should ensure their private key is passphrase
 protected and never shared with anyone.  
 
-For users that do not have passphare protected keys a passpharse can be
+For users that do not have passphrase protected keys a passphrase can be
 added with the following command:
 
 > ssh-keygen -p -f ~/.ssh/id_rsa
@@ -145,7 +145,7 @@ Make sure your smart card is in the card reader and you know the ID
 number for the cert you are using. You can list the smart card objects
 with the 'pkcs11-tool --list-objects' command. 
 
-Add your smart cart cert to the encrypted file:
+Add your smart card cert to the encrypted file:
 
 > ./fcrypt --key=${HOME}/.keys/temp.key --add-smartcard-cert --smartcard-cert-id=01 --smartcard-username=testuser testfile.enc
 
@@ -153,14 +153,14 @@ Decrypt the file using your smart card:
 
 > ./fdecrypt --smartcard-cert --smartcard-cert-id=01 --smartcard-username=testuser testfile.enc
 
-You be prompted to enter your smart card pin.
+You will be prompted to enter your smart card pin.
 
 Have your users that need access to the encrypted file add their smart
 card cert. 
 
 Once you have all the users added that need access to the encrypt file
 add each key. After all the user are added you can remove 
-the file encrytion key:
+the file encryption key:
 
 > rm -fv ${HOME}/.keys/temp.key
 
@@ -191,13 +191,13 @@ Decrypt the file using your smart card:
 
 > ./fdecrypt --smartcard-cert --smartcard-cert-id=01 --smartcard-username=testuser testfile.enc
 
-You be prompted to enter your smart card pin.
+You will be prompted to enter your smart card pin.
 
 Add all your users that need access to the encrypted file.
 
 Once you have all the users added that need access to the encrypt file
 add each key. After all the user are added you can remove 
-the file encrytion key:
+the file encryption key:
 
 > rm -fv ${HOME}/.keys/temp.key
 
