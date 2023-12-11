@@ -22,7 +22,8 @@ FEATURES:
 	AES 256 bit symmetric file encryption
 	File encryption using a password or key file
 	Multi user access to encrypted files using RSA keys
-
+	Multi user access to encrypted files using a smart card
+	
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR LINUX
 ---------------------------------------------------
 $ mkdir -pv ${HOME}/git
@@ -42,7 +43,6 @@ To decrypt the file:
 $ ./fdecrypt testfile.enc 
 
 This will decrypt the file creating the unencrypted file using the original file name. 
-
 
 USING A MASTER KEY FOR AES SYMMETRIC FILE ENCRYPTION
 ----------------------------------------------------
@@ -87,7 +87,7 @@ Add your RSA key:
 Decrypt the file using your private key that is passpharse protected
 and ensure you private key is never shared with anyone:
 
-> ./fdecrypt --rsa-key=${HOME}/.keys/private.pem testfile.enc
+> ./fdecrypt --rsa-key=${HOME}/.keys/private.pem --rsa-key-username=testuser testfile.enc
 
 USING SSH-RSA FOR MULTI USER ACCESS TO THE ENCRYPTED FILE
 ---------------------------------------------------------
@@ -108,7 +108,7 @@ Add your SSH-RSA key to the encrypted file:
 
 Decrypt the file using your SSH-RSA private key:
 
-> ./fdecrypt --rsa-key=${HOME}/.ssh/id_rsa testfile.enc
+> ./fdecrypt --rsa-key=${HOME}/.ssh/id_rsa --rsa-key-username=testuser testfile.enc
 
 Have your users that need access to the encrypted file give you a copy
 of their public ~/.ssh/id_rsa.pub SSH-RSA key.
@@ -130,3 +130,78 @@ added with the following command:
 > ssh-keygen -p -f ~/.ssh/id_rsa
 
 
+USING A SMART CARD FOR MULTI USER ACCESS TO THE ENCRYPTED FILE
+--------------------------------------------------------------
+Create a temp key to encrypt the file
+
+> mkdir ${HOME}/.keys
+> chmod 700 ${HOME}/.keys
+> dd if=/dev/urandom of=${HOME}/.keys/temp.key bs=1 count=128
+> chmod 600 ${HOME}/.keys/temp.key
+
+Encrypt a file:
+
+> ./fcrypt --key=${HOME}/.keys/temp.key testfile.txt
+
+Make sure your smart card is in the card reader and you know the ID
+number for the cert you are using. You can list the smart card objects
+with the 'pkcs11-tool --list-objects' command. 
+
+Add your smart cart cert to the encrypted file:
+
+> ./fcrypt --key=${HOME}/.keys/temp.key --add-smartcard-cert --smartcard-cert-id=01 --smartcard-username=testuser testfile.enc
+
+Decrypt the file using your smart card:
+
+> ./fdecrypt --smartcard-cert --smartcard-cert-id=01 --smartcard-username=testuser testfile.enc
+
+You be prompted to enter your smart card pin.
+
+Have your users that need access to the encrypted file add their smart
+card cert. 
+
+Once you have all the users added that need access to the encrypt file
+add each key. After all the user are added you can remove 
+the file encrytion key:
+
+> rm -fv ${HOME}/.keys/temp.key
+
+All users will only be able to decrypt the file using their smart
+card.
+
+USING A SMART CARD EXPORTED CERT file FOR MULTI USER ACCESS TO THE ENCRYPTED FILE
+---------------------------------------------------------------------------------
+Create a temp key to encrypt the file
+
+> mkdir ${HOME}/.keys
+> chmod 700 ${HOME}/.keys
+> dd if=/dev/urandom of=${HOME}/.keys/temp.key bs=1 count=128
+> chmod 600 ${HOME}/.keys/temp.key
+
+Encrypt a file:
+
+> ./fcrypt --key=${HOME}/.keys/temp.key testfile.txt
+
+For all users that need access each user will need to use the p11tool
+to export a PEM formated X509 cert that contains the public key. 
+
+Add your cert file to the encrypted file:
+
+> ./fcrypt --key=${HOME}/.keys/temp.key --add-smartcard-cert-file=/usr/local/sc_certs/testuser_cert.pem  --smartcard-username=testuser testfile.enc
+
+Decrypt the file using your smart card:
+
+> ./fdecrypt --smartcard-cert --smartcard-cert-id=01 --smartcard-username=testuser testfile.enc
+
+You be prompted to enter your smart card pin.
+
+Add all your users that need access to the encrypted file.
+
+Once you have all the users added that need access to the encrypt file
+add each key. After all the user are added you can remove 
+the file encrytion key:
+
+> rm -fv ${HOME}/.keys/temp.key
+
+All users will only be able to decrypt the file using their smart
+card.
