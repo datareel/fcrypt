@@ -46,7 +46,6 @@ This will decrypt the file creating the unencrypted file using the original file
 
 USING A MASTER KEY FOR AES SYMMETRIC FILE ENCRYPTION
 ----------------------------------------------------
-
 Create a master file encryption key:
 
 $ dd if=/dev/urandom of=master.key bs=1 count=128
@@ -62,7 +61,6 @@ Decrypt the file:
 
 USING RSA KEYS FOR MULTI USER ACCESS TO THE ENCRYPTED FILE
 ----------------------------------------------------------
-
 Use openssl to make some test keys:
 
 > mkdir ${HOME}/.keys
@@ -128,7 +126,6 @@ For users that do not have passphare protected keys a passpharse can be
 added with the following command:
 
 > ssh-keygen -p -f ~/.ssh/id_rsa
-
 
 USING A SMART CARD FOR MULTI USER ACCESS TO THE ENCRYPTED FILE
 --------------------------------------------------------------
