@@ -23,6 +23,7 @@ FEATURES:
 	File encryption using a password or key file
 	Multi user access to encrypted files using RSA keys
 	Multi user access to encrypted files using a smart card
+	Supports DOD CAC smart cards
 	
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR LINUX
 ---------------------------------------------------
