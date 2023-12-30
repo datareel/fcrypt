@@ -7,7 +7,7 @@
 // Produced By: DataReel Software Development Team
 // Date Last Modified: 03/21/2004
 // Date Last Modified: 12/06/2023
-// Copyright (c) 2001-2023 DataReel Software Development
+// Copyright (c) 2001-2024 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
 // ----------------------------------------------------------- // 

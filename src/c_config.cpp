@@ -7,7 +7,7 @@
 // Produced By: DataReel Software Development Team
 // File Creation Date: 09/15/2003
 // Date Last Modified: 12/06/2023
-// Copyright (c) 2001-2023 DataReel Software Development
+// Copyright (c) 2001-2024 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
 // ----------------------------------------------------------- // 
@@ -62,8 +62,8 @@ void ClientConfig::reset_all()
   program_name = "File crypt/decrypt utility";
   produced_by = "Datareel Open Source";
   copyright = "Copyright (c) Datareel Open Source"; 
-  copyright_dates = "2003-2023";
-  release_date = "11/16/2023";
+  copyright_dates = "2003-2024";
+  release_date = "12/28/2023";
   default_url = "https://datareel.com";
   support_email = "datareel@datareel.com";
 

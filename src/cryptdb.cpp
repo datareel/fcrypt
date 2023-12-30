@@ -7,7 +7,7 @@
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
 // Date Last Modified: 12/10/2023
-// Copyright (c) 2001-2023 DataReel Software Development
+// Copyright (c) 2001-2024 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
 // ----------------------------------------------------------- // 
@@ -380,7 +380,7 @@ int FCryptCache::OpenOutputFile()
     crypt_mode = mode;
   }
   
-  rv =  AES_Encrypt(crypt_buf, &len, (char *)cryptdb_secret.m_buf(), cryptdb_secret.length(), crypt_mode, key_iterations);
+  rv =  AES_Encrypt(crypt_buf, &len, cryptdb_secret.m_buf(), cryptdb_secret.length(), crypt_mode, key_iterations);
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = rv;
     err << clear << "File header crypt error " << AES_err_string(rv);
@@ -561,7 +561,7 @@ int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const M
   }
   unsigned len = infile.df_gcount();
 
-  rv =  AES_Decrypt(crypt_buf, &len, (char *)cryptdb_secret.m_buf(), cryptdb_secret.length(), mode, key_iterations);
+  rv =  AES_Decrypt(crypt_buf, &len, cryptdb_secret.m_buf(), cryptdb_secret.length(), mode, key_iterations);
   if(rv != AES_NO_ERROR) {
     ERROR_LEVEL = -1;
     err << clear << "Decrypt file header error " << " " << AES_err_string(rv);
@@ -983,7 +983,7 @@ int FCryptCache::WriteStaticDataAreaToFile(const char *fname)
   StaticDataHeader sd_header_read;
   sd_header_read.FormatHeader();
 
-  unsigned num_bytes_read = fread((const void*)&sd_header_read, sizeof(unsigned char), sizeof(sd_header_read), fp);
+  unsigned num_bytes_read = fread((void*)&sd_header_read, sizeof(unsigned char), sizeof(sd_header_read), fp);
 
   if(!TestStaticDataHeader(sd_header_read)) {
     fclose(fp);
@@ -1058,7 +1058,7 @@ int FCryptCache::LoadStaticDataBlocks(const char *fname)
     StaticDataHeader sd_header_read;
     sd_header_read.FormatHeader();
 
-  unsigned num_bytes_read = fread((const void*)&sd_header_read, sizeof(unsigned char), sizeof(sd_header_read), fp);
+  unsigned num_bytes_read = fread((void*)&sd_header_read, sizeof(unsigned char), sizeof(sd_header_read), fp);
 
   if(!TestStaticDataHeader(sd_header_read)) {
     fclose(fp);
