@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 09/15/2003
-// Date Last Modified: 12/06/2023
+// Date Last Modified: 01/09/2024
 // Copyright (c) 2001-2024 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -63,7 +63,7 @@ void ClientConfig::reset_all()
   produced_by = "Datareel Open Source";
   copyright = "Copyright (c) Datareel Open Source"; 
   copyright_dates = "2003-2024";
-  release_date = "12/28/2023";
+  release_date = "01/09/2024";
   default_url = "https://datareel.com";
   support_email = "datareel@datareel.com";
 

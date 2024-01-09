@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 12/10/2023
+// Date Last Modified: 01/09/2024
 // Copyright (c) 2001-2024 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -798,18 +798,7 @@ int main(int argc, char **argv)
 	  cerr << "Encrypted file has stored username for user " << list_ptr->data.username.c_str() << "\n" << flush;
 	}
 	
-	if(rsa_key_username == list_ptr->data.username.c_str()) {
-	  if(list_ptr->data.block_header.block_type != 1) {
-	    if(list_ptr->data.block_header.block_type == 2) {
-	      cerr << "ERROR: User " << list_ptr->data.username.c_str() << " access type is smart card" << "\n" << flush;
-	    }
-	    else {
-	      cerr << "ERROR: User " << list_ptr->data.username.c_str() << " access type is not RSA key" << "\n" << flush;
-	    }
-	    found_key = 0;
-	    err = 1;
-	    break;
-	  }
+	if((rsa_key_username == list_ptr->data.username.c_str()) && (list_ptr->data.block_header.block_type == 1)) {
 	  if(clientcfg->verbose_mode) cerr << "Found stored RSA key for user " << list_ptr->data.username.c_str() << "\n" << flush;
 	  char *passphrase = 0;
 	  if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
@@ -912,18 +901,7 @@ int main(int argc, char **argv)
 	  cerr << "Encrypted file has stored username for user " << list_ptr->data.username.c_str() << "\n" << flush;
 	}
 	
-	if(smartcard_cert_username == list_ptr->data.username.c_str()) {
-	  if(list_ptr->data.block_header.block_type != 2) {
-	    if(list_ptr->data.block_header.block_type == 1) {
-	      cerr << "ERROR: User " << list_ptr->data.username.c_str() << " access type is RSA key" << "\n" << flush;
-	    }
-	    else {
-	      cerr << "ERROR: User " << list_ptr->data.username.c_str() << " access type is not smart card" << "\n" << flush;
-	    }
-	    found_key = 0;
-	    err = 1;
-	    break;
-	  }
+	if((smartcard_cert_username == list_ptr->data.username.c_str()) && (list_ptr->data.block_header.block_type == 2)) {
 	  if(clientcfg->verbose_mode) cerr << "Found stored smart card cert for user " << list_ptr->data.username.c_str() << "\n" << flush;
 
 	  rv = SC_private_key_decrypt(&sc, list_ptr->data.rsa_ciphertext.m_buf(), list_ptr->data.rsa_ciphertext.length(),

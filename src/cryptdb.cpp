@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 06/15/2003
-// Date Last Modified: 12/10/2023
+// Date Last Modified: 01/09/2023
 // Copyright (c) 2001-2024 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -1223,7 +1223,7 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
 
   while(ptr) {
     sbuf << clear << rsa_key_username;
-    if(ptr->data.username == sbuf) {
+    if((ptr->data.username == sbuf)  && (ptr->data.block_header.block_type == 1)) {
       ERROR_LEVEL = 1;
       err << clear << "An RSA key for username " << ptr->data.username.c_str() << " already exists";
       return 0;
@@ -1330,7 +1330,7 @@ int FCryptCache::AddSmartCardCertToStaticArea(SmartCardOB *sc, int use_cert_file
 
   while(ptr) {
     sbuf << clear << smartcard_cert_username;
-    if(ptr->data.username == sbuf) {
+    if((ptr->data.username == sbuf) && (ptr->data.block_header.block_type == 2)) {
       ERROR_LEVEL = 1;
       err << clear << "A smart card cert for username " << ptr->data.username.c_str() << " already exists";
       return 0;
