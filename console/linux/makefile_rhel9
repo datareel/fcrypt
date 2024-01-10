@@ -1,0 +1,11 @@
+all:
+	make FINAL=1 RHEL=9 -f fcrypt.mak all
+	make FINAL=1 RHEL=9 -f fdecrypt.mak all
+
+install:
+	make FINAL=1 RHEL=9 -f fcrypt.mak install
+	make FINAL=1 RHEL=9 -f fdecrypt.mak install
+
+clean:
+	make FINAL=1 RHEL=9 -f fcrypt.mak clean
+	make FINAL=1 RHEL=9 -f fdecrypt.mak clean
