@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 12/08/2023
-// Date Last Modified: 12/10/2023
+// Date Last Modified: 07/17/2025
 // Copyright (c) 2001-2024 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -36,10 +36,13 @@ Smartcard encryption and decryption routines.
 
 #include <smart_card.h>
 
+// In RHEL 10 the openssl-pkcs11 package is replaced with pkcs11-provider
 #if defined (__RHEL8__)
 const char *SC_default_enginePath = "/usr/lib64/engines-1.1/pkcs11.so";
 #elif defined (__RHEL9__)
 const char *SC_default_enginePath = "/usr/lib64/engines-3/pkcs11.so";
+#elif defined (__RHEL10__)
+const char *SC_default_enginePath = "/usr/lib64/ossl-modules/pkcs11.so";
 #elif defined (__RHEL7__)
 const char *SC_default_enginePath = "/usr/lib64/openssl/engines/pkcs11.so";
 #elif defined (__RHEL6__)
