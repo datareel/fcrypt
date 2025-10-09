@@ -3,86 +3,23 @@
 #######################
 # --------------------------------------------------------------- 
 # Makefile Contents: Makefile for command line builds
-# C/C++ Compiler Used: MSVC 6.3 SP5 and Visual C++ .NET
+# C/C++ Compiler Used: Microsoft Visual Studio 2026 Insiders
 # --------------------------------------------------------------- 
 # Define a name for the executable
 PROJECT = fcrypt
 
-# Setup my path to the DataReel library
-GCODE_LIB_DIR = ../../../../3plibs/datareel
-
-# Setup path to ZLIB
-ZCODE_LIB_DIR = ../../../../3plibs/zlib
-
-# Setup path to AES library
-AES_LIB_DIR = ../../../../3plibs/aes
-
-GCODE_INCLUDE_PATH = $(GCODE_LIB_DIR)/include
-ZCODE_INCLUDE_PATH = $(ZCODE_LIB_DIR)/include
-AES_INCLUDE_PATH = $(AES_LIB_DIR)/include
-OBJ_EXT = .obj
-EXE_EXT = .exe 
-PATHSEP = /
-
-ADD_INC_PATHS = -I$(GCODE_INCLUDE_PATH) -I$(ZCODE_INCLUDE_PATH) \
--I$(AES_INCLUDE_PATH) -I../include -I../../include
-
-64BIT_DEFMACS = -D__64_BIT_DATABASE_ENGINE__
-DEBUG_DEFMACS = -D__MSVC_DEBUG__
-ANSI_DEFMACS = -D__USE_ANSI_CPP__
-CPP_DEFMACS = -D__USE_CPP_IOSTREAM__
-DISPLAY_DEFMACS = -D__CONSOLE__
-FILESYS_DEFMACS = -D__NTFS__
-UNICODE_DEMACS = -D__HAS_UNICODE__
-
-AES_DEFMACS =
-ZLIB_DEFMACS = 
-#COMPRESS_DEFMACS = -D__COMPRESSION_OFF__
-#DEMO_DEFAMCS = -D__DEMO_VERSION__
-
-# Testing only
-#TEST_DEFMACS = -D__COMPILE_DATE_TIME__
-
-# Define macros specific to the gxcode library
-DEFMACS = /D__WIN32__ /D__X86__ /D__MSVC__ /D__HAS__BEGINTHREADEX__ \
-$(64BIT_DEFMACS) $(ANSI_DEFMACS) $(BTREE_DEFMACS) $(CPP_DEFMACS) \
-$(DEBUG_DEFMACS) $(DEVCACHE_DEFMACS) $(DISPLAY_DEFMACS) \
-$(FILESYS_DEFMACS) $(TESTCODE_DEFMACS) $(PS_DEFMACS) $(HTM_DEFMACS) \
-$(TXT_DEFMACS) $(COMPILER_DEFMACS) $(DATABASE_DEFMACS) \
-$(UNICODE_DEMACS) $(DLL_DEFMACS) $(TEST_DEFMACS) $(DEMO_DEFAMCS) \
-$(COMPRESS_DEFMACS) $(AES_DEFMACS) $(ZLIB_DEFMACS)
-
-# Define macros for compiler and linker
-CC = cl
-CPP = cl
-LINKER = link
-
-# Define compiler and linker flags macros
-DEBUG_FLAGS = /Zi /MDd /Zm1000
-RELEASE_FLAGS = /MD
-#BUILD_FLAGS = $(DEBUG_FLAGS)
-BUILD_FLAGS = $(RELEASE_FLAGS)
-COMPILE_FLAGS = /W3 /GX /GR $(BUILD_FLAGS) $(ADD_INC_PATHS) $(DEFMACS)
-COMPILE_ONLY = /c
-LINKER_FLAGS = 
-
-# Additional libraries
-LIBRARIES = wsock32.lib setargv.obj # Expands wildcard characters
+include msvc.env
 
 # Set the project dependencies  
 # ===============================================================
-!include $(AES_LIB_DIR)/env/aesdeps.mak
-!include $(ZCODE_LIB_DIR)/env/zlibdeps.mak
-!include $(GCODE_LIB_DIR)/env/glibdeps.mak
+!include $(DATAREEL_DIR)/env/glibdeps.mak
 # ===============================================================
 
 # Compile the files and build the executable
 # ===============================================================
 all:	$(PROJECT)$(EXE_EXT)
 
-!include $(AES_LIB_DIR)/env/aesobjs.mak
-!include $(ZCODE_LIB_DIR)/env/zlibobjs.mak
-!include $(GCODE_LIB_DIR)/env/glibobjs.mak
+!include $(DATAREEL_DIR)/env/glibobjs.mak
 !include ../project.mak
 
 $(PROJECT)$(EXE_EXT):	$(OBJECTS) 

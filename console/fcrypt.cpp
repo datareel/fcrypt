@@ -6,8 +6,8 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 07/21/2003
-// Date Last Modified: 01/10/2024
-// Copyright (c) 2001-2024 DataReel Software Development
+// Date Last Modified: 10/09/2025
+// Copyright (c) 2001-2025 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
 // ----------------------------------------------------------- // 
@@ -52,7 +52,10 @@ using namespace std; // Use unqualified names for Standard C++ library
 #include "bstreei.h"
 #include "gxs_b64.h"
 
+#if defined (__UNIX__)
 #include <unistd.h>
+#endif
+
 #include <fcntl.h>
 
 // Globals
