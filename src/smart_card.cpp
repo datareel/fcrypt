@@ -48,7 +48,7 @@ const char *SC_default_enginePath = "/usr/lib64/openssl/engines/pkcs11.so";
 #elif defined (__RHEL6__)
 const char *SC_default_enginePath = "/usr/lib64/openssl/engines/pkcs11.so";
 #elif defined (__WIN32__)
-const char *SC_default_enginePath = "pkcs11prov.dll";
+const char *SC_default_enginePath = "pkcs11.dll";
 #else
 const char *SC_default_enginePath = "/usr/lib64/engines/pkcs11.so";
 #endif
