@@ -6,8 +6,8 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 12/08/2023
-// Date Last Modified: 07/17/2025
-// Copyright (c) 2001-2024 DataReel Software Development
+// Date Last Modified: 10/10/2025
+// Copyright (c) 2001-2025 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
 // ----------------------------------------------------------- // 
@@ -47,11 +47,20 @@ const char *SC_default_enginePath = "/usr/lib64/ossl-modules/pkcs11.so";
 const char *SC_default_enginePath = "/usr/lib64/openssl/engines/pkcs11.so";
 #elif defined (__RHEL6__)
 const char *SC_default_enginePath = "/usr/lib64/openssl/engines/pkcs11.so";
+#elif defined (__WIN32__)
+const char *SC_default_enginePath = "pkcs11prov.dll";
 #else
 const char *SC_default_enginePath = "/usr/lib64/engines/pkcs11.so";
 #endif
 
+#if defined (__WIN32__)
+const char *SC_default_modulePath = "C:\\Program Files\\OpenSC Project\\OpenSC\\pkcs11\\opensc-pkcs11.dll";
+#elif defined (__LINUX__)
 const char *SC_default_modulePath = "/usr/lib64/opensc-pkcs11.so";
+#else
+const char *SC_default_modulePath = "/usr/lib64/opensc-pkcs11.so";
+#endif
+
 const char *SC_default_engine_ID = "pkcs11";
 const char *SC_default_error_message = "No smart card object errors reported";
 const char *SC_default_cert_id = "01";

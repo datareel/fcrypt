@@ -57,6 +57,12 @@ int main(int argc, char *argv[])
     std::cout.write(sc.cert_file_buf, sc.cert_file_buf_len);
   }
 
+  // For Windows
+  // For the pkcs11 engine module you will need to download the proveriders package from:
+  // https://github.com/OpenSC/libp11
+  // Set the install path here
+  // sc.SetEnginePath("pkcs11prov.dll");
+
   // For RHEL 9
   // sc.SetEnginePath("/usr/lib64/engines-3/pkcs11.so");
   

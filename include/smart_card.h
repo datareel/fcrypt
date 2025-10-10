@@ -6,8 +6,8 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 12/08/2023
-// Date Last Modified: 12/10/2023
-// Copyright (c) 2001-2024 DataReel Software Development
+// Date Last Modified: 10/10/2025
+// Copyright (c) 2001-2025 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
 // ----------------------------------------------------------- // 
@@ -51,7 +51,7 @@ Smartcard encryption and decryption routines.
 const unsigned SC_max_pin_size = 32;
 const unsigned SC_max_cert_id_size = 32;
 const unsigned SC_max_engine_id_size = 32;
-const unsigned SC_max_path_size = 64;
+const unsigned SC_max_path_size = 255;
 const unsigned SC_err_string_size = 255;
 const int SC_RSA_padding = RSA_PKCS1_PADDING;
 const unsigned SC_max_cert_file_len = 8192;

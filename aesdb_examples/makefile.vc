@@ -1,0 +1,16 @@
+all:
+	nmake -f aesdb_single_file_buffer_crypt_test.mak.vc all
+	nmake -f aesdb_whole_file_crypt_test.mak.vc all
+	nmake -f aesdb_file_encrypt.mak.vc all
+	nmake -f aesdb_file_decrypt.mak.vc all
+	nmake -f rsadb_single_file_buffer_crypt_test.mak.vc all
+	nmake -f smartcard_encrypt_test.mak.vc all
+
+clean:
+	nmake -f aesdb_single_file_buffer_crypt_test.mak.vc clean
+	nmake -f aesdb_whole_file_crypt_test.mak.vc clean
+	nmake -f aesdb_file_encrypt.mak.vc clean
+	nmake -f aesdb_file_decrypt.mak.vc clean
+	nmake -f rsadb_single_file_buffer_crypt_test.mak.vc clean
+	nmake -f smartcard_encrypt_test.mak.vc clean
+

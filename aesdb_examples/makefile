@@ -7,7 +7,7 @@ all:
 	make -f smartcard_encrypt_test.mak all
 
 install:
-	make -f aesdb_single_file_buffer_crypt_test.mak instal
+	make -f aesdb_single_file_buffer_crypt_test.mak install
 	make -f aesdb_whole_file_crypt_test.mak install
 	make -f aesdb_file_encrypt.mak install
 	make -f aesdb_file_decrypt.mak install
