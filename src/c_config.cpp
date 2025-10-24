@@ -63,7 +63,7 @@ void ClientConfig::reset_all()
   produced_by = "Datareel Open Source";
   copyright = "Copyright (c) Datareel Open Source"; 
   copyright_dates = "2003-2025";
-  release_date = "07/17/2025";
+  release_date = "10/21/2025";
   default_url = "https://datareel.com";
   support_email = "datareel@datareel.com";
 

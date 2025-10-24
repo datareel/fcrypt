@@ -63,7 +63,7 @@ used in throughout the source code.
 #include <utime.h>
 #endif
 
-const float PROGRAM_VERSION_NUMBER = 2025.101; // Set the version number here
+const float PROGRAM_VERSION_NUMBER = 2025.102; // Set the version number here
 const int COMMAND_HISTORY_LEN = 255; // Buffer size for command history 
 
 #endif  // __GLOBALS_HPP__
