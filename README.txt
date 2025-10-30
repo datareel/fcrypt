@@ -1,5 +1,10 @@
 File encryption and decryption utility
 
+Relase 2025.104
+
+Supports Window 10, Windows 11, and Windows 2025 server
+Supports Red Hat Enterprise Linux 6, 7, 8, 9, and 10 
+
 This source code is used to build the fcrypt and fdecrypt utilities
 that are used to encrypt existing files using the AES CBC 256 bit
 encryption algorithm based on the OpenSSL implementation.
@@ -27,7 +32,61 @@ FEATURES:
 	
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR WINDOWS
 -----------------------------------------------------
+For Windows the current release supports Microsoft Visual Studio 2022 or 2026. 
 
+For instructions on how to install Microsoft Visual Studio 2022 please
+see the following readme file: README_VisualStudio_2022.txt 
+
+For instructions on how to install Microsoft Visual Studio 2026 please
+see the following readme file: README_VisualStudio.txt 
+
+The Windows build requires the OpenSSL library. 
+
+For instructions on how to build OpenSSL for Windows please see the
+following readme file: README_windows_openssl.txt 
+
+For instructions on how to build Windows 11 or 2025 server development
+VM please see the following readme file: README_windows_setup.txt 
+
+To build the Windows executables download the latest release or clone
+the GIT repo. In the Windows build example below this document will
+assume we placed the code on a data drive in a git directory.  
+
+On the data drive change your directory to the fcrypt build subdirectory:  
+> E:
+> cd E:\git\fcrypt\console\msvc
+
+Setup your Visual Studio environment:
+
+> msvc.bat
+
+Edit the msvc.env file to setup the path to your OpenSSL and ZLIB builds:
+
+> notepad msvc.env
+
+# Setup path to ZLIB
+ZCODE_DIR = ../../../../3plibs/zlib32-1.3.1
+
+# Setup path to OPENSSL library
+OPENSSL_DIR = ../../../../3plibs/openssl32
+
+Run nmake to build the executables:
+
+> nmake
+
+To run a simple test of the utilities:
+
+> fcrypt.exe testfile.txt
+
+The above command will encrypt the input file and create a .enc file
+with the same file name. 
+
+To decrypt the file:
+
+> fdecrypt.exe testfile.enc 
+
+This will decrypt the file creating the unencrypted file using the
+original file name.  
 
 
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR LINUX
