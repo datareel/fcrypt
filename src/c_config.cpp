@@ -62,8 +62,8 @@ void ClientConfig::reset_all()
   program_name = "File crypt/decrypt utility";
   produced_by = "Datareel Open Source";
   copyright = "Copyright (c) Datareel Open Source"; 
-  copyright_dates = "2003-2025";
-  release_date = "10/30/2025";
+  copyright_dates = "2003-2026";
+  release_date = "10/24/2026";
   default_url = "https://datareel.com";
   support_email = "datareel@datareel.com";
 
