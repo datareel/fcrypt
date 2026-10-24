@@ -19,7 +19,8 @@ To compile a program:
 Where "e:\3plibs\openssl64\lib" is the path to your 64-bit openssl
 build for Windows. 64-bit x64 is the default build. For 32-bit x86
 legacy builds use vcvars32.bat and your 32-bit openssl build, for
-example e:\3plibs\openssl32.
+example e:\3plibs\openssl32. Use only OpenSSL 3.5.x LTS builds, see
+..\README_windows_openssl.txt.
 
 For Windows smartcard testing you will need to download the OpenSC
 pkcs11 driver from: 

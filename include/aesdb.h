@@ -45,6 +45,14 @@ AES encryption routes used generate encryption certificates.
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 
+// 10/24/2026: Windows builds must use an OpenSSL 3.5.x LTS release.
+// See README_windows_openssl.txt.
+#if defined (__WIN32__)
+#if (OPENSSL_VERSION_NUMBER < 0x30500000L) || (OPENSSL_VERSION_NUMBER >= 0x30600000L)
+#error Windows builds require an OpenSSL 3.5.x LTS release, see README_windows_openssl.txt
+#endif
+#endif
+
 // Constants
 const unsigned int AES_DEF_ITERATIONS = 1000;
 const unsigned int AES_MIN_SECRET_LEN = 8;

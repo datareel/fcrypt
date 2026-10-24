@@ -86,7 +86,10 @@ see the following readme file: README_VisualStudio_2022.txt
 For instructions on how to install Microsoft Visual Studio 2026 please
 see the following readme file: README_VisualStudio.txt 
 
-The Windows build requires the OpenSSL library. 
+The Windows build requires the OpenSSL library. Use only an OpenSSL
+3.5.x LTS release, built as 64-bit x64 (and as 32-bit x86 only for
+legacy builds). The build stops with an error for any other OpenSSL
+version.
 
 For instructions on how to build OpenSSL for Windows please see the
 following readme file: README_windows_openssl.txt 
