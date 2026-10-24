@@ -180,6 +180,8 @@ void gxListB::ClearList()
 
 void gxListB::DestroyList()
 // Clear the list and destroy the node data.
+// NOTE: The data is freed as a single char with a scalar delete. Use
+// DestroyArrayList() for data allocated with new[], for example strings.
 {
   while(!IsEmpty()) {
     void *v = RemoveTail();
@@ -187,6 +189,18 @@ void gxListB::DestroyList()
     // 05/29/2002: Casting to char * to avoid undefined delete
     // warnings under Linux g++
     if(v) delete (char *)v;
+  }
+  head = tail = 0;
+}
+
+void gxListB::DestroyArrayList()
+// 10/24/2026: Clear the list and destroy node data allocated as char
+// arrays with new[], for example strings. DestroyList() frees the data
+// with a scalar delete, which does not match new[].
+{
+  while(!IsEmpty()) {
+    void *v = RemoveTail();
+    if(v) delete[] (char *)v;
   }
   head = tail = 0;
 }
@@ -219,6 +233,8 @@ void gxListB::DetachNode(gxListNodeB *n)
   if((IsEmpty()) || (!n)) return;
 
   if(head == tail) { // There is only one node in the list
+    // 10/14/2026: The list was emptied even when "n" was not its node
+    if(n != head) return;
     MakeEmpty();
   }
   else if(n == head) { // This is the head node
@@ -245,12 +261,18 @@ void gxListB::DetachNode(gxListNodeB *n)
     n->prev->next = n->next;
     n->next->prev = n->prev;
   }
+
+  // 10/14/2026: Clear the links of the detached node. They used to
+  // keep pointing into the list.
+  n->next = n->prev = 0;
 }
 
 void gxListB::MoveBefore(gxListNodeB *pos, gxListNodeB *n)
 // Move an existing node before the node residing at
 // the specified location.
 {
+  // 10/14/2026: Moving a node next to itself corrupted the links
+  if(pos == n) return;
   DetachNode(n);
   InsertBefore(pos, n);
 }
@@ -259,6 +281,8 @@ void gxListB::MoveAfter(gxListNodeB *pos, gxListNodeB *n)
 // Move an existing node after the node residing at
 // the specified location.
 {
+  // 10/14/2026: Moving a node next to itself corrupted the links
+  if(pos == n) return;
   DetachNode(n);
   InsertAfter(pos, n);
 }
@@ -270,6 +294,8 @@ void gxListB::InsertBefore(gxListNodeB *pos, gxListNodeB *n)
   // The list is empty so this will be the first node
   if(IsEmpty()) { 
     tail = head = n; // First node in the list
+    // 10/14/2026: Old links of the node were kept
+    n->next = n->prev = 0;
     return;
   }
   
@@ -301,6 +327,8 @@ void gxListB::InsertAfter(gxListNodeB *pos, gxListNodeB *n)
   // The list is empty so this will be the first node
   if(IsEmpty()) {
     tail = head = n; // First node in the list
+    // 10/14/2026: Old links of the node were kept
+    n->next = n->prev = 0;
     return;
   }
 

@@ -13,6 +13,7 @@ Supported Compilers
 Package Map 
 Example Programs 
 Documentation 
+Code Review and Fixes 
 Building
 
 OVERVIEW
@@ -242,6 +243,54 @@ DOCUMENTATION
 -------------
 All documentation is included in the docs sub directory in an HTML
 format, viewable in any Web browser. 
+
+VERSION 6.0
+-----------
+DataReel 6.0, 10/24/2026, is the first major release in many years.
+Version 5.10, tagged 5.10 in the repository, is the last version 5
+release. Version 6.0 fixes every item that the 10/14/2026 code review
+left as is: linked list array cleanup, gxConfig::Add(), stopping
+threads when a thread pool is cleared, database cache Bind() and
+ReleaseSegments(), RDBMS duplicate key lookups and BLOB fields in
+all-field keys, mixed text in the XML parser, the RSS <cloud> element,
+the glibc robust mutex problem, and all -Wall -Wextra compiler
+warnings. The shared library is built as libdatareel.so.6.0. Programs
+must be recompiled, and some interfaces changed. See
+RELEASE_NOTES_6.0.txt and docs/release_notes_6_0.html. Every change in
+the source is marked with a "10/24/2026" comment.
+
+CODE REVIEW AND FIXES
+---------------------
+On 10/14/2026 the DataReel code in this repository was reviewed and
+fixed by Claude Code, Anthropic's AI coding assistant
+(https://claude.ai/code). The review covered compiler warnings,
+AddressSanitizer and UndefinedBehaviorSanitizer runs of the example
+programs, and valgrind checks. Fixes include:
+
+ - Mismatched new[]/delete calls in UString, strutil, gxDatabase,
+   MemoryBuffer and other classes
+ - Undefined behavior in the gxINT16/32/64 byte packing, UString
+   Find/IFind, and gxConfig::ChangeConfigLine()
+ - Bounds checks in POD, gxRDBMS and gxsXML, and leaked buffers in
+   gxSocket
+ - Replaced the deprecated readdir_r() and _np robust mutex calls
+ - SSL updates for OpenSSL 3: a 2048-bit (RFC 7919 ffdhe2048) default
+   DH group, OpenSSL 3 DH parameter and RSA key interfaces, error
+   checking and cleanup on every path, and new ssl_server example
+   keys, certificate and DH parameters
+ - New gxSSL class documentation: docs/classes/socket/gxssl.htm
+ - New documentation pages for gxListB, the thread pool and thread
+   helpers, the XML parser, the RSS feed writer, the RDBMS layer, the
+   B-tree and database caches, the debug manager, ix_debug and the
+   example programs, and a modern style for all documentation pages
+ - Fixes for bugs found while writing the new pages: the RDBMS layer,
+   thread helpers and thread pool, XML parser and RSS writer, B-tree
+   and database caches, debug manager, B-tree Find() and gxDatabase
+
+These fixes were released as version 5.10. The full list of fixes, SSL
+updates and behavior changes is in
+CODE_REVIEW_FIXES.txt and docs/code_review_fixes.html. Every change
+in the source is marked with a "10/14/2026" comment.
 
 BUILDING UNIX SHARED AND STATIC LIBRARIES
 --------------------__-------------------
