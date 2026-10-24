@@ -61,8 +61,8 @@ echo "Passed" | tee -a ${logFILE}
 echo "" | tee -a ${logFILE}
 
 echo "Testing decryption using a password" | tee -a ${logFILE}
-echo "${FDECRYPT} -v --debug=5 --password=password ${testDIR}/testfile.enc" >> ${logFILE}
-${FDECRYPT} -v --debug=5 --password=password ${testDIR}/testfile.enc &>> ${logFILE}
+echo "${FDECRYPT} -v --debug=5 -o --absolute-path --password=password ${testDIR}/testfile.enc" >> ${logFILE}
+${FDECRYPT} -v --debug=5 -o --absolute-path --password=password ${testDIR}/testfile.enc &>> ${logFILE}
 if [ $? -ne 0 ]; then
     echo "ERROR: Password decryption test failed" | tee -a ${logFILE}
     echo "ERROR: See log ${logFILE}"
@@ -90,8 +90,8 @@ echo "Passed" | tee -a ${logFILE}
 echo "" | tee -a ${logFILE}
 
 echo "Testing decryption using a master key" | tee -a ${logFILE}
-echo "${FDECRYPT} -v --debug=5 --key=${testDIR}/master.key ${testDIR}/testfile.enc" >> ${logFILE}
-${FDECRYPT} -v --debug=5 --key=${testDIR}/master.key ${testDIR}/testfile.enc &>> ${logFILE}
+echo "${FDECRYPT} -v --debug=5 -o --absolute-path --key=${testDIR}/master.key ${testDIR}/testfile.enc" >> ${logFILE}
+${FDECRYPT} -v --debug=5 -o --absolute-path --key=${testDIR}/master.key ${testDIR}/testfile.enc &>> ${logFILE}
 if [ $? -ne 0 ]; then
     echo "ERROR: Master key decryption test failed" | tee -a ${logFILE}
     echo "ERROR: See log ${logFILE}"
@@ -120,8 +120,8 @@ echo "Passed" | tee -a ${logFILE}
 echo "" | tee -a ${logFILE}
 
 echo "Testing decryption RSA private key for ${USERNAME}" | tee -a ${logFILE}
-echo "${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_private_key.pem ${testDIR}/testfile.enc" >> ${logFILE}
-${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_private_key.pem ${testDIR}/testfile.enc --rsa-key-username=${USERNAME} &>> ${logFILE}
+echo "${FDECRYPT} -v --debug=5 -o --absolute-path --rsa-key=${testDIR}/${USERNAME}_private_key.pem ${testDIR}/testfile.enc" >> ${logFILE}
+${FDECRYPT} -v --debug=5 -o --absolute-path --rsa-key=${testDIR}/${USERNAME}_private_key.pem ${testDIR}/testfile.enc --rsa-key-username=${USERNAME} &>> ${logFILE}
 if [ $? -ne 0 ]; then
     echo "ERROR: RSA private key decryption test failed" | tee -a ${logFILE}
     echo "ERROR: See log ${logFILE}"
@@ -150,8 +150,8 @@ if [ ${RHEL_VERSION} -ne 6 ]; then
     echo "" | tee -a ${logFILE}
     
     echo "Testing decryption SSH-RSA private key for ${USERNAME}" | tee -a ${logFILE}
-    echo "${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password ${testDIR}/testfile.enc" >> ${logFILE}
-    ${FDECRYPT} -v --debug=5 --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password --rsa-key-username=${USERNAME} ${testDIR}/testfile.enc &>> ${logFILE}
+    echo "${FDECRYPT} -v --debug=5 -o --absolute-path --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password ${testDIR}/testfile.enc" >> ${logFILE}
+    ${FDECRYPT} -v --debug=5 -o --absolute-path --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password --rsa-key-username=${USERNAME} ${testDIR}/testfile.enc &>> ${logFILE}
     if [ $? -ne 0 ]; then
 	echo "ERROR: SSH-RSA private key decryption test failed"
 	echo "ERROR: See log ${logFILE}"

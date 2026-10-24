@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Relase 2025.104
+Relase 2025.105
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 6, 7, 8, 9, and 10 
@@ -33,6 +33,49 @@ FEATURES:
 	Multi user access to encrypted files using a smart card
 	Supports DOD CAC smart cards
 	
+SECURITY UPDATE IN RELEASE 2025.105
+-----------------------------------
+Release 2025.105 fixes security problems found in a code review. All
+users should upgrade. The file format is unchanged: files encrypted by
+older releases decrypt with this release, and files encrypted by this
+release decrypt with older releases.
+
+* fdecrypt no longer accepts forged files. Older releases accepted a
+  specially made file under any password.
+
+* Restored file paths. Without --outfile, fdecrypt restores the path
+  stored in the encrypted file relative to the current directory or
+  --outdir. Leading /, drive letters and UNC prefixes are removed, and
+  stored paths with .. are rejected. To restore the exact stored path,
+  for example a full restore from a backup, use --absolute-path. To
+  restore only the file name use --no-path.
+
+  Example: a file encrypted as /home/user/docs/report.txt is restored to
+  ./home/user/docs/report.txt by default, to /home/user/docs/report.txt
+  with --absolute-path, and to ./report.txt with --no-path.
+
+* fdecrypt does not overwrite existing files unless -o is given.
+
+* Decrypted files are created readable only by their owner, and are
+  written to a temp file that is renamed only after the whole file
+  decrypts and passes its integrity checks. Nothing is left behind if a
+  file fails to decrypt.
+
+* Files encrypted with this release carry a whole-file integrity check,
+  so removed, reordered, added or truncated data blocks are detected.
+  Files from older releases are still checked block by block.
+
+* Files encrypted with mode 0 (no encryption, for testing) need the
+  fdecrypt --allow-unencrypted switch.
+
+* fcrypt --iter must be at least 1000.
+
+* Memory safety fixes for long file names, RSA user data stored in the
+  encrypted file, console input and key file reads.
+
+Run console/linux/run_security_tests.sh and run_compat_tests.sh to test
+a build.
+
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR WINDOWS
 -----------------------------------------------------
 For Windows the current release supports Microsoft Visual Studio 2022 or 2026. 
@@ -111,6 +154,8 @@ To decrypt the file:
 $ ./fdecrypt testfile.enc 
 
 This will decrypt the file creating the unencrypted file using the original file name. 
+If the file was encrypted with a directory path, the path is recreated
+under the current directory. Use -o to overwrite an existing file.
 
 USING A MASTER KEY FOR AES SYMMETRIC FILE ENCRYPTION
 ----------------------------------------------------

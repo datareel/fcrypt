@@ -314,8 +314,9 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: --iter requires an input argument: --iter=10000" << "\n" << flush;
       return 0;
     }
-    if(equal_arg.Atoi() <= 0) {
-      cerr << "ERROR: Invalid value passed to --iter" << "\n" << flush;
+    // 10/24/2026: Do not allow weaker key derivation than the default
+    if(equal_arg.Atoi() < (int)AES_DEF_ITERATIONS) {
+      cerr << "ERROR: --iter must be at least " << AES_DEF_ITERATIONS << "\n" << flush;
       return 0;
     }
     key_iterations = equal_arg.Atoi();
@@ -939,7 +940,6 @@ int main(int argc, char **argv)
     if(!rv) {
       cerr << "File encryption failed" << "\n" << flush;
       cerr << fc.err.c_str() << "\n" << flush;
-      ptr = ptr->next;
       err = 1;
       ptr = ptr->next;
       continue;

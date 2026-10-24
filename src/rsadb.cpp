@@ -122,11 +122,14 @@ int RSA_passphrase_callback(char *buf, int size, int rwflag, void *userdata)
   // buf must be large enough to hold the passphrase
   // userdata must be a null terminate string
 
+  // 10/24/2026: Never write more than size bytes to buf
+  if(!userdata || !buf || size <= 0) return 0;
   char *passphrase = (char *)userdata;
-  int len = strlen(passphrase);
+  size_t len = strlen(passphrase);
+  if(len > (size_t)size) return 0;
 
   memcpy(buf, userdata, len);
-  return len;
+  return (int)len;
 }
 
 int RSA_gen_key_files(const char *private_key_fname, const char *public_key_fname, int keysize,
@@ -391,7 +394,10 @@ int RSA_read_key_file(const char *fname, char keybuf[], const unsigned keybuf_le
       fclose(fp);
       return RSA_ERROR_KEY_FILE_READ;
     }
-    if(offset > keybuf_len) {
+    // 10/24/2026: Check the space left before copying
+    if(input_bytes_read > keybuf_len || offset > (keybuf_len - input_bytes_read)) {
+      memset(read_buf, 0, sizeof(read_buf));
+      fclose(fp);
       return RSA_ERROR_KEY_BUFFER_OVERFLOW;
     }
     memmove(keybuf+offset, read_buf, input_bytes_read);
