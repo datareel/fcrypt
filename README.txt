@@ -5,6 +5,9 @@ Relase 2025.104
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 6, 7, 8, 9, and 10 
 
+Built with the DataReel C++ library version 6.0, included under the
+3plibs/datareel directory.
+
 This source code is used to build the fcrypt and fdecrypt utilities
 that are used to encrypt existing files using the AES CBC 256 bit
 encryption algorithm based on the OpenSSL implementation.

@@ -320,7 +320,10 @@ gxDatabaseSegment *gxDatabaseCache::FindEmptySegment()
     }
   }  
 
-  return segment;
+  // 10/14/2026: The empty segment was returned without being promoted
+  // to the front of the list, so a newly loaded segment stayed near the
+  // tail and was the first to be reused.
+  return PromoteSegment(segment);
 }
 
 gxDatabaseSegment *gxDatabaseCache::FindSegment(FAU_t ds_address)
@@ -422,11 +425,19 @@ gxDatabaseSegment *gxDatabaseCache::AllocSegment(FAU_t ds_address,
     uncached_reads++;
     segment = FindEmptySegment();
     if(segment) {
+      // 10/14/2026: Clear any data left from the segment's previous use.
+      // A reused segment kept its old data, so a read of zero bytes or a
+      // failed read returned stale data for the new address.
+      segment->ResetSegment();
       segment->ds_address = ds_address;
       if((bytes > (__ULWORD__)0) && (ds_address != (FAU_t)-1)) {
-	if(!f) return 0; // Not connected to a database file	
-	if(segment->Read(f, bytes) != gxDBASE_NO_ERROR) {
-	  return 0; // Error reading the node from disk
+	// 10/14/2026: On failure the segment kept the new address, so the
+	// next request for this address returned the unread segment as a
+	// cache hit. Reset the segment and move it to the end of the list.
+	if((!f) || (segment->Read(f, bytes) != gxDBASE_NO_ERROR)) {
+	  segment->ResetSegment();
+	  DemoteSegment(segment);
+	  return 0; // Not connected or error reading the node from disk
 	}
       }
     }
@@ -440,6 +451,22 @@ gxDatabaseSegment *gxDatabaseCache::AllocSegment(FAU_t ds_address,
   }
 
   return segment;
+}
+
+gxDatabaseSegment *gxDatabaseCache::ReleaseSegments()
+// 10/24/2026: Release the segment array without freeing it and return
+// it to the caller, who must free it with delete[]. The cache is left
+// empty. It used to set only the array pointer to null, so the head and
+// tail still pointed into the released array and the array was lost
+// unless the caller had kept a pointer to it. Dirty segments are not
+// flushed. Call Flush() first to keep their data.
+{
+  gxDatabaseSegment *released = segments;
+  segments = 0;
+  head = tail = 0;
+  num_segments = 0;
+  cache_size = 0;
+  return released;
 }
 
 unsigned gxDatabaseCache::SegmentsInUse()
@@ -471,8 +498,17 @@ gxDatabaseSegment *gxDBCacheNode::CachedWrite(const void *buf,
 {
   segment = cache->AllocSegment(address, (__ULWORD__)0); 
   if(segment) {
+    // 10/14/2026: The return value of Load() was ignored, so a failed
+    // memory allocation still marked the segment dirty.
+    if(!segment->ds.Load(buf, bytes)) {
+      segment->ResetSegment();
+      cache->DemoteSegment(segment);
+      segment = 0;
+      ds_address = (FAU_t)-1;
+      return 0;
+    }
     ds_address = address;
-    segment->ds.Load(buf, bytes);
+    ds_length = bytes; // 10/24/2026: Length for Bind()
     segment->SetDirty();
   }
   else {
@@ -489,6 +525,7 @@ gxDatabaseSegment *gxDBCacheNode::CachedRead(FAU_t address, __ULWORD__ bytes)
   segment = cache->AllocSegment(address, bytes); 
   if(segment) {
     ds_address = address;
+    if(bytes > (__ULWORD__)0) ds_length = bytes; // 10/24/2026: For Bind()
   }
   else {
     ds_address = (FAU_t)-1;
@@ -527,8 +564,24 @@ gxDatabaseSegment *gxDBCacheNode::Bind()
   }
 
   // If this pointer is not assigned to a segment or the segment is locked
-  // connect the segment and load the node
-  segment = cache->AllocSegment(ds_address, 1);
+  // connect the segment and load the node. 10/24/2026: The node used to
+  // be loaded with a length of one byte, so a segment that was not in the
+  // cache held only the first byte of the node. The length set by
+  // CachedRead(), CachedWrite() or Bind(bytes) is now used. With no 
+  // length set, only a segment already in the cache can be bound. The
+  // node address is then kept so Bind(bytes) can load the node later.
+  if(ds_length == (__ULWORD__)0) {
+    segment = 0;
+    if(ds_address != (FAU_t)-1) {
+      segment = cache->FindSegment(ds_address);
+      if(segment) {
+	cache->PromoteSegment(segment);
+	cache->cached_reads++;
+      }
+    }
+    return segment;
+  }
+  segment = cache->AllocSegment(ds_address, ds_length);
   if(!segment) { // Could not allocate a cache segment
     // Reset this segments node address to signal that this segment
     // has not been assigned. This allows the application to test
@@ -538,6 +591,16 @@ gxDatabaseSegment *gxDBCacheNode::Bind()
 
   // Return a pointer to this nodes segment
   return segment;
+}
+
+gxDatabaseSegment *gxDBCacheNode::Bind(__ULWORD__ bytes)
+// 10/24/2026: Bind this cache node to a cache segment, loading "bytes"
+// bytes of file data at the node address if the segment is not in the
+// cache. Returns a pointer to the segment or a null value if an error
+// occurs.
+{
+  ds_length = bytes;
+  return Bind();
 }
 
 #endif // __USE_DATABASE_CACHE__

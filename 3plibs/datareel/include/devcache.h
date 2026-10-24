@@ -100,8 +100,8 @@ public:
   ~gxDeviceBucket() { }
 
 private: // Disallow copying and assignment
-  gxDeviceBucket(const gxDeviceBucket &ob) { }
-  void operator=(const gxDeviceBucket &ob) { }
+  gxDeviceBucket(const gxDeviceBucket &) : MemoryBuffer() { }
+  void operator=(const gxDeviceBucket &) { }
   
 public: // Cache functions
   void FlushBucket(gxDeviceCache &dev);
@@ -137,7 +137,8 @@ class GXDLCODE_API gxDeviceBucketCache
 {
 public:
   gxDeviceBucketCache(unsigned num) {
-    if(num == 0) num = 1; devptr = 0; buckets = 0; ConstructCache(num);
+    if(num == 0) num = 1;
+    devptr = 0; buckets = 0; ConstructCache(num);
   }
   ~gxDeviceBucketCache() { DestroyCache(); }
 
@@ -168,7 +169,7 @@ private: // Internal processing functions
 public: // Overloaded operators
   int operator!() const { return buckets == 0; }
   int operator!() { return buckets == 0; }
-  operator const int () const { return buckets != 0; }
+  operator int () const { return buckets != 0; }
   operator int () { return buckets != 0; }
   
 private:
@@ -230,7 +231,7 @@ public: // Overloaded operators
 
   int operator!() { return bucket == 0; } 
   int operator!() const { return bucket == 0; }
-  operator const int () const { return bucket != 0; }
+  operator int () const { return bucket != 0; }
   operator int () { return bucket != 0; }
 
 private: // Internal processing functions

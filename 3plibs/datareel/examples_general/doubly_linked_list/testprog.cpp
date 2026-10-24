@@ -201,6 +201,7 @@ int main()
     if(!dlist.Add(sbuf))  {
       cout << "Memory allocation error at " << (count1+count2) << " bytes"
 	   << "\n";
+      delete[] sbuf; // Not in the list, so free it here
       break;
     }
   }
@@ -208,9 +209,10 @@ int main()
   PausePrg();
 
   cout << "Releasing memory allocated back to the heap..." << "\n";
-  // NOTE: A gxList::DestroyList() call will free the memory allocated for
-  // both the node and its data.
-  dlist.DestroyList();
+  // 10/24/2026: The strings were allocated with new[], so free them with
+  // DestroyArrayList(). DestroyList() uses a scalar delete and is only
+  // for data allocated with a single-object new.
+  dlist.DestroyArrayList();
 
   PausePrg();
   
