@@ -1,6 +1,6 @@
 # Public key database for users to get access to the encrypted files
 # Line format: username_AccountLocation_KeyType=pubkey
-# Last modified: 12/04/2023
+# Last modified: 10/24/2026
 
 # Add a line for each user that will get access to the encrypted files
 

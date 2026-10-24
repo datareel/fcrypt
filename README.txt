@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Relase 2025.105
+Release 2026.101
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 6, 7, 8, 9, and 10 
