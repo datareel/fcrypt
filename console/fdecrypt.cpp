@@ -507,7 +507,7 @@ int ExitProgram(int rv, char *exit_message)
     cerr << "Openssl " << err << "\n" << flush;
   }
 
-  if(!exit_message) {
+  if(exit_message) {
     cerr << exit_message << "\n" << flush;
   }
   return rv;
