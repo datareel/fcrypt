@@ -38,6 +38,17 @@ Encryption routes generate encryption certificates and authenticate users.
 #include "cryptdb.h"
 #include "gxcrc32.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <openssl/crypto.h>
+#if defined (__WIN32__)
+#include <io.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 FCryptCache::FCryptCache(unsigned CacheSize, unsigned size_of_static_data_area) : cache(CacheSize) 
 { 
   ready_for_writing = 1; 
@@ -57,6 +68,14 @@ FCryptCache::FCryptCache(unsigned CacheSize, unsigned size_of_static_data_area) 
   static_data_bytes_used = 0;
   num_static_data_blocks = 0;
   AES_fillrand(static_data, size_of_static_data_area);
+  path_mode = CRYPT_PATH_RELATIVE;
+  has_integrity = 0;
+  integrity_ctx = 0;
+  integrity_data_len = (FAU_t)0;
+  integrity_plaintext_len = (FAU_t)0;
+  header_offset = data_offset = (FAU_t)0;
+  header_crypt_len = 0;
+  memset(header_plain, 0, sizeof(header_plain));
 }
 
 FCryptCache::~FCryptCache()
@@ -64,11 +83,43 @@ FCryptCache::~FCryptCache()
   cryptdb_secret.Clear(1);
   
   if(static_data) {
-    AES_fillrand(static_data, static_data_size);
-    delete static_data;
+    OPENSSL_cleanse(static_data, static_data_size);
+    delete[] static_data;
   }
   static_data_size = 0;
   static_data = 0;
+  if(integrity_ctx) HMAC_CTX_free(integrity_ctx);
+  integrity_ctx = 0;
+  integrity.Wipe();
+  OPENSSL_cleanse(header_plain, sizeof(header_plain));
+  // Never leave a partial decrypted file behind
+  if(!tmp_ofname.is_null()) {
+    outfile.df_Close();
+    futils_remove(tmp_ofname.c_str());
+  }
+}
+
+static void cryptdb_put_le64(unsigned char out[8], FAU_t v)
+{
+  unsigned long long u = (unsigned long long)v;
+  for(int i = 0; i < 8; i++) { out[i] = (unsigned char)(u & 0xFF); u >>= 8; }
+}
+
+static FAU_t cryptdb_get_le64(const unsigned char in[8])
+{
+  unsigned long long u = 0;
+  for(int i = 7; i >= 0; i--) { u = (u << 8) | in[i]; }
+  return (FAU_t)u;
+}
+
+void FCryptCache::IntegrityUpdate(const void *buf, unsigned len)
+{
+  if(!integrity_ctx || len == 0) return;
+  if(!HMAC_Update(integrity_ctx, (const unsigned char *)buf, len)) {
+    ERROR_LEVEL = -1;
+    err << clear << "File integrity HMAC update failed";
+  }
+  integrity_data_len += len;
 }
 
 void FCryptCache::Read(void *buf, unsigned Bytes, gxDeviceTypes dev) 
@@ -99,37 +150,46 @@ void FCryptCache::Read(void *buf, unsigned Bytes, gxDeviceTypes dev)
 }
 
 void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev) 
+// 10/24/2026: Stop writing after the first error so no data that failed
+// to decrypt or authenticate reaches the output, and check that the
+// block fits in the work buffer before copying it.
 {
   int rv = AES_NO_ERROR;
-  char fbuf[1024];
-  if(!fbuf) {
+  char fbuf[AES_CIPHERTEXT_BUF_SIZE];
+  unsigned buf_len;
+
+  if(ERROR_LEVEL != 0) return;
+  if(Bytes > (sizeof(fbuf) - AES_file_enctryption_overhead())) {
     ERROR_LEVEL = -1;
-    err << clear << "File write error system out of memory";
+    err << clear << "File buf crypt error block too large";
     return;
   }
-
-  unsigned buf_len;
-  unsigned i;
 
   aesdb.b.mode = mode;
   aesdb.b.key_iterations  = key_iterations;
   
-  // Encrypt the file buffer
   memmove(fbuf, buf, Bytes);
-  if(crypt_stream) {
+  if(crypt_stream) { // Encrypt the file buffer
+    integrity_plaintext_len += Bytes;
     buf_len = Bytes;
     rv = aesdb.Encrypt(fbuf, &buf_len);
     Bytes = buf_len;
+    if(rv == AES_NO_ERROR) IntegrityUpdate(fbuf, Bytes);
   }
-  else {
+  else { // Decrypt the file buffer
     buf_len = Bytes;
     rv = aesdb.Decrypt(fbuf, &buf_len);
     Bytes = buf_len;
   }
 
   if(rv != AES_NO_ERROR) {
+    OPENSSL_cleanse(fbuf, sizeof(fbuf));
     ERROR_LEVEL = rv;
     err << clear << "File buf crypt error " << AES_err_string(rv);
+    return;
+  }
+  if(ERROR_LEVEL != 0) {
+    OPENSSL_cleanse(fbuf, sizeof(fbuf));
     return;
   }
 
@@ -139,7 +199,7 @@ void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev)
       if(outfile.df_GetError() != DiskFileB::df_NO_ERROR) {
 	ERROR_LEVEL = -1;
 	err << clear << "Fatal file buf write error " << ofname;
-	return;
+	break;
       } 
       bytes_wrote += Bytes;
       break;
@@ -154,6 +214,7 @@ void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev)
     default:
       break;
   }
+  OPENSSL_cleanse(fbuf, sizeof(fbuf));
 }
 
 int FCryptCache::EncryptFile(const char *fname, const MemoryBuffer &secret)
@@ -198,7 +259,18 @@ int FCryptCache::EncryptFile(const char *fname, const MemoryBuffer &secret)
   }
   Flush(); // Ensure all the buckets a written to the output device
   
+  if(ERROR_LEVEL != 0 || !WriteIntegrityHeader()) {
+    if(err.is_null()) err << clear << "Error encrypting " << filename;
+    if(ERROR_LEVEL == 0) ERROR_LEVEL = -1;
+    cryptdb_secret.Clear(1);
+    aesdb.Clear();
+    CloseOutputFile();
+    CloseInputFile();
+    return 0;
+  }
+
   cryptdb_secret.Clear(1);
+  aesdb.Clear();
   CloseOutputFile();
 
   if(bytes_read != infile.df_Length()) {
@@ -232,9 +304,11 @@ int FCryptCache::LoadFile(gxDeviceCachePtr p)
     }
     p->Load(read_buf, infile.df_gcount());
     bytes_read += infile.df_gcount();
+    if(ERROR_LEVEL != 0) break; // Stop at the first failed block
   }
 
-  return 1;
+  OPENSSL_cleanse(read_buf, sizeof(read_buf));
+  return ERROR_LEVEL == 0;
 }
 
 int FCryptCache::OpenInputFile(const char *fname)
