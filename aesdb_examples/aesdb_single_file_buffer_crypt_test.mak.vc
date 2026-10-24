@@ -1,10 +1,22 @@
 # Makefile for Windows Build using VS 2026
 
+# 10/24/2026: The default Windows build is now 64-bit x64. The 32-bit
+# x86 libraries are used when the ENV is set with vcvars32.bat for
+# legacy builds. Use only OpenSSL 3.5.x LTS builds, see
+# ../README_windows_openssl.txt
+!IF "$(VSCMD_ARG_TGT_ARCH)" == "x86"
 # Set your ZLIB path here
 ZCODE_DIR = ../../../../3plibs/zlib32-1.3.1
 
 # Set your OpenSSL path here
 OPENSSL_DIR = ../../../../3plibs/openssl32
+!ELSE
+# Set your ZLIB path here
+ZCODE_DIR = ../../../../3plibs/zlib64-1.3.1
+
+# Set your OpenSSL path here
+OPENSSL_DIR = ../../../../3plibs/openssl64
+!ENDIF
 
 # Define a name for the executable
 PROJECT = aesdb_single_file_buffer_crypt_test

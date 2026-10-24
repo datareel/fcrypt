@@ -86,7 +86,10 @@ see the following readme file: README_VisualStudio_2022.txt
 For instructions on how to install Microsoft Visual Studio 2026 please
 see the following readme file: README_VisualStudio.txt 
 
-The Windows build requires the OpenSSL library. 
+The Windows build requires the OpenSSL library. Use only an OpenSSL
+3.5.x LTS release, built as 64-bit x64 (and as 32-bit x86 only for
+legacy builds). The build stops with an error for any other OpenSSL
+version.
 
 For instructions on how to build OpenSSL for Windows please see the
 following readme file: README_windows_openssl.txt 
@@ -102,19 +105,36 @@ On the data drive change your directory to the fcrypt build subdirectory:
 > E:
 > cd E:\git\fcrypt\console\msvc
 
-Setup your Visual Studio environment:
+Setup your Visual Studio environment for a 64-bit x64 build, which is
+the default:
 
 > msvc.bat
 
-Edit the msvc.env file to setup the path to your OpenSSL and ZLIB builds:
+For a 32-bit x86 build for legacy systems use msvc32_vs2026.bat
+instead of msvc.bat. Use a new command prompt and run "nmake clean"
+when you switch between 32-bit and 64-bit builds. Files encrypted by
+the 32-bit and 64-bit builds use the same file format, so either build
+decrypts files from the other and from older releases.
+
+Edit the msvc.env file to setup the path to your OpenSSL and ZLIB
+builds. The 64-bit paths are used by default and the 32-bit paths are
+used when the ENV is set with msvc32_vs2026.bat:
 
 > notepad msvc.env
 
+!IF "$(VSCMD_ARG_TGT_ARCH)" == "x86"
 # Setup path to ZLIB
 ZCODE_DIR = ../../../../3plibs/zlib32-1.3.1
 
 # Setup path to OPENSSL library
 OPENSSL_DIR = ../../../../3plibs/openssl32
+!ELSE
+# Setup path to ZLIB
+ZCODE_DIR = ../../../../3plibs/zlib64-1.3.1
+
+# Setup path to OPENSSL library
+OPENSSL_DIR = ../../../../3plibs/openssl64
+!ENDIF
 
 Run nmake to build the executables:
 
