@@ -58,6 +58,9 @@ gxString output_dir_name;
 int list_file_names = 0;
 int recurse = 0;
 int use_abs_path = 0;
+int restore_path_mode = CRYPT_PATH_RELATIVE;
+int overwrite = 0;
+int allow_unencrypted = 0;
 int use_password = 0;
 int use_key_file = 0;
 gxString input_arg_key_file;
@@ -125,10 +128,13 @@ void HelpMessage()
   cout << "          -d  Enable debugging output" << "\n" << flush;
   cout << "          -h  Display this help message and exit." << "\n" << flush;
   cout << "          -l  List output file name(s) in enc file(s)" << "\n" << flush;
+  cout << "          -o  Overwrite existing output files" << "\n" << flush;
   cout << "          -r  Remove encrypted source file" << "\n" << flush;
   cout << "          -R  Decrypt DIR including all files and subdirectories" << "\n" << flush;
   cout << "          -v  Enable verbose messages to the console" << "\n" << flush;
   cout << "\n" << flush;
+  cout << "          --absolute-path (Restore to the exact path stored in the enc file)" << "\n" << flush;
+  cout << "          --allow-unencrypted (Allow decrypting mode 0 test files that are not encrypted)" << "\n" << flush;
   cout << "          --cache=size (Set the cache size)" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
@@ -139,6 +145,7 @@ void HelpMessage()
 #else
   cout << "          --list-users (List the users with RSA key access and exit)" << "\n" << flush;
 #endif
+  cout << "          --no-path (Restore only the file name, without the stored path)" << "\n" << flush;
   cout << "          --outfile=fname (Write decrypted output to specified file name)" << "\n" << flush;
   cout << "          --outdir=dir (Write decrypted output to this directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file decryption)" << "\n" << flush;
@@ -352,6 +359,18 @@ int ProcessDashDashArg(gxString &arg)
     has_valid_args = 1;
   }
 
+  if(arg == "absolute-path") {
+    restore_path_mode = CRYPT_PATH_ABSOLUTE;
+    has_valid_args = 1;
+  }
+  if(arg == "no-path") {
+    restore_path_mode = CRYPT_PATH_NONE;
+    has_valid_args = 1;
+  }
+  if(arg == "allow-unencrypted") {
+    allow_unencrypted = 1;
+    has_valid_args = 1;
+  }
   if(arg == "stdout") {
     write_to_stdout = 1;
     has_valid_args = 1;
@@ -450,6 +469,10 @@ int ProcessArgs(char *arg)
       list_file_names = 1;
       break;
 
+    case 'o': case 'O':
+      overwrite = 1;
+      break;
+
     case 'r' :
       remove_src_file = 1;
       break;
@@ -536,7 +559,7 @@ int main(int argc, char **argv)
   if(selectRetVal > 0) {
     if(FD_ISSET(fileno(stdin), &readfds)) {
       while(read(0, buf, sizeof(buf)) > 0) {
-	if(bytes_read > sizeof(private_key)) {
+	if(bytes_read >= sizeof(private_key)) {
 	  cerr << "ERROR: Private key size has exceeded " <<  sizeof(private_key) << " bytes" << "\n" << flush;
 	  return 1;
 	}
@@ -626,6 +649,11 @@ int main(int argc, char **argv)
   if(num_files == 0) {
     cerr << "Encountered fatal decrypt error" << "\n";
     cerr << "No file name specified" << "\n";
+    return ExitProgram(1);
+  }
+
+  if(restore_path_mode == CRYPT_PATH_ABSOLUTE && !output_dir_name.is_null()) {
+    cerr << "ERROR: --absolute-path cannot be used with --outdir" << "\n" << flush;
     return ExitProgram(1);
   }
   
@@ -760,6 +788,9 @@ int main(int argc, char **argv)
     
     FCryptCache fc(num_buckets);
     fc.key_iterations = key_iterations;
+    fc.SetPathMode(restore_path_mode);
+    fc.SetOverWrite(overwrite);
+    fc.SetAllowUnencrypted(allow_unencrypted);
     if(!output_dir_name.is_null()) {
       fc.SetDir(output_dir_name.c_str());
     }
@@ -815,6 +846,14 @@ int main(int argc, char **argv)
 	  }
 	  found_key = 1;
 	  if(clientcfg->verbose_mode) cerr << "RSA key decryption authorized for user " << list_ptr->data.username.c_str() << "\n" << flush; 
+	  // 10/24/2026: Check the length before subtracting the salt length
+	  if(decrypted_data_len < (AES_MAX_SALT_LEN + AES_MIN_SECRET_LEN) ||
+	     decrypted_data_len > sizeof(rsa_decrypted_message)) {
+	    cerr << "ERROR: Bad length for decrypted key" << "\n" << flush;
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
 	  memmove(SALT, rsa_decrypted_message, AES_MAX_SALT_LEN);
 	  aes_file_decrypt_secret.Clear(1);
 	  aes_file_decrypt_secret.Cat(rsa_decrypted_message+AES_MAX_SALT_LEN, (decrypted_data_len-AES_MAX_SALT_LEN));
@@ -857,7 +896,8 @@ int main(int argc, char **argv)
 	    err = 1;
 	    break;
 	  }
-	  if(memcmp(hash, list_ptr->data.hmac.m_buf(), sizeof(hash)) != 0) {
+	  if(list_ptr->data.hmac.length() != sizeof(hash) ||
+	     CRYPTO_memcmp(hash, list_ptr->data.hmac.m_buf(), sizeof(hash)) != 0) {
 	    cerr << "ERROR: Message authentication failed bad HMAC for RSA ciphertext" << "\n" << flush;
 	    found_key = 0;
 	    err = 1;
@@ -916,6 +956,14 @@ int main(int argc, char **argv)
 	  }
 	  found_key = 1;
 	  if(clientcfg->verbose_mode) cerr << "Smart card prviate key decryption authorized for user " << list_ptr->data.username.c_str() << "\n" << flush; 
+	  // 10/24/2026: Check the length before subtracting the salt length
+	  if(decrypted_data_len < (AES_MAX_SALT_LEN + AES_MIN_SECRET_LEN) ||
+	     decrypted_data_len > sizeof(rsa_decrypted_message)) {
+	    cerr << "ERROR: Bad length for decrypted key" << "\n" << flush;
+	    found_key = 0;
+	    err = 1;
+	    break;
+	  }
 	  memmove(SALT, rsa_decrypted_message, AES_MAX_SALT_LEN);
 	  aes_file_decrypt_secret.Clear(1);
 	  aes_file_decrypt_secret.Cat(rsa_decrypted_message+AES_MAX_SALT_LEN, (decrypted_data_len-AES_MAX_SALT_LEN));
@@ -958,7 +1006,8 @@ int main(int argc, char **argv)
 	    err = 1;
 	    break;
 	  }
-	  if(memcmp(hash, list_ptr->data.hmac.m_buf(), sizeof(hash)) != 0) {
+	  if(list_ptr->data.hmac.length() != sizeof(hash) ||
+	     CRYPTO_memcmp(hash, list_ptr->data.hmac.m_buf(), sizeof(hash)) != 0) {
 	    cerr << "ERROR: Message authentication failed bad HMAC for smart card ciphertext" << "\n" << flush;
 	    found_key = 0;
 	    err = 1;
@@ -996,15 +1045,15 @@ int main(int argc, char **argv)
     }
     
     if(!rv) {
-      cerr << "ERROR: File decrypt failed" << "\n" << flush;
-      DEBUG_m(fc.err.c_str());
+      cerr << "ERROR: File decrypt failed " << ptr->data.c_str() << "\n" << flush;
+      if(!fc.err.is_null()) cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
       err = 1;
       ptr = ptr->next;
       continue;
     }
     if(fc.ERROR_LEVEL != 0) { // Check the ERROR level from the file caching ops
-      cerr << "ERROR: File decrypt failed" << "\n" << flush;
-      DEBUG_m(fc.err.c_str());
+      cerr << "ERROR: File decrypt failed " << ptr->data.c_str() << "\n" << flush;
+      if(!fc.err.is_null()) cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
       err = 1;
       ptr = ptr->next;
       continue;

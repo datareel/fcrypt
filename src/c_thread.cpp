@@ -137,13 +137,16 @@ int consoleGetString(gxString &s, char *defval, int password,
       sbuf[max_len-1] = 0;
     }
   }
-  int rv = consoleGetString(sbuf, password);
+  int rv = consoleGetString(sbuf, password, max_len);
   if(clear_input) {
     s << clear << sbuf;
   }
   else {
     s << sbuf;
   }
+  // Wipe the input, which can be a password
+  volatile char *vp = sbuf;
+  for(int i = 0; i < max_len; i++) vp[i] = 0;
   return rv;
 }
 
@@ -152,20 +155,26 @@ int consoleGetString(gxString &s, int password, int clear_input)
   const int max_len = 1024;
   char sbuf[max_len];
   memset(sbuf, 0, max_len);
-  int rv = consoleGetString(sbuf, password);
+  int rv = consoleGetString(sbuf, password, max_len);
   if(clear_input) {
     s << clear << sbuf;
   }
   else {
     s << sbuf;
   }
+  // Wipe the input, which can be a password
+  volatile char *vp = sbuf;
+  for(int i = 0; i < max_len; i++) vp[i] = 0;
   return rv;
 }
 
-int consoleGetString(char *s, int password)
+int consoleGetString(char *s, int password, unsigned max_len)
+// 10/24/2026: If max_len is set, s is a buffer of max_len bytes and input
+// beyond max_len-1 characters is ignored.
 {
 #if defined (__CONSOLE__)
   if(!s) return 0; // check to null pointers
+  if(max_len > 0) s[max_len-1] = 0;
   int key, i;
   char ch;
   int slen = strlen(s);
@@ -216,6 +225,7 @@ int consoleGetString(char *s, int password)
 	  }
 	}
 	if(clientcfg->prev_command < 0) clientcfg->prev_command = 0;   
+	if(max_len > 0 && clientcfg->history[clientcfg->prev_command].length() >= max_len) continue;
 	consolePutString(clientcfg->history[clientcfg->prev_command].c_str());
 	strcpy(p, clientcfg->history[clientcfg->prev_command].c_str());
 	charcount = strlen(p);
@@ -236,6 +246,7 @@ int consoleGetString(char *s, int password)
 	    consolePutChar('\b');
 	  }
 	}
+	if(max_len > 0 && clientcfg->history[clientcfg->next_command].length() >= max_len) continue;
 	consolePutString(clientcfg->history[clientcfg->next_command].c_str());
 	strcpy(p, clientcfg->history[clientcfg->next_command].c_str());
 	charcount = strlen(p);
@@ -275,6 +286,7 @@ int consoleGetString(char *s, int password)
       }
     }
     else {
+      if(max_len > 0 && (unsigned)charcount >= (max_len-1)) continue; // Buffer full
       *pos++ = ch;
       charcount++;
       if(password) {

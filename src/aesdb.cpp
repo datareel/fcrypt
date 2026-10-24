@@ -154,11 +154,9 @@ int AES_HMAC(const unsigned char key[], unsigned int key_len,
 // Generate message access control for authentication based on a hash function
 {
   if(hash_len > AES_MAX_HMAC_LEN) return AES_ERROR_HMAC_MAX_LENGTH; 
+  if(hash_len < AES_MAX_HMAC_LEN) return AES_ERROR_HMAC_MAX_LENGTH; 
+  if(key_len < AES_256_KEY_SIZE) return AES_ERROR_KEY_LENGTH;
   
-  const EVP_CIPHER *cipher;
-  cipher = EVP_get_cipherbyname("aes-256-cbc");
-  if(!cipher) return AES_ERROR_NO_SUCH_CIPHER;
-
   // grep OPENSSL_VERSION_NUMBER /usr/include/openssl/opensslv.h
 #if OPENSSL_VERSION_NUMBER < 0x101010bfL
   HMAC_CTX hmac_ob;
@@ -170,12 +168,20 @@ int AES_HMAC(const unsigned char key[], unsigned int key_len,
     return AES_ERROR_HMAC_INIT_FAILED;
   }
 #endif
-  
-  HMAC_Init_ex(hmac, key, EVP_CIPHER_key_length(cipher), EVP_sha256(), 0);
-  HMAC_Update(hmac, data, data_len);
-  
+
+  // 10/24/2026: Check every HMAC return value so a failed HMAC is never
+  // written to a file or accepted as a match.
+  int rv = AES_NO_ERROR;
   unsigned int len = hash_len;
-  HMAC_Final(hmac, hash, &len);
+  if(!HMAC_Init_ex(hmac, key, AES_256_KEY_SIZE, EVP_sha256(), 0)) {
+    rv = AES_ERROR_HMAC_INIT_FAILED;
+  }
+  else if(!HMAC_Update(hmac, data, data_len)) {
+    rv = AES_ERROR_HMAC_UPDATE_FAILED;
+  }
+  else if(!HMAC_Final(hmac, hash, &len) || len != hash_len) {
+    rv = AES_ERROR_HMAC_FINAL_FAILED;
+  }
 
 #if OPENSSL_VERSION_NUMBER < 0x101010bfL
   HMAC_CTX_cleanup(hmac);
@@ -183,7 +189,8 @@ int AES_HMAC(const unsigned char key[], unsigned int key_len,
   HMAC_CTX_free(hmac);
 #endif
 
-  return AES_NO_ERROR;
+  if(rv != AES_NO_ERROR) OPENSSL_cleanse(hash, hash_len);
+  return rv;
 }
 
 int AES_256_CBC_encrypt(const unsigned char key[], const unsigned char iv[],
@@ -192,6 +199,7 @@ int AES_256_CBC_encrypt(const unsigned char key[], const unsigned char iv[],
 			unsigned *encrypted_data_len,
 			int cipher_block_size)
 {
+  *(encrypted_data_len) = 0;
   if(plaintext_len == 0) return AES_NO_ERROR;
 
   if(ciphertext_len < (plaintext_len+AES_CBC_BLOCK_SIZE)) {
@@ -203,42 +211,27 @@ int AES_256_CBC_encrypt(const unsigned char key[], const unsigned char iv[],
     return  AES_ERROR_EVP_CTX_NEW;
   }
 
-  const EVP_CIPHER *null_cipher_type = 0;
-  ENGINE *null_impl = 0;
-  const unsigned char *null_key = 0;
-  const unsigned char *null_iv = 0;
-
-  int c_len = ciphertext_len;
+  int c_len = 0;
   int f_len = 0;
 
-  // Not setting key or IV here
-  if(!EVP_CipherInit_ex(ctx, EVP_aes_256_cbc(), null_impl, null_key, null_iv, 1)){
+  if(!EVP_CipherInit_ex(ctx, EVP_aes_256_cbc(), 0, key, iv, 1)){
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_CIPHER_INIT;
   }
 
   // Check key and IV lengths 
-  OPENSSL_assert(EVP_CIPHER_CTX_key_length(ctx) == AES_256_KEY_SIZE);
-  OPENSSL_assert(EVP_CIPHER_CTX_iv_length(ctx) == AES_CBC_BLOCK_SIZE);
-
-  // Set the key and IV
-  if(!EVP_CipherInit_ex(ctx, null_cipher_type, null_impl, key, iv, 1)){
+  if((EVP_CIPHER_CTX_key_length(ctx) != (int)AES_256_KEY_SIZE) ||
+     (EVP_CIPHER_CTX_iv_length(ctx) != (int)AES_CBC_BLOCK_SIZE)) {
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_CIPHER_INIT;
   }
 
-  // Encrypts plaintext buffer and writes the encrypted cipher text. Can be called multiple times to encrypt successive blocks of data
   if(!EVP_CipherUpdate(ctx, ciphertext, &c_len, plaintext, plaintext_len)){
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_ENCRYPT_CIPHER_UPDATE;
   }
 
-  if(c_len > ciphertext_len) {
-    EVP_CIPHER_CTX_free(ctx);
-    return AES_ERROR_BUFFER_OVERFLOW;
-  }
-  
-  // If padding is enabled (the default) then EVP_EncryptFinal_ex() encrypts the final data
+  // With padding enabled (the default) the final block is written here
   if(!EVP_CipherFinal_ex(ctx, ciphertext+c_len, &f_len)){
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_ENCRYPT_CIPHER_FINAL;
@@ -253,8 +246,14 @@ int AES_256_CBC_decrypt(const unsigned char key[], const unsigned char iv[],
 			const unsigned char ciphertext[], unsigned int ciphertext_len,
 			unsigned char plaintext[], unsigned int plaintext_len, 
 			unsigned *unencrypted_data_len)
+// 10/24/2026: The plaintext buffer must be at least as long as the
+// ciphertext. This is checked before decrypting so a long ciphertext
+// can no longer overflow the plaintext buffer.
 {
+  *(unencrypted_data_len) = 0;
   if(ciphertext_len == 0) return AES_NO_ERROR;
+  if((ciphertext_len % AES_CBC_BLOCK_SIZE) != 0) return AES_ERROR_BAD_BUFFER_LEN;
+  if(plaintext_len < ciphertext_len) return AES_ERROR_BUFFER_OVERFLOW;
 
   int f_len = 0;
   int p_len = 0;
@@ -264,38 +263,22 @@ int AES_256_CBC_decrypt(const unsigned char key[], const unsigned char iv[],
     return  AES_ERROR_EVP_CTX_NEW;
   }
 
-  const EVP_CIPHER *null_cipher_type = 0;
-  ENGINE *null_impl = 0;
-  const unsigned char *null_key = 0;
-  const unsigned char *null_iv = 0;
-
-  // Not setting key or IV here
-  if(!EVP_CipherInit_ex(ctx, EVP_aes_256_cbc(), null_impl, null_key, null_iv, 0)){
+  if(!EVP_CipherInit_ex(ctx, EVP_aes_256_cbc(), 0, key, iv, 0)){
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_CIPHER_INIT;
   }
 
-  // Check key and IV lengths 
-  OPENSSL_assert(EVP_CIPHER_CTX_key_length(ctx) == AES_256_KEY_SIZE);
-  OPENSSL_assert(EVP_CIPHER_CTX_iv_length(ctx) == AES_CBC_BLOCK_SIZE);
-
-  // Set the key and IV
-  if(!EVP_CipherInit_ex(ctx, null_cipher_type, null_impl, key, iv, 0)){
+  if((EVP_CIPHER_CTX_key_length(ctx) != (int)AES_256_KEY_SIZE) ||
+     (EVP_CIPHER_CTX_iv_length(ctx) != (int)AES_CBC_BLOCK_SIZE)) {
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_CIPHER_INIT;
   }
 
-  if(!EVP_CipherUpdate(ctx, plaintext, &p_len, (const unsigned char*)ciphertext, ciphertext_len)) {
+  if(!EVP_CipherUpdate(ctx, plaintext, &p_len, ciphertext, ciphertext_len)) {
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_DECRYPT_CIPHER_UPDATE;
   }
 
-  if(p_len > plaintext_len) {
-    EVP_CIPHER_CTX_free(ctx);
-    return AES_ERROR_BUFFER_OVERFLOW;
-  }
-
-  // If padding is enabled (the default) then EVP_EncryptFinal_ex() encrypts the final data
   if(!EVP_CipherFinal_ex(ctx, plaintext+p_len, &f_len)){
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_DECRYPT_CIPHER_FINAL;
@@ -321,6 +304,8 @@ int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 		unsigned char HMAC[], unsigned HMAC_len,
 		int mode, 
 		unsigned int key_iterations)
+// NOTE: The "buf" variable must be large enough to hold the encrypted
+// buffer, which is *buf_len plus AES_file_enctryption_overhead() bytes.
 {
   // 
   // Mode -> salt -> verifier -> ciphertext -> hmac 
@@ -338,69 +323,63 @@ int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
   unsigned len = *(buf_len);
   if(len == 0) return AES_NO_ERROR;
 
-  unsigned char MODE[AES_MAX_MODE_LEN];
-  AES_fillrand(MODE, sizeof(MODE));
-
   if(mode == 0) { // Signal non-encrypted buffer and return
     return AES_NO_ERROR;
   }
 
   if(secret_len < AES_MIN_SECRET_LEN) return AES_ERROR_SECRET_MIN_LENGTH;
   if(secret_len > AES_MAX_SECRET_LEN) return AES_ERROR_SECRET_MAX_LENGTH;
-
-  // Make a copy of the plaintext contents current passed in the buf variable
-  char *new_buf = new char[len];
-  if(!new_buf) return AES_ERROR_OUT_OF_MEMORY;
-  memmove(new_buf, buf, len);
-
-  AES_fillrand((unsigned char *)buf, len); // Clear the buffer
-
-  // Set the salt
-  int rv = AES_init_salt(SALT, SALT_len);
-  if(rv != AES_NO_ERROR) {
-    delete new_buf;
-    return rv;
+  if(SALT_len != AES_MAX_SALT_LEN || VERIFIER_len != AES_MAX_VERIFIER_LEN ||
+     HMAC_len != AES_MAX_HMAC_LEN || KEY_len < AES_256_KEY_SIZE || IV_len < AES_CBC_BLOCK_SIZE) {
+    return AES_ERROR_BAD_BUFFER_LEN;
   }
 
-  unsigned offset = 0;
-  memmove(buf, MODE, sizeof(MODE));
-  offset += sizeof(MODE);
-  memmove((buf+offset), SALT, SALT_len);
-  offset += SALT_len;
+  // 10/24/2026: The mode bytes must never be all zero. Older versions
+  // treated all-zero mode bytes as an unencrypted block, and a failed
+  // RAND_bytes() call could leave them uninitialized.
+  unsigned char MODE[AES_MAX_MODE_LEN];
+  memset(MODE, 0, sizeof(MODE));
+  if(AES_fillrand(MODE, sizeof(MODE)) != (int)sizeof(MODE)) return AES_ERROR_SALT_INIT_FAILED;
+  if(MODE[0] == 0 && MODE[1] == 0 && MODE[2] == 0 && MODE[3] == 0) MODE[0] = 1;
 
-  memmove((buf+offset), VERIFIER, VERIFIER_len);
-  offset += VERIFIER_len;
+  // Encrypt into a separate buffer, then build the output in buf
+  unsigned ciphertext_len = len + AES_CBC_BLOCK_SIZE;
+  unsigned char *ciphertext = new unsigned char[ciphertext_len];
+  if(!ciphertext) return AES_ERROR_OUT_OF_MEMORY;
 
-  rv = AES_derive_key((const unsigned char*)secret, secret_len, SALT, SALT_len, KEY, KEY_len, IV, IV_len, key_iterations);
-  if(rv != AES_NO_ERROR) {
-    delete new_buf;
-    return rv;
+  int rv = AES_init_salt(SALT, SALT_len);
+  if(rv == AES_NO_ERROR) {
+    rv = AES_derive_key((const unsigned char*)secret, secret_len, SALT, SALT_len, KEY, KEY_len, IV, IV_len, key_iterations);
   }
 
   unsigned encrypted_data_len = 0;
-  unsigned char ciphertext[AES_CIPHERTEXT_BUF_SIZE];
-  rv = AES_256_CBC_encrypt(KEY, IV, (const unsigned char*)new_buf, len, ciphertext, sizeof(ciphertext), &encrypted_data_len);
-  if(rv != AES_NO_ERROR) {
-    delete new_buf;
-    return rv;
+  if(rv == AES_NO_ERROR) {
+    rv = AES_256_CBC_encrypt(KEY, IV, (const unsigned char*)buf, len, ciphertext, ciphertext_len, &encrypted_data_len);
+  }
+  if(rv == AES_NO_ERROR) {
+    rv = AES_HMAC(KEY, KEY_len, ciphertext, encrypted_data_len, HMAC, HMAC_len);
   }
 
-  memmove((buf+offset), ciphertext, encrypted_data_len);
-  offset += encrypted_data_len;
-
-  rv = AES_HMAC(KEY, KEY_len, ciphertext, encrypted_data_len, HMAC, HMAC_len);
-  if(rv != AES_NO_ERROR) {
-    delete new_buf;
-    return rv;
+  if(rv == AES_NO_ERROR) {
+    // Clear the plaintext and write the encrypted block
+    OPENSSL_cleanse(buf, len);
+    unsigned offset = 0;
+    memmove(buf, MODE, sizeof(MODE));
+    offset += sizeof(MODE);
+    memmove((buf+offset), SALT, SALT_len);
+    offset += SALT_len;
+    memmove((buf+offset), VERIFIER, VERIFIER_len);
+    offset += VERIFIER_len;
+    memmove((buf+offset), ciphertext, encrypted_data_len);
+    offset += encrypted_data_len;
+    memmove((buf+offset), HMAC, HMAC_len);
+    offset += HMAC_len;
+    *(buf_len) = offset;
   }
-  
-  memmove((buf+offset), HMAC, HMAC_len);
-  offset += HMAC_len;
 
-  // Set the new buffer length
-  *(buf_len) = offset;
-  
-  return AES_NO_ERROR;
+  OPENSSL_cleanse(ciphertext, ciphertext_len);
+  delete[] ciphertext;
+  return rv;
 }
 
 int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], unsigned secret_len,
@@ -416,6 +395,10 @@ int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
   unsigned char IV[AES_MAX_IV_LEN];
   unsigned char KEY[AES_MAX_KEY_LEN];
 
+  // 10/24/2026: The verifier was written to the file without being set,
+  // which copied uninitialized stack memory into every file header.
+  memset(VERIFIER, 0, sizeof(VERIFIER));
+
   int rv = AES_Encrypt(buf, buf_len, secret, secret_len,
 		       SALT, sizeof(SALT),
 		       KEY, sizeof(KEY),
@@ -425,11 +408,11 @@ int AES_Encrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 		       mode, key_iterations);
 
   // Clear all buffers and return
-  AES_fillrand(SALT, sizeof(SALT));
-  AES_fillrand(VERIFIER, sizeof(VERIFIER));
-  AES_fillrand(HMAC, sizeof(HMAC));
-  AES_fillrand(KEY, sizeof(KEY));
-  AES_fillrand(IV, sizeof(IV));
+  OPENSSL_cleanse(SALT, sizeof(SALT));
+  OPENSSL_cleanse(VERIFIER, sizeof(VERIFIER));
+  OPENSSL_cleanse(HMAC, sizeof(HMAC));
+  OPENSSL_cleanse(KEY, sizeof(KEY));
+  OPENSSL_cleanse(IV, sizeof(IV));
 
   return rv;
 }
@@ -445,6 +428,11 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 // Decrypt a specified buffer of size "buf_len" with a secret key/password/passphrase
 // ranging from 8 bytes to 128 bytes. Returns 0 if successful or a non-zero value to
 // indicate an error condition.
+// 10/24/2026: All lengths are checked before use, the HMAC is verified
+// with a constant time compare before anything is decrypted, and blocks
+// with all-zero mode bytes are rejected. Older versions returned those
+// blocks as plaintext without checking the secret or the HMAC, which let
+// anyone forge a file that decrypted under any password.
 {
   unsigned len = *(buf_len);
   if(len == 0) return AES_NO_ERROR;
@@ -454,102 +442,59 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
     return AES_NO_ERROR;
   }
 
-  unsigned char MODE[AES_MAX_MODE_LEN];
-  unsigned char r_MODE[AES_MAX_MODE_LEN]; // Recovered mode
-  unsigned char HMAC[AES_MAX_HMAC_LEN];
-
-  // Clear all buffers 
-  AES_fillrand(MODE, sizeof(MODE));
-  AES_fillrand(r_MODE, sizeof(r_MODE));
-  AES_fillrand(SALT, SALT_len);
-  AES_fillrand(VERIFIER, VERIFIER_len);
-  AES_fillrand(r_HMAC, r_HMAC_len);
-  AES_fillrand(HMAC, sizeof(HMAC));
-  AES_fillrand(KEY, KEY_len);
-  AES_fillrand(IV, IV_len);
-  
-  int rv = 0;
-  unsigned offset = 0;
-  memmove(r_MODE, buf, sizeof(r_MODE));
-  offset += sizeof(r_MODE);
-
-  // Read the mode setting for this encrypted block 
-  // Mode 0 = Plain text, no encryption (debugging only)
-  // All others using = 256-bit AES
-  memset(MODE, 0, sizeof(MODE)); // Check for mode 0
-  if(memcmp(MODE, r_MODE, sizeof(MODE)) == 0) { // Non-encrypted buffer for testing only 
-    len -=  sizeof(MODE); 
-    memmove(buf, (buf+offset), len);
-    *(buf_len) = len;
-    return AES_NO_ERROR;
-  }
-  
   if(secret_len < AES_MIN_SECRET_LEN) return AES_ERROR_SECRET_MIN_LENGTH;
   if(secret_len > AES_MAX_SECRET_LEN) return AES_ERROR_SECRET_MAX_LENGTH;
-  
-   // Recover the salt
-  if(*(buf_len) < SALT_len) {
-    return AES_ERROR_BUFFER_OVERFLOW;
+  if(SALT_len != AES_MAX_SALT_LEN || VERIFIER_len != AES_MAX_VERIFIER_LEN ||
+     r_HMAC_len != AES_MAX_HMAC_LEN || KEY_len < AES_256_KEY_SIZE || IV_len < AES_CBC_BLOCK_SIZE) {
+    return AES_ERROR_BAD_BUFFER_LEN;
   }
-  memmove(SALT, (buf+offset), SALT_len);
+
+  // Mode -> salt -> verifier -> ciphertext (at least one block) -> hmac 
+  unsigned header_len = AES_MAX_MODE_LEN + SALT_len + VERIFIER_len;
+  if(len < (header_len + AES_CBC_BLOCK_SIZE + r_HMAC_len)) return AES_ERROR_BAD_BUFFER_LEN;
+  unsigned ciphertext_len = len - header_len - r_HMAC_len;
+  if((ciphertext_len % AES_CBC_BLOCK_SIZE) != 0) return AES_ERROR_BAD_BUFFER_LEN;
+
+  const unsigned char *ubuf = (const unsigned char *)buf;
+  const unsigned char *r_MODE = ubuf;
+  if(r_MODE[0] == 0 && r_MODE[1] == 0 && r_MODE[2] == 0 && r_MODE[3] == 0) {
+    return AES_ERROR_BAD_MODE;
+  }
+
+  unsigned offset = AES_MAX_MODE_LEN;
+  memmove(SALT, ubuf+offset, SALT_len);
   offset += SALT_len;
-
-  rv = AES_derive_key((unsigned char *)secret, secret_len, SALT, SALT_len, KEY, KEY_len, IV, IV_len, key_iterations);
-  if(rv != AES_NO_ERROR) {
-    return rv;
-  }
-
-  // Recover the verifier
-  if(*(buf_len) < (offset+VERIFIER_len)) {
-    return AES_ERROR_BUFFER_OVERFLOW;
-  }
-  memmove(VERIFIER, (buf+offset), VERIFIER_len);
+  memmove(VERIFIER, ubuf+offset, VERIFIER_len);
   offset += VERIFIER_len;
+  const unsigned char *ciphertext = ubuf+offset;
+  memmove(r_HMAC, ubuf+offset+ciphertext_len, r_HMAC_len);
 
-  // Recover the ciphertext, excluding the HMAC
-  len -= (offset+r_HMAC_len);
-  char *new_buf = new char[len];
-  if(!new_buf) return AES_ERROR_OUT_OF_MEMORY;
+  int rv = AES_derive_key((unsigned char *)secret, secret_len, SALT, SALT_len, KEY, KEY_len, IV, IV_len, key_iterations);
+  if(rv != AES_NO_ERROR) return rv;
 
-  if(*(buf_len) < (offset+len)) {
-    return AES_ERROR_BUFFER_OVERFLOW;
-  }
-  memmove(new_buf, (buf+offset), len);
-  offset += len;
-
-  // Unencrypt the data and verifiy it's contents
-  rv = AES_HMAC(KEY, KEY_len, (const unsigned char*)new_buf, len, HMAC, sizeof(HMAC));
-  if(rv != AES_NO_ERROR) {
-    delete new_buf;
-    return rv;
-  }
- 
-  unsigned char plaintext[AES_PLAINTEXT_BUF_SIZE];
-  unsigned unencrypted_data_len = 0;
-  rv = AES_256_CBC_decrypt(KEY, IV, (const unsigned char*)new_buf, len, plaintext, sizeof(plaintext), &unencrypted_data_len);
-  if(rv != AES_NO_ERROR) {
-    delete new_buf;
-    return rv;
-  }
-  
-  // Recover and test the MAC value
-  if(*(buf_len) < (offset+r_HMAC_len)) {
-    return AES_ERROR_BUFFER_OVERFLOW;
-  }
-
-  memmove(r_HMAC, (buf+offset), r_HMAC_len);
-  if(memcmp(HMAC, r_HMAC, r_HMAC_len) != 0) {
-    delete new_buf;
+  // Authenticate the ciphertext before decrypting it
+  unsigned char HMAC[AES_MAX_HMAC_LEN];
+  rv = AES_HMAC(KEY, KEY_len, ciphertext, ciphertext_len, HMAC, sizeof(HMAC));
+  if(rv != AES_NO_ERROR) return rv;
+  if(CRYPTO_memcmp(HMAC, r_HMAC, r_HMAC_len) != 0) {
+    OPENSSL_cleanse(HMAC, sizeof(HMAC));
     return AES_ERROR_AUTH_FAILED;
   }
+  OPENSSL_cleanse(HMAC, sizeof(HMAC));
 
-  // Set the new buffer length and the buffer data
-  *(buf_len) = unencrypted_data_len;
-  memmove(buf, plaintext, unencrypted_data_len);
-  memset(new_buf, 0, len);
-  delete new_buf;
-
-  return AES_NO_ERROR;
+  unsigned char *plaintext = new unsigned char[ciphertext_len];
+  if(!plaintext) return AES_ERROR_OUT_OF_MEMORY;
+  unsigned unencrypted_data_len = 0;
+  rv = AES_256_CBC_decrypt(KEY, IV, ciphertext, ciphertext_len, plaintext, ciphertext_len, &unencrypted_data_len);
+  if(rv == AES_NO_ERROR) {
+    // The plaintext is always shorter than the encrypted block
+    memmove(buf, plaintext, unencrypted_data_len);
+    OPENSSL_cleanse(buf+unencrypted_data_len, len-unencrypted_data_len);
+    *(buf_len) = unencrypted_data_len;
+  }
+  OPENSSL_cleanse(plaintext, ciphertext_len);
+  delete[] plaintext;
+  return rv;
 }
 
 int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], unsigned secret_len,
@@ -574,11 +519,11 @@ int AES_Decrypt(char *buf, unsigned int *buf_len, const unsigned char secret[], 
 		       key_iterations);
 
   // Clear all buffers and return
-  AES_fillrand(SALT, sizeof(SALT));
-  AES_fillrand(VERIFIER, sizeof(VERIFIER));
-  AES_fillrand(HMAC, sizeof(HMAC));
-  AES_fillrand(KEY, sizeof(KEY));
-  AES_fillrand(IV, sizeof(IV));
+  OPENSSL_cleanse(SALT, sizeof(SALT));
+  OPENSSL_cleanse(VERIFIER, sizeof(VERIFIER));
+  OPENSSL_cleanse(HMAC, sizeof(HMAC));
+  OPENSSL_cleanse(KEY, sizeof(KEY));
+  OPENSSL_cleanse(IV, sizeof(IV));
 
   return rv;
 }
@@ -644,15 +589,16 @@ int AES_decrypt_buf(AES_buf_t *b, void *buf, unsigned int *buf_len)
 }
 
 void AES_buf_t::Clear()
+// 10/24/2026: Use OPENSSL_cleanse() so the compiler cannot remove the wipe
 {
-  memset(buf, 0, AES_CIPHER_STREAM_BUF_SIZE);
+  OPENSSL_cleanse(buf, AES_CIPHER_STREAM_BUF_SIZE);
   buf_len = 0;
-  memset(salt, 0, AES_MAX_SALT_LEN);
-  memset(verifier, 0, AES_MAX_VERIFIER_LEN);
-  memset(hmac, 0, AES_MAX_HMAC_LEN);
-  memset(iv, 0, AES_MAX_IV_LEN);
-  memset(key, 0, AES_MAX_KEY_LEN);
-  memset(secret, 0, AES_MAX_SECRET_LEN);
+  OPENSSL_cleanse(salt, AES_MAX_SALT_LEN);
+  OPENSSL_cleanse(verifier, AES_MAX_VERIFIER_LEN);
+  OPENSSL_cleanse(hmac, AES_MAX_HMAC_LEN);
+  OPENSSL_cleanse(iv, AES_MAX_IV_LEN);
+  OPENSSL_cleanse(key, AES_MAX_KEY_LEN);
+  OPENSSL_cleanse(secret, AES_MAX_SECRET_LEN);
   secret_len = 0;
 }
 

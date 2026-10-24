@@ -45,7 +45,7 @@ void consolePutChar(const char c);
 int consoleGetString(gxString &s, int password = 0, int clear_input = 1);
 int consoleGetString(gxString &s, char *defval, int password = 0,
 		     int clear_input = 1);
-int consoleGetString(char *s, int password = 0);
+int consoleGetString(char *s, int password = 0, unsigned max_len = 0);
 
 #endif // __GX_C_MTHREAD_CLIENT_HPP__
 // ----------------------------------------------------------- // 
