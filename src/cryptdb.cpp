@@ -1803,7 +1803,9 @@ int FCryptCache::AddRSAKeyToStaticArea(const char *fname, const MemoryBuffer &se
   
   static_data_block_header.ciphertext_len = rsa_ciphertext_len;
   static_data_block_header.block_len += rsa_ciphertext_len;
-  static_data_block_header.block_len += sizeof(hash);
+  // 10/24/2026: Cast sizeof() for 64-bit Windows builds, where adding a
+  // 64-bit size_t to a gxUINT32 was ambiguous
+  static_data_block_header.block_len += (__ULWORD__)sizeof(hash);
 
   gxsBase64Encode(rsa_key_username, username_buf, strlen(rsa_key_username));
   username_buf_len = strlen(username_buf);
@@ -1910,7 +1912,7 @@ int FCryptCache::AddSmartCardCertToStaticArea(SmartCardOB *sc, int use_cert_file
   
   static_data_block_header.ciphertext_len = ciphertext_len;
   static_data_block_header.block_len += ciphertext_len;
-  static_data_block_header.block_len += sizeof(hash);
+  static_data_block_header.block_len += (__ULWORD__)sizeof(hash);
 
   gxsBase64Encode(smartcard_cert_username, username_buf, strlen(smartcard_cert_username));
   username_buf_len = strlen(username_buf);
