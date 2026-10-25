@@ -81,6 +81,7 @@ gxString rsa_key_passphrase;
 int has_passphrase = 0;
 gxString rsa_key_username;
 int list_users = 0;
+int fips_request = FC_FIPS_AUTO;
 #ifdef __ENABLE_SMART_CARD__
 SmartCardOB sc;
 gxString smartcard_cert_username;
@@ -94,6 +95,9 @@ int ProcessDashDashArg(gxString &arg);
 int ProcessArgs(char *arg);
 int DEBUG_m(char *message, int level = 1, int rv = 0);
 int ExitProgram(int rv = 0, char *exit_message = 0);
+int CheckFileFormat(const char *fname, int &fmt);
+int ListNewFormatUsers(const char *fname);
+int DecryptNewFormatFile(const char *fname);
 
 void DisplayVersion()
 {
@@ -109,7 +113,15 @@ void DisplayVersion()
   cout << "\n" << flush;
   cout << "Encryption engine: Openssl" << "\n" << flush;
   cout << "Version string: " << OPENSSL_VERSION_TEXT << "\n" << flush;
-  cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << "\n" << flush;
+  cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << dec << "\n" << flush;
+  cout << "Encrypted file formats: " << FC_FILE_VERSION << ", and 2023103 and 2023102 outside FIPS mode" << "\n" << flush;
+  gxString fips_err;
+  if(FC_crypto_init(fips_request, fips_err)) {
+    cout << FC_crypto_status().c_str() << "\n" << flush;
+  }
+  else {
+    cout << fips_err.c_str() << "\n" << flush;
+  }
 #ifdef __ENABLE_SMART_CARD__
   cout << "\n" << flush;
   cout << "Smart card enabled for " << SC_get_default_engine_ID() << "\n" << flush;
@@ -137,14 +149,16 @@ void HelpMessage()
   cout << "          --allow-unencrypted (Allow decrypting mode 0 test files that are not encrypted)" << "\n" << flush;
   cout << "          --cache=size (Set the cache size)" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
+  cout << "          --fips (Use only the OpenSSL FIPS provider, see README.txt)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
-  cout << "          --iter=num (To set the number of derived key iterations)" << "\n" << flush;
+  cout << "          --iter=num (Key iterations for old format files, new files store their own)" << "\n" << flush;
   cout << "          --key=aes_key (Use a key file for symmetric file decryption)" << "\n" << flush;
 #ifdef __ENABLE_SMART_CARD__
   cout << "          --list-users (List the users with RSA key of Smart Card cert access and exit)" << "\n" << flush;
 #else
   cout << "          --list-users (List the users with RSA key access and exit)" << "\n" << flush;
 #endif
+  cout << "          --no-fips (Do not use FIPS mode, needed for old format files on a FIPS system)" << "\n" << flush;
   cout << "          --no-path (Restore only the file name, without the stored path)" << "\n" << flush;
   cout << "          --outfile=fname (Write decrypted output to specified file name)" << "\n" << flush;
   cout << "          --outdir=dir (Write decrypted output to this directory)" << "\n" << flush;
@@ -375,6 +389,14 @@ int ProcessDashDashArg(gxString &arg)
     write_to_stdout = 1;
     has_valid_args = 1;
   }
+  if(arg == "fips") {
+    fips_request = FC_FIPS_ON;
+    has_valid_args = 1;
+  }
+  if(arg == "no-fips") {
+    fips_request = FC_FIPS_OFF;
+    has_valid_args = 1;
+  }
 
 
   #ifdef __ENABLE_SMART_CARD__
@@ -533,7 +555,144 @@ int ExitProgram(int rv, char *exit_message)
   if(exit_message) {
     cerr << exit_message << "\n" << flush;
   }
+  FC_crypto_cleanup();
   return rv;
+}
+
+// 10/25/2026: Helpers for 2026102 format files
+int CheckFileFormat(const char *fname, int &fmt)
+// Returns false if the file cannot be decrypted in this mode
+{
+  fmt = FC_file_format(fname);
+  if(fmt == FC_FORMAT_OPEN_ERROR) {
+    cerr << "ERROR: Cannot open " << fname << "\n" << flush;
+    return 0;
+  }
+  if(fmt == FC_FORMAT_LEGACY) {
+    if(FC_fips_mode()) {
+      cerr << "ERROR: " << fname << " uses the old file format, which FIPS mode does not allow" << "\n" << flush;
+      cerr << "ERROR: Rerun with --no-fips, or convert the file with fmigrate --no-fips" << "\n" << flush;
+      return 0;
+    }
+    if(fips_request == FC_FIPS_OFF && FC_system_fips_requested()) {
+      cerr << "NOTICE: Decrypting old format file " << fname << " outside FIPS mode" << "\n" << flush;
+    }
+  }
+  return 1;
+}
+
+int ListNewFormatUsers(const char *fname)
+{
+  FCryptFile fc;
+  if(!fc.LoadHeader(fname)) {
+    cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
+    return 0;
+  }
+  // The key slots are not authenticated until the file is unlocked
+  int n = 0;
+  gxListNode<FCKeySlot> *list_ptr = fc.slots.GetHead();
+  while(list_ptr) {
+    if(list_ptr->data.type != FC_SLOT_SECRET) {
+      if(n++ == 0) cout << "Encrypted file username inventory " << "\n" << flush;
+      cout << "Username: " << list_ptr->data.username.c_str() << " Access: "
+	   << FC_slot_type_name(list_ptr->data.type) << "\n" << flush;
+    }
+    list_ptr = list_ptr->next;
+  }
+  if(n == 0) {
+    cerr << "ERROR: No authorized RSA users found in encrypted file " << fname << "\n" << flush;
+  }
+  return 1;
+}
+
+int DecryptNewFormatFile(const char *fname)
+{
+  FCryptFile fc;
+  fc.path_mode = restore_path_mode;
+  fc.overwrite = overwrite;
+  if(!output_dir_name.is_null()) fc.output_dir_name = output_dir_name;
+  if(!fc.LoadHeader(fname)) {
+    cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
+    return 0;
+  }
+
+  int ok = 0;
+  if(use_private_rsa_key) {
+    char *passphrase = 0;
+    if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
+    ok = fc.UnlockWithRSAKey(rsa_key_username.c_str(), private_key, private_key_len, passphrase);
+    if(!ok) {
+      cerr << "ERROR: The private RSA key provided for user " << rsa_key_username.c_str() << " does not have access to decrypt file " << fname << "\n" << flush;
+    }
+  }
+#ifdef __ENABLE_SMART_CARD__
+  else if(use_smartcard_cert) {
+    FCKeySlot *slot = fc.FindSlot(FC_SLOT_SMARTCARD, smartcard_cert_username.c_str());
+    if(!slot) {
+      fc.err << clear << "No smart card slot for user " << smartcard_cert_username;
+    }
+    else {
+      unsigned char file_key[FC_MAX_WRAPPED_LEN];
+      unsigned file_key_len = 0;
+      int rv = SC_private_key_decrypt(&sc, slot->wrapped.m_buf(), slot->wrapped.length(),
+				      file_key, sizeof(file_key), &file_key_len, RSA_PKCS1_OAEP_PADDING);
+      if(rv != 0) {
+	fc.err << clear << "Smart card private key decrypt failed for cert ID " << sc.cert_id << ": " << sc.err_string;
+      }
+      else if(file_key_len != FC_KEY_LEN) {
+	fc.err << clear << "Bad length for decrypted key";
+      }
+      else {
+	ok = fc.UnlockWithFileKey(file_key);
+      }
+      OPENSSL_cleanse(file_key, sizeof(file_key));
+    }
+    if(!ok) {
+      cerr << "ERROR: Smart card for user " << smartcard_cert_username.c_str() << " does not have access to decrypt file " << fname << "\n" << flush;
+    }
+  }
+#endif
+  else {
+    ok = fc.UnlockWithSecret(aes_file_decrypt_secret);
+  }
+  if(!ok) {
+    cerr << "ERROR: File decrypt failed " << fname << "\n" << flush;
+    cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
+    return 0;
+  }
+
+  if(list_file_names) {
+    gxString sbuf;
+    if(!fc.DecryptStoredName(sbuf)) {
+      cerr << "ERROR: File decrypt failed " << fname << "\n" << flush;
+      cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
+      return 0;
+    }
+    if(clientcfg->verbose_mode) cerr << "File decrypt successful" << "\n" << flush;
+    cout << "Decrypted name: " << sbuf.c_str() << "\n" << flush;
+    return 1;
+  }
+
+  if(write_to_stdout) ok = fc.DecryptFile("stdout");
+  else if(use_ouput_file) ok = fc.DecryptFile(user_defined_output_file.c_str());
+  else ok = fc.DecryptFile();
+  if(!ok) {
+    cerr << "ERROR: File decrypt failed " << fname << "\n" << flush;
+    cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
+    return 0;
+  }
+  if(clientcfg->verbose_mode) {
+    gxString sbuf;
+    sbuf << clear << wn << fc.bytes_wrote;
+    cerr << "File decrypt successful" << "\n" << flush;
+    cerr << "Wrote " << sbuf.c_str() << " bytes to " << fc.ofname.c_str() << "\n" << flush;
+  }
+  if(remove_src_file) {
+    if(futils_remove(fname) != 0) {
+      cerr << "ERROR: Error removing " << fname << " source file" << "\n" << flush;
+    }
+  }
+  return 1;
 }
 
 int main(int argc, char **argv)
@@ -657,6 +816,13 @@ int main(int argc, char **argv)
     return ExitProgram(1);
   }
   
+  gxString fips_err;
+  if(!FC_crypto_init(fips_request, fips_err)) {
+    cerr << "ERROR: " << fips_err.c_str() << "\n" << flush;
+    return ExitProgram(1);
+  }
+  if(clientcfg->verbose_mode) cerr << FC_crypto_status().c_str() << "\n" << flush;
+
   if(use_key_file) {
     if(clientcfg->verbose_mode) cerr << "Using key file for decryption" << "\n" << flush;
     aes_file_decrypt_secret.Clear(1);
@@ -756,6 +922,12 @@ int main(int argc, char **argv)
   if(list_users) { // List user names found and exit program
     while(ptr) {
       cout << "Listing usernames with RSA key access to encrypted file " << ptr->data.c_str() << "\n" << flush;
+      int fmt = FC_file_format(ptr->data.c_str());
+      if(fmt == FC_FORMAT_2026102) {
+	if(!ListNewFormatUsers(ptr->data.c_str())) err = 1;
+	ptr = ptr->next;
+	continue;
+      }
       FCryptCache fc(num_buckets);
       if(!fc.LoadStaticDataBlocks(ptr->data.c_str())) {
 	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush; ;
@@ -785,6 +957,20 @@ int main(int argc, char **argv)
   
   while(ptr) { // Decrypt file and exit program
     if(clientcfg->verbose_mode) cerr << "Decrypting: " << ptr->data.c_str() << "\n" << flush;
+
+    int fmt;
+    if(!CheckFileFormat(ptr->data.c_str(), fmt)) {
+      err = 1;
+      ptr = ptr->next;
+      continue;
+    }
+    if(fmt == FC_FORMAT_2026102) {
+      if(!DecryptNewFormatFile(ptr->data.c_str())) err = 1;
+      ptr = ptr->next;
+      continue;
+    }
+
+    // Files from releases before 2026.102
     
     FCryptCache fc(num_buckets);
     fc.key_iterations = key_iterations;
@@ -1018,7 +1204,7 @@ int main(int argc, char **argv)
 	list_ptr = list_ptr->next;
       }
       if(!found_key) {
-	cerr << "ERROR: Smart card for user " << rsa_key_username.c_str() << " does not have access to decrypt file " << ptr->data.c_str() << "\n" << flush;
+	cerr << "ERROR: Smart card for user " << smartcard_cert_username.c_str() << " does not have access to decrypt file " << ptr->data.c_str() << "\n" << flush;
 	err = 1;
 	ptr = ptr->next;
 	continue;

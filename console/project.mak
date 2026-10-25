@@ -13,6 +13,10 @@ RSADB_DEP = $(APPINC_PATH)rsadb.h
 
 SMART_CARD_DEP = $(APPINC_PATH)smart_card.h
 
+FCFIPS_DEP = $(APPINC_PATH)fcfips.h $(APPINC_PATH)aesdb.h
+
+FCFILE_DEP = $(APPINC_PATH)fcfile.h $(APPINC_PATH)fcfips.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)rsadb.h $(APPINC_PATH)cryptdb.h
+
 GLOBALS_DEP = $(APPINC_PATH)globals.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
 C_CONFIG_DEP = $(APPINC_PATH)c_config.h $(APPINC_PATH)globals.h $(APPINC_PATH)c_thread.h \
@@ -22,7 +26,7 @@ C_THREAD_DEP = $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
 	$(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h \
 	$(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
-PROJECT_DEP = ../fcrypt.h \
+PROJECT_DEP = ../fcrypt.h $(APPINC_PATH)fcfips.h $(APPINC_PATH)fcfile.h \
 	    $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
 	    $(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h \
 	    $(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
@@ -39,6 +43,12 @@ rsadb$(OBJ_EXT):	$(APPSRC_PATH)rsadb.cpp $(RSADB_DEP)
 
 smart_card$(OBJ_EXT):	$(APPSRC_PATH)smart_card.cpp $(SMART_CARD_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)smart_card.cpp
+
+fcfips$(OBJ_EXT):	$(APPSRC_PATH)fcfips.cpp $(FCFIPS_DEP)
+	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)fcfips.cpp
+
+fcfile$(OBJ_EXT):	$(APPSRC_PATH)fcfile.cpp $(FCFILE_DEP)
+	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)fcfile.cpp
 
 globals$(OBJ_EXT):	$(APPSRC_PATH)globals.cpp $(GLOBALS_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)globals.cpp
@@ -176,6 +186,8 @@ OBJECTS = $(PROJECT)$(OBJ_EXT) \
 	aesdb$(OBJ_EXT) \
 	rsadb$(OBJ_EXT) \
 	smart_card$(OBJ_EXT) \
+	fcfips$(OBJ_EXT) \
+	fcfile$(OBJ_EXT) \
 	c_config$(OBJ_EXT) \
 	c_thread$(OBJ_EXT)
 # ===============================================================

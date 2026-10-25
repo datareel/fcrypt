@@ -190,6 +190,13 @@ int AES_HMAC(const unsigned char key[], unsigned int key_len,
 	     const unsigned char data[], unsigned int data_len,
 	     unsigned char hash[], unsigned int hash_len);
 
+// 10/25/2026: OpenSSL library context used for every fetch, set by
+// FC_crypto_init() in fcfips.cpp. A null context is OpenSSL's default.
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+void AES_set_libctx(OSSL_LIB_CTX *libctx);
+OSSL_LIB_CTX *AES_get_libctx();
+#endif
+
 // 10/25/2026: Streaming HMAC-SHA256. OpenSSL 3 builds use EVP_MAC so the
 // HMAC runs through the loaded provider (including the FIPS provider).
 struct AES_hmac_ctx;

@@ -31,6 +31,7 @@ RSA encryption and decryption routines.
 */
 // ----------------------------------------------------------- // 
 #include <rsadb.h>
+#include <aesdb.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,7 +90,11 @@ int RSA_fillrand(unsigned char *buf, unsigned int len)
 // Return the number of bytes filled or -1 for errors
 {
   // RAND_bytes() and RAND_priv_bytes() return 1 on success, -1 if not supported by the current RAND method, or 0 on other failure.
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  if(RAND_bytes_ex(AES_get_libctx(), buf, len, 0) != 1) return -1;
+#else
   if(RAND_bytes(buf, len) != 1) return -1;
+#endif
   return len;
 }
 
@@ -143,34 +148,52 @@ int RSA_passphrase_callback(char *buf, int size, int rwflag, void *userdata)
 // 10/25/2026: All RSA operations use the EVP_PKEY interface so they run
 // through the loaded OpenSSL provider, including the FIPS provider. The
 // low-level RSA_* calls are deprecated in OpenSSL 3 and bypass providers.
-static EVP_PKEY *RSA_load_public_key(const unsigned char key[], unsigned key_len, char *passphrase)
+EVP_PKEY *RSA_load_public_key(const unsigned char key[], unsigned key_len, char *passphrase)
 {
   if(!key || key_len == 0 || key_len > RSA_max_keybuf_len) return 0;
   BIO *keybio = BIO_new_mem_buf((const void *)key, (int)key_len);
   if(!keybio) return 0;
   EVP_PKEY *pkey;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  if(!passphrase) {
+    pkey = PEM_read_bio_PUBKEY_ex(keybio, 0, 0, 0, AES_get_libctx(), 0);
+  }
+  else {
+    pkey = PEM_read_bio_PUBKEY_ex(keybio, 0, RSA_passphrase_callback, passphrase, AES_get_libctx(), 0);
+  }
+#else
   if(!passphrase) {
     pkey = PEM_read_bio_PUBKEY(keybio, 0, 0, 0);
   }
   else {
     pkey = PEM_read_bio_PUBKEY(keybio, 0, RSA_passphrase_callback, passphrase);
   }
+#endif
   BIO_free(keybio);
   return pkey;
 }
 
-static EVP_PKEY *RSA_load_private_key(const unsigned char key[], unsigned key_len, char *passphrase)
+EVP_PKEY *RSA_load_private_key(const unsigned char key[], unsigned key_len, char *passphrase)
 {
   if(!key || key_len == 0 || key_len > RSA_max_keybuf_len) return 0;
   BIO *keybio = BIO_new_mem_buf((const void *)key, (int)key_len);
   if(!keybio) return 0;
   EVP_PKEY *pkey;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  if(!passphrase) {
+    pkey = PEM_read_bio_PrivateKey_ex(keybio, 0, 0, 0, AES_get_libctx(), 0);
+  }
+  else {
+    pkey = PEM_read_bio_PrivateKey_ex(keybio, 0, RSA_passphrase_callback, passphrase, AES_get_libctx(), 0);
+  }
+#else
   if(!passphrase) {
     pkey = PEM_read_bio_PrivateKey(keybio, 0, 0, 0);
   }
   else {
     pkey = PEM_read_bio_PrivateKey(keybio, 0, RSA_passphrase_callback, passphrase);
   }
+#endif
   BIO_free(keybio);
   return pkey;
 }
@@ -189,7 +212,11 @@ static int RSA_evp_op(int op, EVP_PKEY *pkey, int padding,
   *(final_len) = 0;
   int key_size = EVP_PKEY_size(pkey);
   if(key_size <= 0) return 0;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(AES_get_libctx(), pkey, 0);
+#else
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(pkey, 0);
+#endif
   if(!ctx) return 0;
 
   int rv = 0;
@@ -201,6 +228,16 @@ static int RSA_evp_op(int op, EVP_PKEY *pkey, int padding,
     default: break;
   }
   if(rv > 0) rv = EVP_PKEY_CTX_set_rsa_padding(ctx, padding);
+  if(rv > 0 && padding == RSA_PKCS1_OAEP_PADDING) {
+    // 10/25/2026: OAEP always uses SHA-256 for the hash and for MGF1
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    rv = EVP_PKEY_CTX_set_rsa_oaep_md_name(ctx, "SHA256", 0);
+    if(rv > 0) rv = EVP_PKEY_CTX_set_rsa_mgf1_md_name(ctx, "SHA256", 0);
+#else
+    rv = EVP_PKEY_CTX_set_rsa_oaep_md(ctx, EVP_sha256());
+    if(rv > 0) rv = EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, EVP_sha256());
+#endif
+  }
 
   unsigned char *work = 0;
   size_t work_len = (size_t)key_size;
@@ -275,7 +312,11 @@ static FILE *RSA_open_key_file(const char *fname, int is_private)
 int RSA_gen_key_files(const char *private_key_fname, const char *public_key_fname, int keysize,
 		      char *passphrase, int passphrase_len)
 {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(AES_get_libctx(), "RSA", 0);
+#else
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, 0);
+#endif
   if(!ctx) {
     return RSA_ERROR_CONTEXT_CREATE;
   }

@@ -108,12 +108,50 @@ const char *AES_err_string(int err)
   return AES_err_strings[err];
 };
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+static OSSL_LIB_CTX *aes_libctx = 0;
+
+void AES_set_libctx(OSSL_LIB_CTX *libctx)
+{
+  aes_libctx = libctx;
+}
+
+OSSL_LIB_CTX *AES_get_libctx()
+{
+  return aes_libctx;
+}
+
+typedef EVP_CIPHER AES_cipher_t;
+typedef EVP_MD AES_md_t;
+static AES_cipher_t *AES_fetch_cipher(const char *name) { return EVP_CIPHER_fetch(aes_libctx, name, 0); }
+static AES_md_t *AES_fetch_md(const char *name) { return EVP_MD_fetch(aes_libctx, name, 0); }
+static void AES_free_cipher(AES_cipher_t *c) { EVP_CIPHER_free(c); }
+static void AES_free_md(AES_md_t *m) { EVP_MD_free(m); }
+#else
+typedef const EVP_CIPHER AES_cipher_t;
+typedef const EVP_MD AES_md_t;
+static AES_cipher_t *AES_fetch_cipher(const char *name) { return EVP_get_cipherbyname(name); }
+static AES_md_t *AES_fetch_md(const char *name) { return EVP_get_digestbyname(name); }
+static void AES_free_cipher(AES_cipher_t *) { }
+static void AES_free_md(AES_md_t *) { }
+#endif
+
+static int AES_rand_bytes(unsigned char *buf, unsigned int len)
+// Returns 1 on success
+{
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  return RAND_bytes_ex(aes_libctx, buf, len, 0);
+#else
+  return RAND_bytes(buf, len);
+#endif
+}
+
 int AES_fillrand(unsigned char *buf, unsigned int len)
 // Generates num random bytes using OpenSSL cryptographically secure pseudo random generator.
 // Return the number of bytes filled or -1 for errors
 {
   // RAND_bytes() and RAND_priv_bytes() return 1 on success, -1 if not supported by the current RAND method, or 0 on other failure.
-  if(RAND_bytes(buf, len) != 1) return -1;
+  if(AES_rand_bytes(buf, len) != 1) return -1;
   return len;
 }
 
@@ -135,20 +173,23 @@ int AES_derive_key(const unsigned char secret[], unsigned int secret_len,
   memset(key, 0, key_len);
   memset(iv, 0, iv_len);
 
-  const EVP_CIPHER *cipher;
-  const EVP_MD *dgst = 0;
-
-  cipher = EVP_get_cipherbyname("aes-256-cbc");
+  // 10/25/2026: Fetch from the library context set by FC_crypto_init()
+  AES_cipher_t *cipher = AES_fetch_cipher("AES-256-CBC");
   if(!cipher) return AES_ERROR_NO_SUCH_CIPHER;
 
-  dgst = EVP_get_digestbyname("sha256");
-  if(!dgst) return AES_ERROR_NO_SUCH_DIGEST;
-
-  if(!EVP_BytesToKey(cipher, dgst, salt, (unsigned char *)secret, secret_len, key_iterations, key, iv)) {
-    return AES_ERROR_DERIVE_KEY_GEN_FAILED;
+  AES_md_t *dgst = AES_fetch_md("SHA256");
+  if(!dgst) {
+    AES_free_cipher(cipher);
+    return AES_ERROR_NO_SUCH_DIGEST;
   }
 
-  return AES_NO_ERROR;
+  int rv = AES_NO_ERROR;
+  if(!EVP_BytesToKey(cipher, dgst, salt, (unsigned char *)secret, secret_len, key_iterations, key, iv)) {
+    rv = AES_ERROR_DERIVE_KEY_GEN_FAILED;
+  }
+  AES_free_md(dgst);
+  AES_free_cipher(cipher);
+  return rv;
 }
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
@@ -170,7 +211,7 @@ AES_hmac_ctx *AES_hmac_new(const unsigned char key[], unsigned int key_len)
   if(!h) return 0;
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
   h->ctx = 0;
-  h->mac = EVP_MAC_fetch(0, "HMAC", 0);
+  h->mac = EVP_MAC_fetch(aes_libctx, "HMAC", 0);
   if(h->mac) h->ctx = EVP_MAC_CTX_new(h->mac);
   char digest[] = "SHA256";
   OSSL_PARAM params[2];
@@ -289,10 +330,13 @@ int AES_256_CBC_encrypt(const unsigned char key[], const unsigned char iv[],
   int c_len = 0;
   int f_len = 0;
 
-  if(!EVP_CipherInit_ex(ctx, EVP_aes_256_cbc(), 0, key, iv, 1)){
+  AES_cipher_t *cipher = AES_fetch_cipher("AES-256-CBC");
+  if(!cipher || !EVP_CipherInit_ex(ctx, cipher, 0, key, iv, 1)){
+    AES_free_cipher(cipher);
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_CIPHER_INIT;
   }
+  AES_free_cipher(cipher); // The context keeps its own reference
 
   // Check key and IV lengths 
   if((EVP_CIPHER_CTX_key_length(ctx) != (int)AES_256_KEY_SIZE) ||
@@ -338,10 +382,13 @@ int AES_256_CBC_decrypt(const unsigned char key[], const unsigned char iv[],
     return  AES_ERROR_EVP_CTX_NEW;
   }
 
-  if(!EVP_CipherInit_ex(ctx, EVP_aes_256_cbc(), 0, key, iv, 0)){
+  AES_cipher_t *cipher = AES_fetch_cipher("AES-256-CBC");
+  if(!cipher || !EVP_CipherInit_ex(ctx, cipher, 0, key, iv, 0)){
+    AES_free_cipher(cipher);
     EVP_CIPHER_CTX_free(ctx);
     return AES_ERROR_EVP_CIPHER_INIT;
   }
+  AES_free_cipher(cipher); // The context keeps its own reference
 
   if((EVP_CIPHER_CTX_key_length(ctx) != (int)AES_256_KEY_SIZE) ||
      (EVP_CIPHER_CTX_iv_length(ctx) != (int)AES_CBC_BLOCK_SIZE)) {
@@ -367,7 +414,7 @@ int AES_256_CBC_decrypt(const unsigned char key[], const unsigned char iv[],
 
 int AES_init_salt(unsigned char *salt, unsigned int salt_len)
 {
-  if(RAND_bytes(salt, salt_len) != 1) return AES_ERROR_SALT_INIT_FAILED;
+  if(AES_rand_bytes(salt, salt_len) != 1) return AES_ERROR_SALT_INIT_FAILED;
   return AES_NO_ERROR;
 }
 

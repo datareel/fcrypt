@@ -228,7 +228,9 @@ release. When a new 3.5.x release is published, rebuild OpenSSL with
 it and rebuild fcrypt. This document
 uses OpenSSL 3.5.9, the latest 3.5.x LTS release. The fcrypt Windows
 build stops with an error if it is compiled with any other OpenSSL
-version.
+version. Build OpenSSL with enable-fips and install_fips, as shown
+below, for the FIPS provider used by fcrypt FIPS mode. See FIPS MODE ON
+WINDOWS in README_windows_openssl.txt.
 
 Download the latest 3.5.x LTS release from:
 
