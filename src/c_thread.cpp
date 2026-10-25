@@ -113,19 +113,21 @@ int consoleGetChar(int &c)
 #endif // __CONSOLE__
 }
 
+// 10/25/2026: Console input echo goes to stderr so it is not mixed with
+// program output on stdout, which scripts read.
 void consolePutString(const char *s)
 {
 #if defined (__CONSOLE__)
-  printf("%s", s);
-  fflush(stdout);
+  fprintf(stderr, "%s", s);
+  fflush(stderr);
 #endif // __CONSOLE__
 }
 
 void consolePutChar(const char c)
 {
 #if defined (__CONSOLE__)
-  printf("%c", c);
-  fflush(stdout);
+  fprintf(stderr, "%c", c);
+  fflush(stderr);
 #endif // __CONSOLE__
 }
 
