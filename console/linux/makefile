@@ -1,14 +1,14 @@
 all:
-	make FINAL=1 RHEL=8 -f fcrypt.mak all
-	make FINAL=1 RHEL=8 -f fdecrypt.mak all
-	make FINAL=1 RHEL=8 -f fmigrate.mak all
+	make FINAL=1 RHEL=10 -f fcrypt.mak all
+	make FINAL=1 RHEL=10 -f fdecrypt.mak all
+	make FINAL=1 RHEL=10 -f fmigrate.mak all
 
 install:
-	make FINAL=1 RHEL=8 -f fcrypt.mak install
-	make FINAL=1 RHEL=8 -f fdecrypt.mak install
-	make FINAL=1 RHEL=8 -f fmigrate.mak install
+	make FINAL=1 RHEL=10 -f fcrypt.mak install
+	make FINAL=1 RHEL=10 -f fdecrypt.mak install
+	make FINAL=1 RHEL=10 -f fmigrate.mak install
 
 clean:
-	make FINAL=1 RHEL=8 -f fcrypt.mak clean
-	make FINAL=1 RHEL=8 -f fdecrypt.mak clean
-	make FINAL=1 RHEL=8 -f fmigrate.mak clean
+	make FINAL=1 RHEL=10 -f fcrypt.mak clean
+	make FINAL=1 RHEL=10 -f fdecrypt.mak clean
+	make FINAL=1 RHEL=10 -f fmigrate.mak clean

@@ -18,6 +18,10 @@ if [ $? -eq 0 ]; then RHEL_VERSION=8; fi
 /bin/cat /etc/redhat-release | grep -i Plow >/dev/null 2>&1
 if [ $? -eq 0 ]; then RHEL_VERSION=9; fi
 
+# Check for rhel10
+/bin/cat /etc/redhat-release | grep -i Coughlan >/dev/null 2>&1
+if [ $? -eq 0 ]; then RHEL_VERSION=10; fi
+
 testDIR=${HOME}/tmp/fcrypt_testing_$(date +%Y_%m_%d_%H%M%S)
 logFILE=${testDIR}/fcrypt_decrypt_testing.log
 

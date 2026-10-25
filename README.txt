@@ -3,7 +3,8 @@ File encryption and decryption utility
 Release 2026.102
 
 Supports Window 10, Windows 11, and Windows 2025 server
-Supports Red Hat Enterprise Linux 6, 7, 8, 9, and 10 
+Supports Red Hat Enterprise Linux 6, 7, 8, 9, and 10 (RHEL 10 is the
+default Linux build)
 
 Built with the DataReel C++ library version 6.0, included under the
 3plibs/datareel directory.
@@ -254,6 +255,14 @@ $ cd ${HOME}/git
 $ git clone https://github.com/datareel/fcrypt.git
 $ cd fcrypt/console/linux
 $ make
+
+The default Linux build is for RHEL 10 and uses the operating system's
+OpenSSL (sudo dnf install gcc-c++ make openssl-devel). For an older
+RHEL release use the makefile for that release:
+
+$ make -f makefile_rhel9     (also makefile_rhel8, makefile_rhel7 and makefile_rhel6)
+
+Run "make clean" first when you switch between RHEL builds.
 
 To run a simple test of the utilities:
 
