@@ -249,7 +249,7 @@ void HelpMessage()
   cout << "          --smartcard-pin=pin (Supply smart card PIN on the command line for scripting, use with caution)" << "\n" << flush;
   cout << "          --smartcard-username=name (Username assigned to the smart card cert)" << "\n" << flush;
   cout << "          --smartcard-cert-id=" << SC_get_default_cert_id() << " (Set the ID number for the smartcard cert)" << "\n" << flush;
-  cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smartcard engine path)" << "\n" << flush;
+  if(SC_uses_engine()) cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smartcard engine path)" << "\n" << flush;
   cout << "          --smartcard-provider=" << SC_get_default_modulePath() << " (Set the smartcard provider)" << "\n" << flush;
 #endif // __ENABLE_SMART_CARD__
   cout << "\n" << flush; // End of list
@@ -449,6 +449,9 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     sc.SetEnginePath(equal_arg.c_str());
+    if(!SC_uses_engine()) {
+      cerr << "NOTE: --smartcard-engine is ignored, this build loads the PKCS#11 provider module directly" << "\n" << flush;
+    }
     has_valid_args = 1;
   }
 

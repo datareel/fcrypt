@@ -31,9 +31,15 @@ Once installed the driver path is:
 
 "C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll"
 
-For the pkcs11 engine module you will need to download the proveriders
-package from: 
+fcrypt does not use the pkcs11 engine. Builds with OpenSSL 3, which
+includes all Windows builds using OpenSSL 3.5.x LTS, load the OpenSC
+PKCS#11 module directly, see SMART CARD REQUIREMENTS AND OPENSSL 3 in
+..\README.txt.
+
+The smartcard_encrypt.cpp and smartcard_read_public_key.cpp examples in
+this directory use the OpenSSL ENGINE API. They need an OpenSSL build
+with engine support and the libp11 pkcs11 engine:
 
 https://github.com/OpenSC/libp11
 
-Add the pkcs11 providers DLL to your OpenSSL engines path.
+The OpenSSL 3.5.x LTS builds used for fcrypt do not need libp11.

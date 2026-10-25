@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 12/08/2023
-// Date Last Modified: 10/24/2026
+// Date Last Modified: 10/25/2026
 // Copyright (c) 2003-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -36,7 +36,24 @@ Smartcard encryption and decryption routines.
 #ifdef __ENABLE_SMART_CARD__
 
 // OpenSSL include files
+#include <openssl/opensslv.h>
+
+// 10/25/2026: OpenSSL 3 builds talk to the smart card directly through
+// the PKCS#11 module (OpenSC). The OpenSSL ENGINE API is deprecated in
+// OpenSSL 3 and removed from the RHEL 10 and OpenSSL 3.5 LTS builds.
+// OpenSSL 1.x builds keep using the pkcs11 engine. Define __SC_USE_ENGINE__
+// to force the engine code on an OpenSSL 3 build that still has engines.
+#if !defined (__SC_USE_ENGINE__) && !defined (__SC_USE_PKCS11__)
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+#define __SC_USE_ENGINE__
+#else
+#define __SC_USE_PKCS11__
+#endif
+#endif
+
+#if defined (__SC_USE_ENGINE__)
 #include <openssl/engine.h>
+#endif
 #include <openssl/evp.h>
 #include <openssl/rsa.h>
 #include <openssl/crypto.h>
@@ -66,7 +83,7 @@ struct SmartCardOB
   void SetEngineID(char *id) { strncpy(engine_ID, id, (sizeof(engine_ID)-1)); }
   void SetPin(char *p) { strncpy(pin, p, (sizeof(pin)-1)); }
   void SetCertID(char *id) { strncpy(cert_id, id, (sizeof(cert_id)-1)); }
-  int SetError(char *message =  0, int level = -1);
+  int SetError(const char *message =  0, int level = -1);
   
   int verbose_mode;
   int error_level;
@@ -84,6 +101,7 @@ const char *SC_get_default_enginePath();
 const char *SC_get_default_modulePath();
 const char *SC_get_default_engine_ID();
 const char *SC_get_default_cert_id();
+int SC_uses_engine(); // Returns 1 if the OpenSSL pkcs11 engine is used
 
 int SC_public_key_encrypt(SmartCardOB *sc,
 			  const unsigned char plaintext[], unsigned int plaintext_len,

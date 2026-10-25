@@ -176,7 +176,7 @@ void HelpMessage()
   cout << "          --smartcard-pin=pin (Supply smart card PIN on the command line for scripting, use with caution)" << "\n" << flush;
   cout << "          --smartcard-username=name (Username assigned to the smart card cert)" << "\n" << flush;
   cout << "          --smartcard-cert-id=" << SC_get_default_cert_id() << " (Set the ID number for the smartcard cert)" << "\n" << flush;
-  cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smartcard engine path)" << "\n" << flush;
+  if(SC_uses_engine()) cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smartcard engine path)" << "\n" << flush;
   cout << "          --smartcard-provider=" << SC_get_default_modulePath() << " (Set the smartcard provider)" << "\n" << flush;
 #endif // __ENABLE_SMART_CARD__
 
@@ -429,7 +429,10 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     sc.SetEnginePath(equal_arg.c_str());
-    if(!futils_exists(sc.enginePath) || !futils_isfile(sc.enginePath)) {
+    if(!SC_uses_engine()) {
+      cerr << "NOTE: --smartcard-engine is ignored, this build loads the PKCS#11 provider module directly" << "\n" << flush;
+    }
+    if(SC_uses_engine() && (!futils_exists(sc.enginePath) || !futils_isfile(sc.enginePath))) {
       cerr << "ERROR: Smart card engine " << sc.enginePath << " does not exist or cannot be read" <<  "\n" << flush;
       return 0;
     }
@@ -854,13 +857,15 @@ int main(int argc, char **argv)
     if(clientcfg->verbose_mode) cerr << "Using smart card cert for decryption" << "\n" << flush;
 
     if(clientcfg->verbose_mode) {
-      cerr << "Smart card engine ID = " << sc.engine_ID << "\n" << flush;
-      cerr << "Smart card engine path = " << sc.enginePath << "\n" << flush;
+      if(SC_uses_engine()) {
+        cerr << "Smart card engine ID = " << sc.engine_ID << "\n" << flush;
+        cerr << "Smart card engine path = " << sc.enginePath << "\n" << flush;
+      }
       cerr << "Smart card module path = " << sc.modulePath << "\n" << flush;
       cerr << "Smart card cert ID = " << sc.cert_id << "\n"  << flush;
     }
 
-    if(!futils_exists(sc.enginePath) || !futils_isfile(sc.enginePath)) {
+    if(SC_uses_engine() && (!futils_exists(sc.enginePath) || !futils_isfile(sc.enginePath))) {
       cerr << "ERROR: Smart card engine " << sc.enginePath << " does not exist or cannot be read" <<  "\n" << flush;
       return ExitProgram(1);
     }

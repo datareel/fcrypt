@@ -11,7 +11,7 @@ AESDB_DEP = $(APPINC_PATH)aesdb.h
 
 RSADB_DEP = $(APPINC_PATH)rsadb.h
 
-SMART_CARD_DEP = $(APPINC_PATH)smart_card.h
+SMART_CARD_DEP = $(APPINC_PATH)smart_card.h $(APPINC_PATH)pkcs11.h
 
 FCFIPS_DEP = $(APPINC_PATH)fcfips.h $(APPINC_PATH)aesdb.h
 

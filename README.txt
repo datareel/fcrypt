@@ -480,3 +480,53 @@ the file encryption key:
 
 All users will only be able to decrypt the file using their smart
 card.
+
+SMART CARD REQUIREMENTS AND OPENSSL 3
+-------------------------------------
+Builds that use OpenSSL 3, which includes RHEL 9, RHEL 10 and Windows,
+load the smart card PKCS#11 module directly. The OpenSSL pkcs11 engine
+(libp11 or the openssl-pkcs11 package) is not used or needed. The
+OpenSSL ENGINE API is deprecated in OpenSSL 3 and is not built into
+RHEL 10 or the OpenSSL 3.5.x LTS builds used for Windows. Builds that
+use OpenSSL 1.x, such as RHEL 6, 7 and 8, still use the pkcs11 engine.
+
+Files given smart card access by earlier fcrypt releases still decrypt
+with the same card. The smart card key data stored in the file has not
+changed.
+
+Linux, RHEL 9 and RHEL 10, using the operating system's OpenSSL:
+
+> sudo dnf install opensc pcsc-lite
+> sudo systemctl enable --now pcscd
+
+The default PKCS#11 module is /usr/lib64/opensc-pkcs11.so. Use
+--smartcard-provider to select a different PKCS#11 module.
+
+Windows, using only an OpenSSL 3.5.x LTS build, see
+README_windows_openssl.txt:
+
+Install OpenSC from https://github.com/OpenSC/OpenSC/releases using
+the 64-bit installer for the default 64-bit build (the 32-bit installer
+is only for 32-bit legacy builds). The default PKCS#11 module is:
+
+"C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll"
+
+With OpenSSL 3 builds --smartcard-engine is accepted for older scripts
+but is ignored.
+
+The --smartcard-cert-id value can be the hex ID of the key and cert on
+the card, such as 01, or any of these forms:
+
+  id_01                Hex ID
+  label_name           Object label
+  4:01, slot_4-id_01   PKCS#11 slot ID and hex ID
+  slot_4-label_name    PKCS#11 slot ID and object label
+  "pkcs11:id=%01"      PKCS#11 URI with id= and/or object=
+
+List the objects on the card with:
+
+> pkcs11-tool --list-objects
+
+Cards that cannot do RSA-OAEP with SHA-256 themselves, such as PIV
+cards, are supported by decrypting with raw RSA on the card and
+removing the OAEP padding in fcrypt.
