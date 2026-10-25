@@ -66,7 +66,7 @@ Smartcard encryption and decryption routines.
 #include <string.h>
 
 const unsigned SC_max_pin_size = 32;
-const unsigned SC_max_cert_id_size = 32;
+const unsigned SC_max_cert_id_size = 256; // Room for long IDs and pkcs11: URIs
 const unsigned SC_max_engine_id_size = 32;
 const unsigned SC_max_path_size = 255;
 const unsigned SC_err_string_size = 255;

@@ -287,6 +287,7 @@ struct SC_p11_session
   int logged_in;
   CK_SESSION_HANDLE session;
   CK_FLAGS token_flags;
+  CK_SLOT_ID slot;
 };
 
 static int SC_hex_value(char c)
@@ -517,6 +518,7 @@ static int SC_p11_open_token(SmartCardOB *sc, SC_p11_session *p, const SC_key_id
     return sc->SetError("Error opening a smart card session");
   }
   p->has_session = 1;
+  p->slot = found_slot;
 
   CK_TOKEN_INFO token_info;
   memset(&token_info, 0, sizeof(token_info));
@@ -807,6 +809,8 @@ int SC_private_key_decrypt(SmartCardOB *sc,
   if(rv == CKR_OK) {
     rv = p.fl->C_Decrypt(p.session, (CK_BYTE_PTR)ciphertext, ciphertext_len, work, &work_len);
   }
+  CK_RV first_rv = rv;
+  CK_RV raw_rv = CKR_OK;
   // Never retry after a PIN error, CAC and PIV cards lock after a few
   if(rv != CKR_OK && !SC_p11_pin_error(rv) && padding == RSA_PKCS1_OAEP_PADDING &&
      ciphertext_len <= sizeof(work)) {
@@ -817,10 +821,22 @@ int SC_private_key_decrypt(SmartCardOB *sc,
     raw_mech.mechanism = CKM_RSA_X_509;
     work_len = sizeof(work);
     rv = p.fl->C_DecryptInit(p.session, &raw_mech, key);
+    if(rv == CKR_OPERATION_ACTIVE) {
+      // Some modules, such as ActivClient, leave the failed decrypt
+      // active. Move to a new session, the login stays while a session
+      // is open and the key handle is valid in every session.
+      CK_SESSION_HANDLE new_session;
+      if(p.fl->C_OpenSession(p.slot, CKF_SERIAL_SESSION, 0, 0, &new_session) == CKR_OK) {
+	p.fl->C_CloseSession(p.session);
+	p.session = new_session;
+	rv = p.fl->C_DecryptInit(p.session, &raw_mech, key);
+      }
+    }
     if(rv == CKR_OK && always_auth) rv = SC_p11_context_login(&p, sc);
     if(rv == CKR_OK) {
       rv = p.fl->C_Decrypt(p.session, (CK_BYTE_PTR)ciphertext, ciphertext_len, work, &work_len);
     }
+    raw_rv = rv;
     oaep_raw = 1;
   }
   SC_p11_close(&p);
@@ -847,7 +863,19 @@ int SC_private_key_decrypt(SmartCardOB *sc,
   }
   OPENSSL_cleanse(work, sizeof(work));
   if(!ok) {
-    return sc->SetError("Private key decrypt failed");
+    // Show the PKCS#11 return codes to help with card and module problems
+    char msg[SC_err_string_size];
+    if(rv == CKR_OK) {
+      snprintf(msg, sizeof(msg), "Private key decrypt failed, the decrypted data is not valid");
+    }
+    else if(oaep_raw) {
+      snprintf(msg, sizeof(msg), "Private key decrypt failed, PKCS#11 error 0x%lx (OAEP) and 0x%lx (raw RSA)",
+	       (unsigned long)first_rv, (unsigned long)raw_rv);
+    }
+    else {
+      snprintf(msg, sizeof(msg), "Private key decrypt failed, PKCS#11 error 0x%lx", (unsigned long)rv);
+    }
+    return sc->SetError(msg);
   }
   *(unencrypted_data_len) = out_len;
   return 0;

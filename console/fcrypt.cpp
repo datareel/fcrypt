@@ -453,6 +453,10 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: --smartcard-cert-id missing ID: --smartcard-cert-id=01" << "\n" << flush;
       return 0;
     }
+    if(equal_arg.length() >= SC_max_cert_id_size) {
+      cerr << "ERROR: --smartcard-cert-id is longer than " << (SC_max_cert_id_size-1) << " characters" << "\n" << flush;
+      return 0;
+    }
     sc.SetCertID(equal_arg.c_str());
     has_valid_args = 1;
   }

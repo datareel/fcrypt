@@ -549,5 +549,17 @@ list them with the OpenSC pkcs11-tool and use that ID or label_name:
 
 > pkcs11-tool --module "C:\Program Files\HID Global\ActivClient\acpkcs211.dll" --list-objects
 
+ActivClient uses a long hex ID, for example a 64 character SHA-256
+hash, and labels such as "Encryption - name". Quote a label with
+spaces:
+
+> fdecrypt --smartcard-cert --smartcard-username=testuser "--smartcard-cert-id=label_Encryption - name" testfile.enc
+
 Smart card access added on Linux with OpenSC works on Windows with
 ActivClient for the same card and key, only the cert ID may differ.
+ActivClient does not do RSA-OAEP with SHA-256 on the card, fcrypt uses
+raw RSA on the card for it. A YubiKey used with ActivClient needs the
+PIV CHUID and CCC objects, which ykman can write:
+
+> ykman piv objects generate chuid
+> ykman piv objects generate ccc
