@@ -49,6 +49,7 @@ FIPS mode and OpenSSL library context setup.
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
 #include <openssl/provider.h>
 #include <openssl/self_test.h>
+#include <openssl/err.h>
 
 static OSSL_LIB_CTX *fc_libctx = 0;
 static OSSL_PROVIDER *fc_main_provider = 0;
@@ -60,6 +61,25 @@ static int fc_null_fips_was_off = 0;
 
 static int fc_fips_mode = 0;
 static int fc_system_fips = -1; // Set by FC_crypto_init()
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+static void fc_add_openssl_errors(gxString &err)
+// Append the OpenSSL error queue, which says why a provider or the
+// configuration file failed to load
+{
+  unsigned long e;
+  const char *data = 0;
+  int flags = 0;
+  int count = 0;
+  while((e = ERR_get_error_all(0, 0, 0, &data, &flags)) != 0) {
+    if(++count > 8) continue;
+    char buf[256];
+    ERR_error_string_n(e, buf, sizeof(buf));
+    err << "\n  " << buf;
+    if(data && *data && (flags & ERR_TXT_STRING)) err << " (" << data << ")";
+  }
+}
+#endif
 
 int FC_system_fips_requested()
 {
@@ -116,17 +136,24 @@ int FC_crypto_init(int fips_request, gxString &err)
     // The fips provider reads its integrity data from fipsmodule.cnf, so
     // load the OpenSSL configuration file into this context first. The
     // configuration may activate other providers as well.
-    OSSL_LIB_CTX_load_config(fc_libctx, 0);
     ERR_clear_error();
+    OSSL_LIB_CTX_load_config(fc_libctx, 0);
     fc_main_provider = OSSL_PROVIDER_load(fc_libctx, "fips");
     if(!fc_main_provider) {
       err << clear << "FIPS mode: the OpenSSL FIPS provider could not be loaded. "
 	  << "Install the FIPS provider and run openssl fipsinstall, or use --no-fips";
+      const char *conf = getenv("OPENSSL_CONF");
+      const char *mods = getenv("OPENSSL_MODULES");
+      err << "\n  OPENSSL_CONF=" << (conf ? conf : "(not set)")
+	  << "\n  OPENSSL_MODULES=" << (mods ? mods : "(not set)");
+      fc_add_openssl_errors(err);
       FC_crypto_cleanup();
       return 0;
     }
+    ERR_clear_error();
     if(!OSSL_PROVIDER_self_test(fc_main_provider)) {
       err << clear << "FIPS mode: the OpenSSL FIPS provider failed its self-test";
+      fc_add_openssl_errors(err);
       FC_crypto_cleanup();
       return 0;
     }
