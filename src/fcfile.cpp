@@ -302,6 +302,11 @@ FCryptFile::FCryptFile()
   file_slot_area_len = 0;
   data_offset = (FAU_t)0;
   unlocked = 0;
+  data_sink = 0;
+  enc_out = 0;
+  enc_pend = 0;
+  enc_pend_len = 0;
+  enc_index = (FAU_t)0;
   memset(header, 0, sizeof(header));
   memset(header_mac, 0, sizeof(header_mac));
   memset(salt, 0, sizeof(salt));
@@ -314,7 +319,7 @@ FCryptFile::FCryptFile()
 
 FCryptFile::~FCryptFile()
 {
-  Wipe();
+  AbortEncrypt();
 }
 
 void FCryptFile::Wipe()
@@ -482,14 +487,64 @@ int FCryptFile::EncryptFile(const char *fname, const MemoryBuffer &secret)
   err.Clear();
   ofname.Clear();
   bytes_wrote = (FAU_t)0;
-  Wipe();
-  slots.ClearList();
 
   if(!fname) {
     err << clear << "Null input file name";
     return 0;
   }
   filename = fname;
+  gxString name = stored_name_override.is_null() ? filename : stored_name_override;
+
+  FILE *in = fopen(fname, "rb");
+  if(!in) {
+    err << clear << "Error opening " << fname;
+    return 0;
+  }
+  if(!MakeEncryptOutputName()) {
+    fclose(in);
+    return 0;
+  }
+  gxString out_name = ofname;
+  if(!BeginEncrypt(secret, name.c_str(), out_name.c_str())) {
+    fclose(in);
+    return 0;
+  }
+
+  unsigned char *buf = new unsigned char[chunk_size];
+  int ok = (buf != 0);
+  if(!ok) err << clear << "Out of memory";
+  while(ok) {
+    unsigned len = (unsigned)fread(buf, 1, chunk_size, in);
+    if(ferror(in)) {
+      err << clear << "Error reading " << filename;
+      ok = 0;
+      break;
+    }
+    if(len == 0) break;
+    ok = WriteData(buf, len);
+  }
+  if(buf) { OPENSSL_cleanse(buf, chunk_size); delete[] buf; }
+  fclose(in);
+
+  if(ok) return FinishEncrypt();
+  AbortEncrypt();
+  return 0;
+}
+
+int FCryptFile::BeginEncrypt(const MemoryBuffer &secret, const char *stored_name, const char *out_name)
+{
+  AbortEncrypt();
+  err.Clear();
+  bytes_wrote = (FAU_t)0;
+  Wipe();
+  slots.ClearList();
+
+  if(!stored_name || !*stored_name || !out_name || !*out_name) {
+    err << clear << "Null file name";
+    return 0;
+  }
+  ofname = out_name;
+  gxString name = stored_name;
   if(secret.length() < AES_MIN_SECRET_LEN || secret.length() > AES_MAX_SECRET_LEN) {
     err << clear << "The password or key must be " << AES_MIN_SECRET_LEN << " to " << AES_MAX_SECRET_LEN << " bytes";
     return 0;
@@ -502,21 +557,9 @@ int FCryptFile::EncryptFile(const char *fname, const MemoryBuffer &secret)
     err << clear << "The key slot area must be " << FC_MIN_SLOT_AREA_LEN << " to " << FC_MAX_SLOT_AREA_LEN << " bytes";
     return 0;
   }
-
-  gxString name = stored_name_override.is_null() ? filename : stored_name_override;
   if(name.length() > FC_MAX_STORED_NAME_LEN) {
     err << clear << "File name longer than " << FC_MAX_STORED_NAME_LEN
 	<< " bytes, use a shorter path or --decrypted-outfile";
-    return 0;
-  }
-
-  FILE *in = fopen(fname, "rb");
-  if(!in) {
-    err << clear << "Error opening " << fname;
-    return 0;
-  }
-  if(!MakeEncryptOutputName()) {
-    fclose(in);
     return 0;
   }
 
@@ -545,7 +588,6 @@ int FCryptFile::EncryptFile(const char *fname, const MemoryBuffer &secret)
   }
   OPENSSL_cleanse(wrapped, sizeof(wrapped));
   if(!ok) {
-    fclose(in);
     Wipe();
     return 0;
   }
@@ -570,7 +612,6 @@ int FCryptFile::EncryptFile(const char *fname, const MemoryBuffer &secret)
   unsigned char rnd[8];
   if(!fc_rand(rnd, sizeof(rnd), 0)) {
     err << clear << "Random number generator failed";
-    fclose(in);
     Wipe();
     return 0;
   }
@@ -581,20 +622,19 @@ int FCryptFile::EncryptFile(const char *fname, const MemoryBuffer &secret)
   tmp << ".tmp";
   if(!cryptdb_create_private_file(tmp.c_str())) {
     err << clear << "Error creating " << tmp;
-    fclose(in);
     Wipe();
     return 0;
   }
-  FILE *out = fopen(tmp.c_str(), "wb");
-  if(!out) {
+  enc_out = fopen(tmp.c_str(), "wb");
+  if(!enc_out) {
     err << clear << "Error opening " << tmp;
     futils_remove(tmp.c_str());
-    fclose(in);
     Wipe();
     return 0;
   }
+  enc_tmp = tmp;
 
-  ok = WriteHeader(out);
+  ok = WriteHeader(enc_out);
   if(ok) {
     bytes_wrote = FC_HEADER_LEN + file_slot_area_len + FC_TAG_LEN;
     // Record 0: the stored file name
@@ -603,65 +643,100 @@ int FCryptFile::EncryptFile(const char *fname, const MemoryBuffer &secret)
     fc_put32(v, 1); meta.Cat(v, 4);                // Record 0 version
     fc_put32(v, name.length()); meta.Cat(v, 4);
     meta.Cat(name.GetSPtr(), name.length());
-    ok = WriteRecord(out, 0, 0, meta.m_buf(), meta.length());
+    ok = WriteRecord(enc_out, 0, 0, meta.m_buf(), meta.length());
     meta.Clear(1);
   }
-
-  // Records 1 to N: the file data. Read one chunk ahead to know which
-  // record is the last one.
-  unsigned char *cur = 0, *next = 0;
   if(ok) {
-    cur = new unsigned char[chunk_size];
-    next = new unsigned char[chunk_size];
-    if(!cur || !next) {
+    enc_pend = new unsigned char[chunk_size];
+    if(!enc_pend) {
       err << clear << "Out of memory";
       ok = 0;
     }
   }
-  if(ok) {
-    FAU_t index = 1;
-    unsigned cur_len = (unsigned)fread(cur, 1, chunk_size, in);
-    while(ok) {
-      if(ferror(in)) {
-	err << clear << "Error reading " << filename;
-	ok = 0;
-	break;
-      }
-      unsigned next_len = 0;
-      if(cur_len == chunk_size) next_len = (unsigned)fread(next, 1, chunk_size, in);
-      if(ferror(in)) {
-	err << clear << "Error reading " << filename;
-	ok = 0;
-	break;
-      }
-      int last = (next_len == 0);
-      ok = WriteRecord(out, index++, last, cur, cur_len);
-      if(last) break;
-      unsigned char *t = cur; cur = next; next = t;
-      cur_len = next_len;
-    }
+  if(!ok) {
+    if(err.is_null()) err << clear << "Error writing " << ofname;
+    AbortEncrypt();
+    return 0;
   }
-  if(cur) { OPENSSL_cleanse(cur, chunk_size); delete[] cur; }
-  if(next) { OPENSSL_cleanse(next, chunk_size); delete[] next; }
-  fclose(in);
+  enc_pend_len = 0;
+  enc_index = 1;
+  return 1;
+}
 
-  if(fflush(out) != 0) ok = 0;
-  if(fclose(out) != 0) ok = 0;
-  if(ok && !cryptdb_rename_file(tmp.c_str(), ofname.c_str(), overwrite)) {
+int FCryptFile::WriteData(const unsigned char *buf, unsigned len)
+// Records 1 to N hold the file data. A full record is written only when
+// more data follows, so FinishEncrypt() knows which record is the last.
+{
+  if(!enc_out || !enc_pend) {
+    err << clear << "Encryption was not started";
+    return 0;
+  }
+  while(len > 0) {
+    if(enc_pend_len == chunk_size) {
+      if(!WriteRecord(enc_out, enc_index++, 0, enc_pend, enc_pend_len)) return 0;
+      enc_pend_len = 0;
+    }
+    unsigned n = chunk_size - enc_pend_len;
+    if(n > len) n = len;
+    memmove(enc_pend + enc_pend_len, buf, n);
+    enc_pend_len += n;
+    buf += n;
+    len -= n;
+  }
+  return 1;
+}
+
+int FCryptFile::FinishEncrypt()
+{
+  if(!enc_out || !enc_pend) {
+    err << clear << "Encryption was not started";
+    return 0;
+  }
+  // The last record, which is empty for an empty file
+  int ok = WriteRecord(enc_out, enc_index++, 1, enc_pend, enc_pend_len);
+  OPENSSL_cleanse(enc_pend, chunk_size);
+  delete[] enc_pend;
+  enc_pend = 0;
+  enc_pend_len = 0;
+
+  if(fflush(enc_out) != 0) ok = 0;
+  if(fclose(enc_out) != 0) ok = 0;
+  enc_out = 0;
+  if(ok && !cryptdb_rename_file(enc_tmp.c_str(), ofname.c_str(), overwrite)) {
     if(!overwrite && futils_exists(ofname.c_str())) {
       err << clear << "Output file " << ofname << " exists, use -o to overwrite";
     }
     else {
-      err << clear << "Error renaming " << tmp << " to " << ofname;
+      err << clear << "Error renaming " << enc_tmp << " to " << ofname;
     }
     ok = 0;
   }
   if(!ok) {
     if(err.is_null()) err << clear << "Error writing " << ofname;
-    futils_remove(tmp.c_str());
+    futils_remove(enc_tmp.c_str());
   }
+  enc_tmp.Clear();
   Wipe();
   return ok;
+}
+
+void FCryptFile::AbortEncrypt()
+{
+  if(enc_pend) {
+    OPENSSL_cleanse(enc_pend, chunk_size);
+    delete[] enc_pend;
+    enc_pend = 0;
+  }
+  enc_pend_len = 0;
+  if(enc_out) {
+    fclose(enc_out);
+    enc_out = 0;
+  }
+  if(!enc_tmp.is_null()) {
+    futils_remove(enc_tmp.c_str());
+    enc_tmp.Clear();
+  }
+  Wipe();
 }
 
 int FCryptFile::LoadHeader(const char *fname)
@@ -1160,6 +1235,7 @@ int FCryptFile::DecryptFile(const char *outfile_name)
 
   // Pick the output, the same way as FCryptCache::DecryptFile()
   int to_console = 0;
+  if(data_sink) outfile_name = "stdout";
   int use_output_dir = 1;
   gxString sbuf;
   if(outfile_name) {
@@ -1205,7 +1281,14 @@ int FCryptFile::DecryptFile(const char *outfile_name)
   while(ok) {
     ok = ReadRecord(in, index++, plain, last);
     if(!ok) break;
-    if(plain.length() && !fc_write_exact(out, plain.m_buf(), plain.length())) {
+    if(plain.length() && data_sink) {
+      if(!data_sink->WriteData(plain.m_buf(), plain.length())) {
+	if(err.is_null()) err << clear << "Error writing decrypted data";
+	ok = 0;
+	break;
+      }
+    }
+    else if(plain.length() && !fc_write_exact(out, plain.m_buf(), plain.length())) {
       err << clear << "Error writing to " << ofname;
       ok = 0;
       break;
@@ -1216,7 +1299,10 @@ int FCryptFile::DecryptFile(const char *outfile_name)
   plain.Clear(1);
   fclose(in);
 
-  if(to_console) {
+  if(data_sink) {
+    // Nothing to close
+  }
+  else if(to_console) {
     if(fflush(out) != 0) ok = 0;
   }
   else {

@@ -267,6 +267,16 @@ enum {
   CRYPT_PATH_NONE          // File name only, in the current or output DIR
 };
 
+// 10/25/2026: Receives decrypted data instead of an output file, used by
+// fmigrate to convert files without writing the plaintext to disk.
+// WriteData() returns false to stop decryption.
+class GXDLCODE_API CryptDataSink
+{
+public:
+  virtual ~CryptDataSink() { }
+  virtual int WriteData(const unsigned char *buf, unsigned len) = 0;
+};
+
 // Cached file encryption class
 class GXDLCODE_API FCryptCache : public gxDeviceCache
 {
@@ -281,6 +291,9 @@ public: // Decrypt fucntions
   int DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const MemoryBuffer &secret, gxUINT32 &version);
   int DecryptFile(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, char *outfile_name = 0);
   int DecryptOnlyTheFileName(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, gxString &crypt_file_name);
+  // 10/25/2026: Decrypt to sink. The data is only complete and
+  // authentic if this returns true.
+  int DecryptToSink(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, CryptDataSink *sink);
 
 public: // RSA key functions
   int TestStaticDataHeader(const StaticDataHeader &sd_header_read);
@@ -368,6 +381,7 @@ private: // Device cache
   gxString tmp_ofname;   // Temp file decrypted data is written to
   gxString stored_name;  // File name stored in the encrypted file header
   int allow_unencrypted; // Allow decrypting mode 0 (unencrypted) files
+  CryptDataSink *data_sink; // Set by DecryptToSink()
 
 public: // Functions used to get the current device cache
   gxDeviceBucketCache *GetCache() { return &cache; }

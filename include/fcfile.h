@@ -89,6 +89,7 @@ short, records moved or records from another file are detected.
 #include "gxheader.h"
 #include "aesdb.h"
 #include "rsadb.h"
+#include "cryptdb.h"
 
 #include <stdio.h>
 
@@ -165,6 +166,15 @@ public: // Encrypt
   // a unique name unless overwrite is set.
   int EncryptFile(const char *fname, const MemoryBuffer &secret);
 
+  // Encrypt data given in pieces, for fmigrate. BeginEncrypt() writes the
+  // header to a private temp file, WriteData() adds the data, and
+  // FinishEncrypt() writes the last record and renames the temp file to
+  // out_name. AbortEncrypt() removes the temp file.
+  int BeginEncrypt(const MemoryBuffer &secret, const char *stored_name, const char *out_name);
+  int WriteData(const unsigned char *buf, unsigned len);
+  int FinishEncrypt();
+  void AbortEncrypt();
+
 public: // Open an encrypted file
   // Read the header and key slots. Nothing is authenticated until one of
   // the Unlock functions succeeds.
@@ -177,7 +187,8 @@ public: // Open an encrypted file
   FCKeySlot *FindSlot(unsigned type, const char *username);
 
 public: // After an Unlock
-  // Decrypt to outfile_name, "stdout", or the stored name when null
+  // Decrypt to outfile_name, "stdout", or the stored name when null.
+  // With data_sink set the data goes to the sink instead.
   int DecryptFile(const char *outfile_name = 0);
   int DecryptStoredName(gxString &name);
   // Give another user access. The key slot area is rewritten in place.
@@ -196,6 +207,7 @@ public: // Settings
   gxString output_dir_name;
   gxString output_file_name;
   gxString stored_name_override; // fcrypt --decrypted-outfile
+  CryptDataSink *data_sink;      // Decrypt to this instead of a file
 
 public: // Results
   gxString err;
@@ -233,6 +245,11 @@ private:
   FAU_t data_offset;
   int unlocked;
   gxString tmp_ofname;
+  FILE *enc_out;          // BeginEncrypt() to FinishEncrypt()
+  gxString enc_tmp;
+  unsigned char *enc_pend; // Data for the next record
+  unsigned enc_pend_len;
+  FAU_t enc_index;
 
 private: // Disallow copying
   FCryptFile(const FCryptFile &ob) { }

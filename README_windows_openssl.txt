@@ -139,11 +139,14 @@ FIPS provider self-test and install on that computer:
 
 C:\fcrypt>openssl fipsinstall -out C:\fcrypt\fipsmodule.cnf -module C:\fcrypt\fips.dll
 
-Create C:\fcrypt\openssl.cnf:
+Create C:\fcrypt\openssl.cnf. Use forward slashes in the .include
+path. OpenSSL reads a backslash in its configuration files as an escape
+character, so C:\fcrypt\fipsmodule.cnf would become C:fcryptfipsmodule.cnf,
+and the FIPS provider would not load:
 
 config_diagnostics = 1
 openssl_conf = openssl_init
-.include C:\fcrypt\fipsmodule.cnf
+.include C:/fcrypt/fipsmodule.cnf
 [openssl_init]
 providers = provider_sect
 [provider_sect]

@@ -89,7 +89,8 @@ on a system in FIPS mode:
 
 $ ./fdecrypt --no-fips --password testfile.enc
 
-To convert old files to the 2026102 format, use fmigrate.
+To convert old files to the 2026102 format, use fmigrate. See
+CONVERTING OLD FILES WITH FMIGRATE below.
 
 In FIPS mode a private RSA key with a passphrase must be in PKCS#8
 format, since the older PEM format derives its key with MD5. To convert
@@ -158,9 +159,10 @@ release decrypt with older releases.
 * Memory safety fixes for long file names, RSA user data stored in the
   encrypted file, console input and key file reads.
 
-Run console/linux/run_security_tests.sh and run_compat_tests.sh to test
-a build. Give run_compat_tests.sh the console/linux directories of
-older release builds. Set FCRYPT_FIPS=1 to run both in FIPS mode.
+Run console/linux/run_security_tests.sh, run_compat_tests.sh and
+run_migrate_tests.sh to test a build. Give run_compat_tests.sh and
+run_migrate_tests.sh the console/linux directories of older release
+builds. Set FCRYPT_FIPS=1 to run them in FIPS mode.
 
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR WINDOWS
 -----------------------------------------------------
@@ -241,6 +243,9 @@ To decrypt the file:
 This will decrypt the file creating the unencrypted file using the
 original file name.  
 
+nmake also builds fmigrate.exe, which converts files from older
+releases to the 2026102 format. See CONVERTING OLD FILES WITH FMIGRATE.
+
 
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR LINUX
 ---------------------------------------------------
@@ -263,6 +268,59 @@ $ ./fdecrypt testfile.enc
 This will decrypt the file creating the unencrypted file using the original file name. 
 If the file was encrypted with a directory path, the path is recreated
 under the current directory. Use -o to overwrite an existing file.
+
+The build also makes fmigrate, see CONVERTING OLD FILES WITH FMIGRATE.
+
+CONVERTING OLD FILES WITH FMIGRATE
+----------------------------------
+fmigrate converts files encrypted by releases before 2026.102 to the
+2026102 file format. Using it is optional: fdecrypt still decrypts old
+files outside FIPS mode. Convert old files to use them in FIPS mode,
+or to give them the stronger protection of the new format.
+
+The old file is decrypted in memory and encrypted again as it is read,
+so the plaintext is never written to disk. The new file is written to a
+private temp file and decrypted again to check it against a SHA-256
+hash of the data. Only then does it replace the old file. If anything
+fails, the old file is left as it was.
+
+The new file keeps the stored file name and opens with the same
+password or key file as the old one.
+
+To find old files:
+
+$ ./fmigrate --check *.enc
+$ ./fmigrate --check -R ${HOME}/encrypted_files
+
+To convert files in place:
+
+$ ./fmigrate --password testfile.enc
+$ ./fmigrate --key=${HOME}/.keys/master.key -R ${HOME}/encrypted_files
+
+To keep the old files and write the new files to another directory:
+
+$ ./fmigrate --key=${HOME}/.keys/master.key --outdir=${HOME}/new_files testfile.enc
+
+Files whose only access is an RSA key, for example after the temp key
+was removed, can be converted with that key:
+
+$ ./fmigrate --rsa-key=${HOME}/.ssh/id_rsa --rsa-key-username=testuser testfile.enc
+
+The RSA user who converts the file keeps RSA access to the new file.
+Other RSA and smart card users of the old file cannot be carried over,
+because the old file holds only their encrypted copy of the key, not
+their public key. fmigrate lists them. Add each one again with fcrypt
+--add-rsa-key or --add-smartcard-cert, using the same password or key
+file as the old file. Files converted with an RSA key keep the
+password or key file the old file was encrypted with.
+
+If the old files were encrypted with fcrypt --iter, give fmigrate the
+same --iter. Use --new-iter to set the PBKDF2 iterations of the new
+files, 600000 by default.
+
+Reading the old format needs algorithms FIPS mode does not allow, so on
+a system in FIPS mode run fmigrate with --no-fips. The new files can
+then be decrypted in FIPS mode.
 
 USING A MASTER KEY FOR AES SYMMETRIC FILE ENCRYPTION
 ----------------------------------------------------

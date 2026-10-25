@@ -77,6 +77,7 @@ FCryptCache::FCryptCache(unsigned CacheSize, unsigned size_of_static_data_area) 
   header_crypt_len = 0;
   memset(header_plain, 0, sizeof(header_plain));
   allow_unencrypted = 0;
+  data_sink = 0;
 }
 
 FCryptCache::~FCryptCache()
@@ -207,7 +208,14 @@ void FCryptCache::Write(const void *buf, unsigned Bytes, gxDeviceTypes dev)
       bytes_wrote += Bytes;
       break;
     case gxDEVICE_CONSOLE:
-      if(ofname == "stderr") {
+      if(data_sink) { // 10/25/2026: DecryptToSink()
+	if(!data_sink->WriteData((const unsigned char *)fbuf, Bytes)) {
+	  ERROR_LEVEL = -1;
+	  if(err.is_null()) err << clear << "Error writing decrypted data";
+	  break;
+	}
+      }
+      else if(ofname == "stderr") {
 	std::cerr.write((char *)fbuf, Bytes);
       }
       else {
@@ -930,6 +938,22 @@ int FCryptCache::DecryptFile(const char *fname, const MemoryBuffer &secret, gxUI
   return 1;
 }
 
+int FCryptCache::DecryptToSink(const char *fname, const MemoryBuffer &secret, gxUINT32 &version, CryptDataSink *sink)
+// 10/25/2026: Same checks as DecryptFile(), with the decrypted data sent
+// to sink. The caller must discard what the sink received unless this
+// returns true.
+{
+  if(!sink) {
+    ERROR_LEVEL = -1;
+    err << clear << "No data sink";
+    return 0;
+  }
+  data_sink = sink;
+  int ok = DecryptFile(fname, secret, version, (char *)"stdout");
+  data_sink = 0;
+  return ok;
+}
+
 int FCryptCache::OpenDecryptOutputFile()
 // Create a private temp file next to the output file.
 {
@@ -1376,14 +1400,15 @@ int cryptdb_buildfilelist(gxString &path, gxString &err,
 	 (strcmp(direntp->d_name, "..") == 0)) {
 	continue;
       }
-      if(futils_isdirectory(direntp->d_name)) {
+      // 10/25/2026: Test the full path, not the name in the current DIR
+      fname << clear << path << path_sep << direntp->d_name;
+      if(futils_isdirectory(fname.c_str())) {
 	num_dirs++;
-	dname << clear << path << path_sep << direntp->d_name;
+	dname = fname;
 	dir_list.Insert(dname);
       }
       else {
 	num_files++;
-	fname << clear << path << path_sep << direntp->d_name;
 	file_list.Add(fname);
       }
 
