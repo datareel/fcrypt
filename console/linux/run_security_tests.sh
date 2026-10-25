@@ -244,6 +244,26 @@ echo "Starting tests at $(date)" | tee -a ${logFILE}
 echo "$(${FDECRYPT} --version 2>&1 | grep "FIPS mode")" | tee -a ${logFILE}
 
 echo "" | tee -a ${logFILE}
+echo "Private key file permission tests" | tee -a ${logFILE}
+
+# 10/25/2026: Key files other users can read are refused
+new_case_dir keyperm
+dd if=/dev/urandom of=loose.key bs=1 count=128 &>> ${logFILE}
+chmod 644 loose.key
+echo "key file test" > k.txt
+must_fail ${FCRYPT} --key=loose.key k.txt
+r=$?; [ $r -eq 0 ] && [ ! -e k.enc ]; result "fcrypt refuses a key file other users can read" $?
+chmod 600 loose.key
+must_pass ${FCRYPT} --key=loose.key k.txt; result "fcrypt accepts a key file with mode 600" $?
+chmod 644 loose.key; rm -f k.txt
+must_fail ${FDECRYPT} --key=loose.key k.enc
+r=$?; [ $r -eq 0 ] && [ ! -e k.txt ]; result "fdecrypt refuses a key file other users can read" $?
+openssl genrsa -out loose_rsa.pem 2048 &>> ${logFILE}
+chmod 644 loose_rsa.pem
+must_fail ${FDECRYPT} --rsa-key=loose_rsa.pem --rsa-key-username=nobody k.enc
+result "fdecrypt refuses a private RSA key file other users can read" $?
+
+echo "" | tee -a ${logFILE}
 echo "2026102 format tests" | tee -a ${logFILE}
 
 # Normal round trip, private file mode

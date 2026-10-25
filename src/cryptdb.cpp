@@ -1450,6 +1450,36 @@ int cryptdb_getdircontents(gxString &path, gxString &err,
   return 1;
 }
 
+int check_private_key_file(const char *fname, gxString &err)
+// 10/25/2026: A private RSA key or symmetric key file must be a regular
+// file owned by the user that other users cannot read or write, like
+// ssh requires for private keys. A symbolic link is checked by its
+// target. Returns 0 if the file is good, or 1 with err set. Windows
+// files are not checked.
+{
+  err.Clear();
+#if defined (__UNIX__)
+  struct stat st;
+  if(stat(fname, &st) != 0) {
+    err << clear << "Cannot read key file " << fname;
+    return 1;
+  }
+  if(!S_ISREG(st.st_mode)) {
+    err << clear << "Key file " << fname << " is not a regular file";
+    return 1;
+  }
+  if(st.st_uid != geteuid()) {
+    err << clear << "Key file " << fname << " is not owned by the current user";
+    return 1;
+  }
+  if(st.st_mode & (S_IRWXG|S_IRWXO)) {
+    err << clear << "Key file " << fname << " can be read or written by other users, run chmod 600 " << fname;
+    return 1;
+  }
+#endif
+  return 0;
+}
+
 int read_key_file(const char *fname, MemoryBuffer &key, gxString &err, int expected_key_len)
 // Read in key file contents to key object and return in reference. 
 {

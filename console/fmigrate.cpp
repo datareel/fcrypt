@@ -383,6 +383,10 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: Key file " << input_arg_key_file.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
       return 0;
     }
+    if(check_private_key_file(input_arg_key_file.c_str(), ebuf) != 0) { // 10/25/2026
+      cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+      return 0;
+    }
     if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
       cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
       return 0;
@@ -399,6 +403,10 @@ int ProcessDashDashArg(gxString &arg)
     private_rsa_key_file = equal_arg;
     if(!futils_exists(private_rsa_key_file.c_str()) || !futils_isfile(private_rsa_key_file.c_str())) {
       cerr << "ERROR: Private RSA key file " << private_rsa_key_file.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
+      return 0;
+    }
+    if(check_private_key_file(private_rsa_key_file.c_str(), ebuf) != 0) { // 10/25/2026
+      cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
       return 0;
     }
     rv = RSA_read_key_file(private_rsa_key_file.c_str(), private_key, sizeof(private_key), &private_key_len, &has_passphrase);

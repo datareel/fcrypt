@@ -322,6 +322,10 @@ int ProcessDashDashArg(gxString &arg)
     }
     else {
       DEBUG_m("Reading symmetric key file");
+      if(check_private_key_file(input_arg_key_file.c_str(), ebuf) != 0) { // 10/25/2026
+        cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+        return 0;
+      }
       if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
 	cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
 	return 0;

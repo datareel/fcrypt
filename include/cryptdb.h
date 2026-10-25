@@ -412,6 +412,7 @@ int cryptdb_make_restore_path(const gxString &stored_name, int path_mode,
 int cryptdb_create_private_file(const char *fname);
 int cryptdb_rename_file(const char *from, const char *to, int overwrite);
 int read_key_file(const char *fname, MemoryBuffer &key, gxString &err, int expected_key_len = 0);
+int check_private_key_file(const char *fname, gxString &err); // 10/25/2026
 int cryptdb_gethomedir(gxString &home_dir);
 int cryptdb_makeabspath(gxString &path);
 int cryptdb_getdircontents(gxString &path, gxString &err, 

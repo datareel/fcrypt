@@ -324,6 +324,10 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     DEBUG_m("Reading symmetric key file");
+    if(check_private_key_file(input_arg_key_file.c_str(), ebuf) != 0) { // 10/25/2026
+      cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+      return 0;
+    }
     if(read_key_file(input_arg_key_file.c_str(), key, ebuf) != 0) {
       cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
       return 0;
@@ -349,6 +353,10 @@ int ProcessDashDashArg(gxString &arg)
 	return 0;
       }
       DEBUG_m("Reading RSA key file");
+      if(check_private_key_file(private_rsa_key_file.c_str(), ebuf) != 0) { // 10/25/2026
+        cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+        return 0;
+      }
       rv = RSA_read_key_file(private_rsa_key_file.c_str(), private_key, sizeof(private_key), &private_key_len, &has_passphrase);
       if(rv != RSA_NO_ERROR) {
 	cerr << "ERROR: " << RSA_err_string(rv) << "\n" << flush;
