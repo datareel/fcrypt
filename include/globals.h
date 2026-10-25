@@ -7,7 +7,7 @@
 // Produced By: DataReel Software Development Team
 // File Creation Date: 09/15/2003
 // Date Last Modified: 10/24/2026
-// Copyright (c) 2001-2026 DataReel Software Development
+// Copyright (c) 2003-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
 // ----------------------------------------------------------- // 
