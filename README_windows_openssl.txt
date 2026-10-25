@@ -115,6 +115,64 @@ E:\3plibs\openssl32-openssl-3.5.9>nmake install_sw install_ssldirs install_fips
 NOTE: To build a debug version of OpenSSL run the perl configure
 script with debug-VC-WIN64A, or debug-VC-WIN32 for 32-bit builds.
 
+-------------------
+FIPS MODE ON WINDOWS
+-------------------
+fcrypt and fdecrypt run in FIPS 140-3 mode with --fips, with
+FCRYPT_FIPS=1, or when the Windows "System cryptography: Use FIPS
+compliant algorithms" policy is enabled. FIPS mode needs the OpenSSL
+3.5.x LTS FIPS provider, fips.dll. The enable-fips and install_fips
+steps above build and install it:
+
+e:\3plibs\openssl64\lib\ossl-modules\fips.dll
+e:\3plibs\openssl64\fipsmodule.cnf
+
+Use the FIPS provider from the same OpenSSL 3.5.x LTS release as the
+rest of the build. For FIPS 140-3 compliance the FIPS provider version
+must also have a CMVP certificate. Check the validated versions at
+https://openssl-library.org/source/ before relying on FIPS mode for
+compliance.
+
+On each computer that runs fcrypt in FIPS mode, copy fips.dll and
+openssl.exe next to fcrypt.exe, for example to C:\fcrypt, and run the
+FIPS provider self-test and install on that computer:
+
+C:\fcrypt>openssl fipsinstall -out C:\fcrypt\fipsmodule.cnf -module C:\fcrypt\fips.dll
+
+Create C:\fcrypt\openssl.cnf:
+
+config_diagnostics = 1
+openssl_conf = openssl_init
+.include C:\fcrypt\fipsmodule.cnf
+[openssl_init]
+providers = provider_sect
+[provider_sect]
+fips = fips_sect
+base = base_sect
+default = default_sect
+[base_sect]
+activate = 1
+[default_sect]
+activate = 1
+
+Point OpenSSL at these files, for all users with setx /M or per
+user without it:
+
+C:\fcrypt>setx /M OPENSSL_CONF C:\fcrypt\openssl.cnf
+C:\fcrypt>setx /M OPENSSL_MODULES C:\fcrypt
+
+Check FIPS mode in a new command prompt:
+
+C:\fcrypt>fcrypt.exe --fips --version
+
+The output ends with "FIPS mode on, provider: OpenSSL FIPS Provider"
+and the provider version. In FIPS mode fdecrypt refuses files from
+releases before 2026.102. Use fdecrypt --no-fips to decrypt them, or
+fmigrate to convert them. See README.txt for details.
+
+The 32-bit legacy build uses the fips.dll from the 32-bit OpenSSL
+build in the same way.
+
 -----------------------------------
 DataReel Build with OpenSSL Enabled
 -----------------------------------

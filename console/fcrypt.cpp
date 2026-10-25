@@ -65,7 +65,9 @@ int debug_level = 1;
 int num_buckets = 1024;
 int overwrite = 0;
 int mode = -1;
-unsigned key_iterations =  AES_DEF_ITERATIONS;
+unsigned key_iterations = FC_DEF_ITERATIONS; // 10/25/2026: PBKDF2 iterations
+unsigned legacy_key_iterations = AES_DEF_ITERATIONS; // Old format files, set with --iter
+int fips_request = FC_FIPS_AUTO;
 int remove_src_file = 0;
 gxList<gxString> file_list;
 gxString en_dot_ext(".enc");
@@ -89,7 +91,7 @@ char public_key[RSA_max_keybuf_len];
 unsigned public_key_len = 0;
 gxString rsa_key_passphrase;
 int has_passphrase = 0;
-unsigned static_data_size = DEFAULT_STATIC_DATA_AREA_SIZE;
+unsigned static_data_size = FC_DEF_SLOT_AREA_LEN;
 gxString decrypted_output_filename;
 #ifdef __ENABLE_SMART_CARD__
 SmartCardOB sc;
@@ -122,7 +124,15 @@ void DisplayVersion()
   cout << "\n" << flush;
   cout << "Encryption engine: Openssl" << "\n" << flush;
   cout << "Version string: " << OPENSSL_VERSION_TEXT << "\n" << flush;
-  cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << "\n" << flush;
+  cout << "Version number: 0x" << hex << OPENSSL_VERSION_NUMBER << dec << "\n" << flush;
+  cout << "Encrypted file format: " << FC_FILE_VERSION << "\n" << flush;
+  gxString fips_err;
+  if(FC_crypto_init(fips_request, fips_err)) {
+    cout << FC_crypto_status().c_str() << "\n" << flush;
+  }
+  else {
+    cout << fips_err.c_str() << "\n" << flush;
+  }
 #ifdef __ENABLE_SMART_CARD__
   cout << "\n" << flush;
   cout << "Smart card enabled for " << SC_get_default_engine_ID() << "\n" << flush;
@@ -156,14 +166,16 @@ void HelpMessage()
   cout << "          --decrypted-outfile=fname (Tell fdecrypt to write the decrypted output to specified file name)" << "\n" << flush;
   cout << "          --ext=.enc (Dot extension used for encrypted files)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
-  cout << "          --iter=num (Set the number of derived key iterations)" << "\n" << flush;
+  cout << "          --fips (Use only the OpenSSL FIPS provider, see README.txt)" << "\n" << flush;
+  cout << "          --iter=num (Set the number of PBKDF2 key iterations, default " << FC_DEF_ITERATIONS << ")" << "\n" << flush;
   cout << "          --key=aes_key (Use a key file for symmetric file encryption)" << "\n" << flush;
+  cout << "          --no-fips (Do not use FIPS mode, even if the system is in FIPS mode)" << "\n" << flush;
   cout << "          --outfile=fname (Write encrypted output to specified file name)" << "\n" << flush;
   cout << "          --outdir=dir (Write encrypted output to this directory)" << "\n" << flush;
   cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
   cout << "          --rsa-key-passphrase (Passphrase for public RSA key)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
-  cout << "          --static-data-size=num (Set size of static data storage area)" << "\n" << flush;  
+  cout << "          --static-data-size=num (Set size of the key slot area, default " << FC_DEF_SLOT_AREA_LEN << ")" << "\n" << flush;  
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;  
   cout << "          --version (Display program version number)" << "\n" << flush;
 #ifdef __ENABLE_SMART_CARD__
@@ -245,9 +257,9 @@ int ProcessDashDashArg(gxString &arg)
     }
 
     static_data_size = equal_arg.Atoi();
-    if((static_data_size < MIN_STATIC_DATA_AREA_SIZE) || (static_data_size > MAX_STATIC_DATA_AREA_SIZE)) {
+    if((static_data_size < FC_MIN_SLOT_AREA_LEN) || (static_data_size > FC_MAX_SLOT_AREA_LEN)) {
       cerr << "ERROR: Bad static data storage value specified" << "\n" << flush;
-      cerr << "ERROR: Valid range = " << MIN_STATIC_DATA_AREA_SIZE << " to " << MAX_STATIC_DATA_AREA_SIZE << " bytes" << "\n" << flush;
+      cerr << "ERROR: Valid range = " << FC_MIN_SLOT_AREA_LEN << " to " << FC_MAX_SLOT_AREA_LEN << " bytes" << "\n" << flush;
       return 0;
     }
     has_valid_args = 1;
@@ -268,6 +280,16 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "verbose") {
     clientcfg->verbose_mode = 1;
+    has_valid_args = 1;
+  }
+
+  // 10/25/2026: FIPS mode
+  if(arg == "fips") {
+    fips_request = FC_FIPS_ON;
+    has_valid_args = 1;
+  }
+  if(arg == "no-fips") {
+    fips_request = FC_FIPS_OFF;
     has_valid_args = 1;
   }
 
@@ -314,12 +336,12 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: --iter requires an input argument: --iter=10000" << "\n" << flush;
       return 0;
     }
-    // 10/24/2026: Do not allow weaker key derivation than the default
-    if(equal_arg.Atoi() < (int)AES_DEF_ITERATIONS) {
-      cerr << "ERROR: --iter must be at least " << AES_DEF_ITERATIONS << "\n" << flush;
+    // 10/25/2026: PBKDF2 iterations for the 2026102 file format
+    if(equal_arg.Atoi() < (int)FC_MIN_ITERATIONS || equal_arg.Atoi() > (int)FC_MAX_ITERATIONS) {
+      cerr << "ERROR: --iter must be " << FC_MIN_ITERATIONS << " to " << FC_MAX_ITERATIONS << "\n" << flush;
       return 0;
     }
-    key_iterations = equal_arg.Atoi();
+    key_iterations = legacy_key_iterations = equal_arg.Atoi();
     has_valid_args = 1;
   }
 
@@ -501,8 +523,9 @@ int ProcessArgs(char *arg)
       break;
 
     case '0': 
-      mode = 0;
-      break;
+      // 10/25/2026: The 2026102 file format always encrypts
+      cerr << "ERROR: -0 (no encryption) is not supported by the " << FC_FILE_VERSION << " file format" << "\n" << flush;
+      return 0;
 
     case '3': 
       mode = 3;
@@ -582,7 +605,50 @@ int ExitProgram(int rv, char *exit_message)
   if(exit_message) {
     cerr << exit_message << "\n" << flush;
   }
+  FC_crypto_cleanup();
   return rv;
+}
+
+// 10/25/2026: Helpers for 2026102 format files
+int CheckLegacyFile(const char *fname, int &fmt)
+// Returns false if the file cannot be used in this mode
+{
+  fmt = FC_file_format(fname);
+  if(fmt == FC_FORMAT_OPEN_ERROR) {
+    cerr << "ERROR: Cannot open " << fname << "\n" << flush;
+    return 0;
+  }
+  if(fmt == FC_FORMAT_LEGACY && FC_fips_mode()) {
+    cerr << "ERROR: " << fname << " uses the old file format, which FIPS mode does not allow" << "\n" << flush;
+    cerr << "ERROR: Rerun with --no-fips, or convert the file with fmigrate --no-fips" << "\n" << flush;
+    return 0;
+  }
+  return 1;
+}
+
+void ListNewFormatUsers(FCryptFile &fc)
+{
+  cerr << "Key slot area size = " << fc.slot_area_len << "\n" << flush;
+  cerr << "Authorized users list = ";
+  int n = 0;
+  gxListNode<FCKeySlot> *list_ptr = fc.slots.GetHead();
+  while(list_ptr) {
+    if(list_ptr->data.type != FC_SLOT_SECRET) {
+      if(n++) cerr << ", ";
+      cerr << list_ptr->data.username.c_str();
+    }
+    list_ptr = list_ptr->next;
+  }
+  cerr << "\n" << flush;
+}
+
+int OpenNewFormatFile(FCryptFile &fc, const char *fname, const MemoryBuffer &secret)
+{
+  if(!fc.LoadHeader(fname) || !fc.UnlockWithSecret(secret)) {
+    cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
+    return 0;
+  }
+  return 1;
 }
 
 int main(int argc, char **argv)
@@ -701,6 +767,14 @@ int main(int argc, char **argv)
     cerr << "No file name specified" << "\n";
     return ExitProgram(1);
   }
+
+  // 10/25/2026: Set up FIPS mode or the default provider
+  gxString fips_err;
+  if(!FC_crypto_init(fips_request, fips_err)) {
+    cerr << "ERROR: " << fips_err.c_str() << "\n" << flush;
+    return ExitProgram(1);
+  }
+  if(clientcfg->verbose_mode) cerr << FC_crypto_status().c_str() << "\n" << flush;
   
   if(futils_chdir(top_pwd) != 0) {
     cerr << "Encountered fatal fcrypt error" << "\n";
@@ -836,8 +910,37 @@ int main(int argc, char **argv)
     if(debug_mode) sc.verbose_mode = 1;
     
     while(ptr) {
+      int fmt;
+      if(!CheckLegacyFile(ptr->data.c_str(), fmt)) return ExitProgram(1);
+      if(fmt == FC_FORMAT_2026102) {
+	FCryptFile nf;
+	if(!OpenNewFormatFile(nf, ptr->data.c_str(), aes_file_encrypt_secret)) return ExitProgram(1);
+	unsigned char wrapped[FC_MAX_WRAPPED_LEN];
+	unsigned wrapped_len = 0;
+	int sc_rv;
+	if(use_smartcard_cert_file) {
+	  sc_rv = SC_cert_file_public_key_encrypt(&sc, nf.FileKey(), FC_KEY_LEN, wrapped, sizeof(wrapped),
+						  &wrapped_len, RSA_PKCS1_OAEP_PADDING);
+	}
+	else {
+	  sc_rv = SC_public_key_encrypt(&sc, nf.FileKey(), FC_KEY_LEN, wrapped, sizeof(wrapped),
+					&wrapped_len, RSA_PKCS1_OAEP_PADDING);
+	}
+	if(sc_rv != 0) {
+	  cerr << "ERROR: " << sc.err_string << "\n" << flush;
+	  return ExitProgram(1);
+	}
+	if(!nf.AddWrappedKey(FC_SLOT_SMARTCARD, smartcard_cert_username.c_str(), wrapped, wrapped_len)) {
+	  cerr << "ERROR: " << nf.err.c_str() << "\n" << flush;
+	  return ExitProgram(1);
+	}
+	cerr << "Smart card cert for user " << smartcard_cert_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+	if(clientcfg->verbose_mode) ListNewFormatUsers(nf);
+	ptr = ptr->next;
+	continue;
+      }
       FCryptCache fc(num_buckets);
-      fc.key_iterations = key_iterations;
+      fc.key_iterations = legacy_key_iterations;
       if(!fc.AddSmartCardCertToStaticArea(&sc, use_smartcard_cert_file, ptr->data.c_str(), aes_file_encrypt_secret, smartcard_cert_username.c_str())) {
 	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
 	return ExitProgram(1);
@@ -874,8 +977,24 @@ int main(int argc, char **argv)
     cerr << "Adding RSA key for user " << rsa_key_username.c_str() << " to encrypted file " << ptr->data.c_str() << "\n" << flush;
 
     while(ptr) {
+      int fmt;
+      if(!CheckLegacyFile(ptr->data.c_str(), fmt)) return ExitProgram(1);
+      if(fmt == FC_FORMAT_2026102) {
+	FCryptFile nf;
+	if(!OpenNewFormatFile(nf, ptr->data.c_str(), aes_file_encrypt_secret)) return ExitProgram(1);
+	char *passphrase = 0;
+	if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
+	if(!nf.AddRSAKey(rsa_key_username.c_str(), public_key, public_key_len, passphrase)) {
+	  cerr << "ERROR: " << nf.err.c_str() << "\n" << flush;
+	  return ExitProgram(1);
+	}
+	cerr << "Public RSA key " << rsa_key_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+	if(clientcfg->verbose_mode) ListNewFormatUsers(nf);
+	ptr = ptr->next;
+	continue;
+      }
       FCryptCache fc(num_buckets);
-      fc.key_iterations = key_iterations;
+      fc.key_iterations = legacy_key_iterations;
       if(!fc.AddRSAKeyToStaticArea(ptr->data.c_str(), aes_file_encrypt_secret, public_key, public_key_len, rsa_key_username.c_str())) {
 	cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
 	return ExitProgram(1);
@@ -903,38 +1022,27 @@ int main(int argc, char **argv)
   }
   
   while(ptr) {
-    FCryptCache fc(num_buckets, static_data_size);
-    fc.mode = mode;
-    fc.key_iterations = key_iterations;
-    fc.SetOverWrite(overwrite);
-    fc.SetDotExt(en_dot_ext.c_str());
-    if(!output_dir_name.is_null()) {
-      fc.SetDir(output_dir_name.c_str());
-    }
-    if(!output_file_name.is_null()) {
-      fc.SetOutputFileName(output_file_name.c_str());
-    }
-    if(!decrypted_output_filename.is_null()) {
-      fc.decrypted_output_filename = decrypted_output_filename;
-    }
+    // 10/25/2026: New files always use the 2026102 file format
+    FCryptFile fc;
+    fc.iterations = key_iterations;
+    fc.slot_area_len = static_data_size;
+    fc.overwrite = overwrite;
+    fc.en_dot_ext = en_dot_ext;
+    if(!output_dir_name.is_null()) fc.output_dir_name = output_dir_name;
+    if(!output_file_name.is_null()) fc.output_file_name = output_file_name;
+    if(!decrypted_output_filename.is_null()) fc.stored_name_override = decrypted_output_filename;
     
     gxString sbuf;
 
     if(clientcfg->verbose_mode) {
       cerr << "Encrypting:      " << ptr->data.c_str() << "\n" << flush;
-      if(mode == -1 || mode == 3) {
-	cerr << "Encryption mode: " << "AES 256 CBC" << "\n" << flush;
-      }
-      else {
-	cerr << "Encryption mode: " << mode << "\n" << flush;
-      }
+      cerr << "File format:     " << FC_FILE_VERSION << "\n" << flush;
+      cerr << "Encryption mode: " << "AES-256-CBC with HMAC-SHA256, PBKDF2-HMAC-SHA256" << "\n" << flush;
       cerr << "Key iterations:  " << key_iterations << "\n" << flush;
-      cerr << "Cache buckets:   " << num_buckets << "\n" << flush;
     }
     else {
       cerr << "Encrypting: " << ptr->data.c_str() << "\n" << flush;
     }
-    if(fc.mode == 0) cerr << "\n" << "WARNING: Using mode 0 for test only - WARNING: Output file will not be encrypted" << "\n\n"<< flush;
 
     rv = fc.EncryptFile(ptr->data.c_str(), aes_file_encrypt_secret);
     if(!rv) {
@@ -946,9 +1054,9 @@ int main(int argc, char **argv)
     } 
 
     cerr << "File encrypt successful" << "\n" << flush;
-    sbuf << clear << wn << fc.BytesWrote();
+    sbuf << clear << wn << fc.bytes_wrote;
     cerr << "Wrote " << sbuf.c_str() << " bytes to "
-	 << fc.OutFileName() << "\n" << flush;
+	 << fc.ofname.c_str() << "\n" << flush;
 
     if(remove_src_file) {
       if(futils_remove(ptr->data.c_str()) != 0) {

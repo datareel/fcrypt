@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Release 2026.101
+Release 2026.102
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 6, 7, 8, 9, and 10 
@@ -10,7 +10,9 @@ Built with the DataReel C++ library version 6.0, included under the
 
 This source code is used to build the fcrypt and fdecrypt utilities
 that are used to encrypt existing files using the AES CBC 256 bit
-encryption algorithm based on the OpenSSL implementation.
+encryption algorithm based on the OpenSSL implementation. Every
+algorithm used for new files is FIPS 140-3 approved, and the programs
+can run with only the OpenSSL FIPS provider.
 
 In the distribution example programs used for OpenSSL development and
 testing are under the following directory: 
@@ -28,11 +30,93 @@ encryption tool kit for encrypting and decrypting files.
 FEATURES:
 
 	AES 256 bit symmetric file encryption
+	FIPS 140-3 mode using the OpenSSL FIPS provider
 	File encryption using a password or key file
 	Multi user access to encrypted files using RSA keys
 	Multi user access to encrypted files using a smart card
 	Supports DOD CAC smart cards
 	
+FIPS 140-3 MODE AND FILE FORMAT 2026102 IN RELEASE 2026.102
+----------------------------------------------------------
+Release 2026.102 adds FIPS 140-3 mode and a new encrypted file format,
+version 2026102, that uses only FIPS approved algorithms:
+
+	PBKDF2-HMAC-SHA256 (SP 800-132), 600000 iterations by default
+	A random 256 bit key for each file
+	AES-256 Key Wrap (SP 800-38F) for the password or key file
+	RSA-OAEP with SHA-256 for RSA keys and smart cards, 2048 bit
+	minimum
+	KBKDF with HMAC-SHA256 (SP 800-108) for the file's working keys
+	AES-256-CBC with HMAC-SHA256 on every 64 KB record
+	(encrypt-then-MAC)
+
+Every record and the header, including the list of users, is
+authenticated, so changed, removed, reordered, added or truncated data
+is detected before any output is kept.
+
+Backwards compatibility:
+
+* fdecrypt still decrypts files from every older release. No switches
+  are needed outside FIPS mode.
+
+* fcrypt writes only the 2026102 format. Older releases cannot decrypt
+  these files, so upgrade fdecrypt everywhere the files are read.
+
+* fcrypt --add-rsa-key and --add-smartcard-cert still work on files
+  from older releases, outside FIPS mode.
+
+* fdecrypt --iter applies only to files from older releases. New files
+  store their iteration count.
+
+FIPS mode is on when:
+
+* --fips is given, or
+* FCRYPT_FIPS=1 is set, or
+* the system is in FIPS mode: /proc/sys/crypto/fips_enabled is 1 on
+  Linux, the "System cryptography: Use FIPS compliant algorithms"
+  policy is enabled on Windows, or the OpenSSL configuration sets
+  fips=yes.
+
+In FIPS mode every crypto operation uses only the OpenSSL FIPS
+provider. If the FIPS provider cannot be loaded or fails its self-test,
+the programs stop with an error. "fcrypt --version" shows the mode and
+the provider in use.
+
+In FIPS mode fdecrypt refuses files from older releases, because their
+format uses algorithms that are not FIPS approved. To decrypt one, run
+fdecrypt with --no-fips, which turns FIPS mode off for that run, even
+on a system in FIPS mode:
+
+$ ./fdecrypt --no-fips --password testfile.enc
+
+To convert old files to the 2026102 format, use fmigrate.
+
+In FIPS mode a private RSA key with a passphrase must be in PKCS#8
+format, since the older PEM format derives its key with MD5. To convert
+a key, including an SSH-RSA key:
+
+$ openssl pkcs8 -topk8 -v2 aes-256-cbc -v2prf hmacWithSHA256 -in ~/.ssh/id_rsa -out ~/.keys/id_rsa_pkcs8.pem
+$ chmod 600 ~/.keys/id_rsa_pkcs8.pem
+
+FIPS mode needs OpenSSL 3.0 or later with a FIPS provider:
+
+* RHEL 9 and 10: enable FIPS mode with "fips-mode-setup --enable" and
+  reboot. The system OpenSSL FIPS provider is used.
+
+* RHEL 7 and 8: OpenSSL 1.0.2 and 1.1.1 have no FIPS provider. These
+  builds refuse --fips, and run outside FIPS mode on a host in FIPS
+  mode.
+
+* Windows: build the OpenSSL 3.5.x LTS FIPS provider, see FIPS MODE ON
+  WINDOWS in README_windows_openssl.txt.
+
+For FIPS 140-3 compliance the FIPS provider version must have a CMVP
+certificate. On Linux use the FIPS provider that comes with the OS. On
+Windows use the FIPS provider from the OpenSSL 3.5.x LTS release used
+for the build, and check the validated versions at
+https://openssl-library.org/source/ before relying on FIPS mode for
+compliance.
+
 SECURITY UPDATE IN RELEASE 2025.105
 -----------------------------------
 Release 2025.105 fixes security problems found in a code review. All
@@ -68,13 +152,15 @@ release decrypt with older releases.
 * Files encrypted with mode 0 (no encryption, for testing) need the
   fdecrypt --allow-unencrypted switch.
 
-* fcrypt --iter must be at least 1000.
+* fcrypt --iter must be at least 1000. (Release 2026.102: 1000 to
+  10000000, default 600000.)
 
 * Memory safety fixes for long file names, RSA user data stored in the
   encrypted file, console input and key file reads.
 
 Run console/linux/run_security_tests.sh and run_compat_tests.sh to test
-a build.
+a build. Give run_compat_tests.sh the console/linux directories of
+older release builds. Set FCRYPT_FIPS=1 to run both in FIPS mode.
 
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR WINDOWS
 -----------------------------------------------------
@@ -89,7 +175,8 @@ see the following readme file: README_VisualStudio.txt
 The Windows build requires the OpenSSL library. Use only an OpenSSL
 3.5.x LTS release, built as 64-bit x64 (and as 32-bit x86 only for
 legacy builds). The build stops with an error for any other OpenSSL
-version.
+version. FIPS mode also needs the OpenSSL 3.5.x FIPS provider,
+fips.dll, see FIPS MODE ON WINDOWS in README_windows_openssl.txt.
 
 For instructions on how to build OpenSSL for Windows please see the
 following readme file: README_windows_openssl.txt 

@@ -42,6 +42,8 @@ File encryption include file.
 #include "aesdb.h"
 #include "rsadb.h"
 #include "smart_card.h"
+#include "fcfips.h"
+#include "fcfile.h"
 
 #endif // __GX_FILE_CRYPT_HPP__
 // ----------------------------------------------------------- // 
