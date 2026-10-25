@@ -209,7 +209,7 @@ int FC_crypto_init(int fips_request, gxString &err)
   AES_set_libctx(fc_libctx);
   return 1;
 #else
-  // Builds for older systems, such as RHEL 7 and 8, keep working on a
+  // Builds for older systems, such as RHEL 8, keep working on a
   // host in FIPS mode. Only an explicit --fips is refused.
   if(fips_request == FC_FIPS_ON) {
     err << clear << "FIPS mode needs OpenSSL 3.0 or later, this build uses " << OPENSSL_VERSION_TEXT;
