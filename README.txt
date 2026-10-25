@@ -252,7 +252,9 @@ TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR LINUX
 ---------------------------------------------------
 $ mkdir -pv ${HOME}/git
 $ cd ${HOME}/git
-$ git clone https://github.com/datareel/fcrypt.git
+$ wget https://datareel.com/downloads/fcrypt/fcrypt-<version>.tar.gz
+$ tar xzf fcrypt-<version>.tar.gz
+$ mv fcrypt-<version> fcrypt
 $ cd fcrypt/console/linux
 $ make
 
