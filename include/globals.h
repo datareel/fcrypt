@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 09/15/2003
-// Date Last Modified: 10/24/2026
+// Date Last Modified: 10/25/2026
 // Copyright (c) 2003-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -63,7 +63,7 @@ used in throughout the source code.
 #include <utime.h>
 #endif
 
-const float PROGRAM_VERSION_NUMBER = 2026.102; // Set the version number here
+const float PROGRAM_VERSION_NUMBER = 2026.103; // Set the version number here
 const int COMMAND_HISTORY_LEN = 255; // Buffer size for command history 
 
 #endif  // __GLOBALS_HPP__

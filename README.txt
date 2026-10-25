@@ -1,12 +1,12 @@
 File encryption and decryption utility
 
-Release 2026.102
+Release 2026.103
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
 Linux build). RHEL 6 and 7 are no longer supported.
 
-Built with the DataReel C++ library version 6.0, included under the
+Built with the DataReel C++ library version 6.1, included under the
 3plibs/datareel directory.
 
 This source code is used to build the fcrypt and fdecrypt utilities
@@ -37,9 +37,27 @@ FEATURES:
 	Multi user access to encrypted files using a smart card
 	Supports DOD CAC smart cards
 	
+SECURITY FIXES IN RELEASE 2026.103
+----------------------------------
+* The bundled DataReel library is updated to version 6.1. DataReel 6.1
+  checks the B-tree node key counts, B-tree header key size and node
+  order, and the object member counts and lengths that it reads from
+  database and index files. Damaged or crafted files are rejected
+  instead of overflowing memory. See 3plibs/datareel/RELEASE_NOTES_6.1.txt.
+
+* fcrypt, fdecrypt and fmigrate no longer loop forever at 100% CPU when
+  a password, passphrase or PIN prompt reaches the end of its input,
+  for example when stdin is /dev/null or a closed pipe in a script.
+  Input that ends without a newline is used as typed, and empty input
+  is an error.
+
+* The encrypted file format is unchanged. Files made by 2026.102 and
+  2026.103 are the same, and fdecrypt still decrypts files from every
+  earlier release.
+
 REMOVED RHEL 6 AND 7 SUPPORT
 ----------------------------
-Changes after release 2026.102:
+Release 2026.103:
 
 * RHEL 6 and RHEL 7 builds are no longer supported. makefile_rhel6 and
   makefile_rhel7 are removed, along with the RHEL 6 and 7 cases in
