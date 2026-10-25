@@ -530,3 +530,13 @@ List the objects on the card with:
 Cards that cannot do RSA-OAEP with SHA-256 themselves, such as PIV
 cards, are supported by decrypting with raw RSA on the card and
 removing the OAEP padding in fcrypt.
+
+DOD CAC and PIV cards: OpenSC supports CAC and PIV cards. With OpenSC
+the PIV Authentication key is ID 01, Digital Signature is ID 02 and
+Key Management (encryption) is ID 03. Use the encryption key, ID 03,
+for files you need to keep, since DOD can recover escrowed encryption
+keys when a card is replaced and the other keys cannot be recovered.
+Add access for a new card before the old card expires. A wrong PIN is
+never retried, CAC cards lock after three wrong PINs. Keys that ask
+for the PIN before every use are supported. On Windows, if ActivClient
+is installed, its PKCS#11 module can be used with --smartcard-provider.

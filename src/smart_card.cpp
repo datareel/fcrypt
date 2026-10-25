@@ -681,6 +681,20 @@ int SC_public_key_encrypt(SmartCardOB *sc,
   return 0;
 }
 
+static int SC_p11_pin_error(CK_RV rv)
+{
+  return (rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED || rv == CKR_PIN_EXPIRED ||
+	  rv == CKR_USER_NOT_LOGGED_IN);
+}
+
+static CK_RV SC_p11_context_login(SC_p11_session *p, SmartCardOB *sc)
+{
+  if(sc->pin[0] == 0 && (p->token_flags & CKF_PROTECTED_AUTHENTICATION_PATH)) {
+    return p->fl->C_Login(p->session, CKU_CONTEXT_SPECIFIC, 0, 0);
+  }
+  return p->fl->C_Login(p->session, CKU_CONTEXT_SPECIFIC, (CK_UTF8CHAR_PTR)sc->pin, (CK_ULONG)strlen(sc->pin));
+}
+
 int SC_private_key_decrypt(SmartCardOB *sc,
 			   const unsigned char ciphertext[], unsigned int ciphertext_len,
 			   unsigned char plaintext[], unsigned int plaintext_len,
@@ -746,15 +760,26 @@ int SC_private_key_decrypt(SmartCardOB *sc,
     return sc->SetError("Error loading smart card private key");
   }
 
+  // Keys such as a PIV or CAC signature key ask for the PIN again
+  // before each use
+  CK_BBOOL always_auth = CK_FALSE;
+  CK_ATTRIBUTE always_attr;
+  always_attr.type = CKA_ALWAYS_AUTHENTICATE;
+  always_attr.pValue = &always_auth;
+  always_attr.ulValueLen = sizeof(always_auth);
+  if(p.fl->C_GetAttributeValue(p.session, key, &always_attr, 1) != CKR_OK) always_auth = CK_FALSE;
+
   // Decrypt to a work buffer the size of the largest key, then copy
   unsigned char work[SC_max_rsa_len];
   CK_ULONG work_len = sizeof(work);
   int oaep_raw = 0;
   rv = p.fl->C_DecryptInit(p.session, &mech, key);
+  if(rv == CKR_OK && always_auth) rv = SC_p11_context_login(&p, sc);
   if(rv == CKR_OK) {
     rv = p.fl->C_Decrypt(p.session, (CK_BYTE_PTR)ciphertext, ciphertext_len, work, &work_len);
   }
-  if(rv != CKR_OK && rv != CKR_PIN_EXPIRED && padding == RSA_PKCS1_OAEP_PADDING &&
+  // Never retry after a PIN error, CAC and PIV cards lock after a few
+  if(rv != CKR_OK && !SC_p11_pin_error(rv) && padding == RSA_PKCS1_OAEP_PADDING &&
      ciphertext_len <= sizeof(work)) {
     // Many cards and SoftHSM have no SHA-256 OAEP, use raw RSA and
     // remove the OAEP padding here
@@ -763,12 +788,15 @@ int SC_private_key_decrypt(SmartCardOB *sc,
     raw_mech.mechanism = CKM_RSA_X_509;
     work_len = sizeof(work);
     rv = p.fl->C_DecryptInit(p.session, &raw_mech, key);
+    if(rv == CKR_OK && always_auth) rv = SC_p11_context_login(&p, sc);
     if(rv == CKR_OK) {
       rv = p.fl->C_Decrypt(p.session, (CK_BYTE_PTR)ciphertext, ciphertext_len, work, &work_len);
     }
     oaep_raw = 1;
   }
   SC_p11_close(&p);
+  if(rv == CKR_PIN_INCORRECT) return sc->SetError("Smart card PIN is incorrect");
+  if(rv == CKR_PIN_LOCKED) return sc->SetError("Smart card PIN is locked");
 
   int ok = (rv == CKR_OK);
   unsigned out_len = (unsigned)work_len;
