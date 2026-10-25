@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // Date Last Modified: 03/21/2004
-// Date Last Modified: 10/24/2026
+// Date Last Modified: 10/25/2026
 // Copyright (c) 2003-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -95,10 +95,14 @@ int consoleGetChar(int &c)
   select(1, &readfds, &writefds, &exceptfds, &timeout);
 
   // Block until a key is pressed
-  if(read(fileno(stdin), &c, 1) < 0) {
+  // 10/25/2026: read() returns 0 at end of input, which was treated as
+  // a key press and made consoleGetString() loop forever.
+  unsigned char ch_in = 0;
+  if(read(fileno(stdin), &ch_in, 1) <= 0) {
     tcsetattr(fd, TCSANOW, &otty);
     return 0;
   }
+  c = ch_in;
 
   // Reset the tty back to its original mode 
   tcsetattr(fd, TCSANOW, &otty);
@@ -183,7 +187,10 @@ int consoleGetString(char *s, int password, unsigned max_len)
   char *p = s;
 
   while (1) {
-    consoleGetChar(key);
+    if(!consoleGetChar(key)) { // 10/25/2026: End of input or read error
+      *pos = 0;
+      return (charcount > 0) ? 1 : 0;
+    }
     ch = (char)key;
 
     if((ch == '\n') || (ch == '\r') || (ch == consoleCONTROL_KEY('c'))) {
