@@ -1,0 +1,76 @@
+#######################
+#### Start of File ####
+#######################
+# --------------------------------------------------------------- 
+# Makefile Contents: Makefile for command line builds
+# C/C++ Compiler Used: Microsoft Visual Studio 2026 Insiders
+# --------------------------------------------------------------- 
+# Define a name for the executable
+PROJECT = fmigrate
+
+include msvc.env
+
+# Set the project dependencies  
+# ===============================================================
+!include $(DATAREEL_DIR)/env/glibdeps.mak
+# ===============================================================
+
+# Compile the files and build the executable
+# ===============================================================
+all:	$(PROJECT)$(EXE_EXT)
+
+!include $(DATAREEL_DIR)/env/glibobjs.mak
+!include ../project.mak
+
+$(PROJECT)$(EXE_EXT):	$(OBJECTS) 
+	$(LINKER) $(LINK_FLAGS) $(OBJECTS) $(LIBRARIES) \
+	$(LINK_LIBS) /OUT:$@ 
+# ===============================================================
+
+# Remove OBJS, debug files, and executable after running nmake 
+# ===============================================================
+clean:
+	@echo Removing all .SBR files from working directory...
+	if exist *.sbr del *.sbr  
+
+	@echo Removing all .VCW files from working directory...
+	if exist *.vcw del *.vcw 
+
+	@echo Removing all .PDB files from working directory...
+	if exist *.pdb del *.pdb 
+
+	@echo Removing all .WSP files from working directory...
+	if exist *.wsp del *.wsp 
+
+	@echo Removing all .BSC files from working directory...
+	if exist *.bsc del *.bsc 
+
+	@echo Removing all .SBT files from working directory...
+	if exist *.sbt del *.sbt 
+
+	@echo Removing all .ILK files from working directory...
+	if exist *.ilk del *.ilk 
+
+	@echo Removing all .IDB files from working directory...
+	if exist *.idb del *.idb 
+
+	@echo Removing all .MDP files from working directory...
+	if exist *.mdp del *.mdp 
+
+	@echo Removing all .PCH files from working directory...
+	if exist *.pch del *.pch 
+
+	@echo Removing all .NCB files from working directory...
+	if exist *.ncb del *.ncb 
+
+	@echo Removing all .OBJ files from working directory...
+	if exist *.obj del *.obj 
+
+	@echo Removing the EXECUTABLE file from working directory...
+	if exist $(PROJECT).exe del $(PROJECT).exe 
+# --------------------------------------------------------------- 
+#####################
+#### End of File ####
+#####################
+
+
