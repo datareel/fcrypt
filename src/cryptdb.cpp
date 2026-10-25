@@ -49,29 +49,6 @@ Encryption routes generate encryption certificates and authenticate users.
 #include <unistd.h>
 #endif
 
-// 10/24/2026: HMAC context helpers for every supported OpenSSL version
-static HMAC_CTX *cryptdb_hmac_new()
-{
-#if OPENSSL_VERSION_NUMBER < 0x101010bfL
-  HMAC_CTX *ctx = new HMAC_CTX;
-  HMAC_CTX_init(ctx);
-  return ctx;
-#else
-  return HMAC_CTX_new();
-#endif
-}
-
-static void cryptdb_hmac_free(HMAC_CTX *ctx)
-{
-  if(!ctx) return;
-#if OPENSSL_VERSION_NUMBER < 0x101010bfL
-  HMAC_CTX_cleanup(ctx);
-  delete ctx;
-#else
-  HMAC_CTX_free(ctx);
-#endif
-}
-
 FCryptCache::FCryptCache(unsigned CacheSize, unsigned size_of_static_data_area) : cache(CacheSize) 
 { 
   ready_for_writing = 1; 
@@ -112,7 +89,7 @@ FCryptCache::~FCryptCache()
   }
   static_data_size = 0;
   static_data = 0;
-  cryptdb_hmac_free(integrity_ctx);
+  AES_hmac_free(integrity_ctx);
   integrity_ctx = 0;
   integrity.Wipe();
   OPENSSL_cleanse(header_plain, sizeof(header_plain));
@@ -139,7 +116,7 @@ static FAU_t cryptdb_get_le64(const unsigned char in[8])
 void FCryptCache::IntegrityUpdate(const void *buf, unsigned len)
 {
   if(!integrity_ctx || len == 0) return;
-  if(!HMAC_Update(integrity_ctx, (const unsigned char *)buf, len)) {
+  if(!AES_hmac_update(integrity_ctx, (const unsigned char *)buf, len)) {
     ERROR_LEVEL = -1;
     err << clear << "File integrity HMAC update failed";
   }
@@ -309,15 +286,10 @@ int FCryptCache::EncryptFile(const char *fname, const MemoryBuffer &secret)
 int FCryptCache::StartIntegrity()
 // Start the whole-file HMAC using the key in the integrity record.
 {
-  cryptdb_hmac_free(integrity_ctx);
-  integrity_ctx = cryptdb_hmac_new();
+  AES_hmac_free(integrity_ctx);
+  integrity_ctx = AES_hmac_new(integrity.mac_key, sizeof(integrity.mac_key));
   integrity_data_len = integrity_plaintext_len = (FAU_t)0;
   if(!integrity_ctx) {
-    ERROR_LEVEL = -1;
-    err << clear << "File integrity HMAC init failed";
-    return 0;
-  }
-  if(!HMAC_Init_ex(integrity_ctx, integrity.mac_key, sizeof(integrity.mac_key), EVP_sha256(), 0)) {
     ERROR_LEVEL = -1;
     err << clear << "File integrity HMAC init failed";
     return 0;
@@ -325,7 +297,7 @@ int FCryptCache::StartIntegrity()
   return 1;
 }
 
-static int cryptdb_integrity_final(HMAC_CTX *ctx, FAU_t data_len, FAU_t plaintext_len,
+static int cryptdb_integrity_final(AES_hmac_ctx *ctx, FAU_t data_len, FAU_t plaintext_len,
 				   unsigned char mac[CRYPT_FILE_INTEGRITY_MAC_LEN])
 // Finish the whole-file HMAC. The lengths are included so that the MAC
 // also covers where the file ends.
@@ -334,10 +306,8 @@ static int cryptdb_integrity_final(HMAC_CTX *ctx, FAU_t data_len, FAU_t plaintex
   unsigned char trailer[16];
   cryptdb_put_le64(trailer, data_len);
   cryptdb_put_le64(trailer+8, plaintext_len);
-  unsigned mac_len = CRYPT_FILE_INTEGRITY_MAC_LEN;
-  if(!HMAC_Update(ctx, trailer, sizeof(trailer))) return 0;
-  if(!HMAC_Final(ctx, mac, &mac_len)) return 0;
-  return mac_len == CRYPT_FILE_INTEGRITY_MAC_LEN;
+  if(!AES_hmac_update(ctx, trailer, sizeof(trailer))) return 0;
+  return AES_hmac_final(ctx, mac, CRYPT_FILE_INTEGRITY_MAC_LEN);
 }
 
 int FCryptCache::WriteIntegrityHeader()
@@ -692,7 +662,7 @@ int FCryptCache::DecryptFileHeader(CryptFileHdr &hdr, const char *fname, const M
   has_integrity = 0;
   stored_name.Clear();
   integrity.Wipe();
-  cryptdb_hmac_free(integrity_ctx);
+  AES_hmac_free(integrity_ctx);
   integrity_ctx = 0;
   int rv;
   

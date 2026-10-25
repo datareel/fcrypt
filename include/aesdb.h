@@ -44,6 +44,10 @@ AES encryption routes used generate encryption certificates.
 #include <openssl/rand.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
+#include <openssl/crypto.h>
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/core_names.h>
+#endif
 
 // 10/24/2026: Windows builds must use an OpenSSL 3.5.x LTS release.
 // See README_windows_openssl.txt.
@@ -185,6 +189,14 @@ int AES_derive_key(const unsigned char secret[], unsigned int secret_len,
 int AES_HMAC(const unsigned char key[], unsigned int key_len,
 	     const unsigned char data[], unsigned int data_len,
 	     unsigned char hash[], unsigned int hash_len);
+
+// 10/25/2026: Streaming HMAC-SHA256. OpenSSL 3 builds use EVP_MAC so the
+// HMAC runs through the loaded provider (including the FIPS provider).
+struct AES_hmac_ctx;
+AES_hmac_ctx *AES_hmac_new(const unsigned char key[], unsigned int key_len);
+int AES_hmac_update(AES_hmac_ctx *ctx, const unsigned char data[], unsigned int data_len);
+int AES_hmac_final(AES_hmac_ctx *ctx, unsigned char hash[], unsigned int hash_len);
+void AES_hmac_free(AES_hmac_ctx *ctx);
 int AES_256_CBC_encrypt(const unsigned char key[], const unsigned char iv[],
 			const unsigned char plaintext[], unsigned int plaintext_len, 
 			unsigned char ciphertext[], unsigned int ciphertext_len,
