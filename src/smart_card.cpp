@@ -31,10 +31,12 @@ Smartcard encryption and decryption routines.
 */
 // ----------------------------------------------------------- // 
 #include <smart_card.h>
+#include <rsadb.h>
 
 #ifdef __ENABLE_SMART_CARD__
 
 #include <smart_card.h>
+#include <rsadb.h>
 
 // In RHEL 10 the openssl-pkcs11 package is replaced with pkcs11-provider
 #if defined (__RHEL8__)
@@ -107,7 +109,7 @@ int SC_public_key_encrypt(SmartCardOB *sc,
 			  unsigned char ciphertext[], unsigned int ciphertext_len,
 			  unsigned *encrypted_data_len, int padding)
 {
-  OpenSSL_add_all_algorithms();
+  RSA_openssl_init();
   ENGINE_load_builtin_engines();
   ENGINE_register_all_complete();
 
@@ -134,24 +136,15 @@ int SC_public_key_encrypt(SmartCardOB *sc,
     return  sc->SetError("Error loading smart card public key");
   }
   
-  RSA *rsa = EVP_PKEY_get1_RSA(evkey);
-  if(!rsa) {
+  // 10/25/2026: Use EVP_PKEY instead of the deprecated RSA_* calls
+  if(RSA_pkey_encrypt(evkey, plaintext, plaintext_len, ciphertext, ciphertext_len,
+		      encrypted_data_len, padding) != RSA_NO_ERROR) {
     ENGINE_free(engine);
     EVP_PKEY_free(evkey);
-    return sc->SetError("Error creating RSA public key");
-  }
-  
-  int len = RSA_public_encrypt(plaintext_len, plaintext, ciphertext, rsa, padding);
-  if(len == -1) {
-    ENGINE_free(engine);
-    EVP_PKEY_free(evkey);
-    RSA_free(rsa);
     return sc->SetError("Public key encrypt failed");
   }
-  *(encrypted_data_len) = len;
 
   EVP_PKEY_free(evkey);
-  RSA_free(rsa);
   ENGINE_finish(engine);
   ENGINE_free(engine);
   ENGINE_cleanup();
@@ -165,7 +158,7 @@ int SC_private_key_decrypt(SmartCardOB *sc,
 			   unsigned *unencrypted_data_len,
 			   int padding)
 {
-  OpenSSL_add_all_algorithms();
+  RSA_openssl_init();
   ENGINE_load_builtin_engines();
   ENGINE_register_all_complete();
 
@@ -195,25 +188,15 @@ int SC_private_key_decrypt(SmartCardOB *sc,
     return  sc->SetError("Error loading smart card private key");
   }
   
-  RSA *rsa = EVP_PKEY_get1_RSA(evkey);
-  if(!rsa) {
+  // 10/25/2026: Use EVP_PKEY instead of the deprecated RSA_* calls
+  if(RSA_pkey_decrypt(evkey, ciphertext, ciphertext_len, plaintext, plaintext_len,
+		      unencrypted_data_len, padding) != RSA_NO_ERROR) {
     ENGINE_free(engine);
     EVP_PKEY_free(evkey);
-    return sc->SetError("Error creating RSA private key");
-  }
-
-  int len = RSA_private_decrypt(ciphertext_len, ciphertext, plaintext, rsa, padding);
-  if(len == -1)	{
-    ENGINE_free(engine);
-    EVP_PKEY_free(evkey);
-    RSA_free(rsa);
     return sc->SetError("Private key decrypt failed");
   }
-  
-  *(unencrypted_data_len) = len;
 
   EVP_PKEY_free(evkey);
-  RSA_free(rsa);
   ENGINE_finish(engine);
   ENGINE_free(engine);
   ENGINE_cleanup();
@@ -243,7 +226,8 @@ int SC_read_cert_file(SmartCardOB *sc, const char *fname)
       memset(read_buf, 0, sizeof(read_buf));  
       return sc->SetError("Error reading from smart card cert file");
     }
-    if(offset > SC_max_cert_file_len) {
+    // 10/25/2026: Check the space left before copying
+    if(input_bytes_read > SC_max_cert_file_len || offset > (SC_max_cert_file_len - input_bytes_read)) {
       fclose(fp);
       memset(read_buf, 0, sizeof(read_buf));  
       return sc->SetError("Smart card cert file exceeds max buffer length");
@@ -286,22 +270,14 @@ int SC_cert_file_public_key_encrypt(SmartCardOB *sc,
    return sc->SetError("Error creating public key object for smart card cert file");
  }
  
- RSA *rsa = EVP_PKEY_get1_RSA(evkey);
- if(!rsa) {
-   BIO_free(keybio);
-   X509_free(x509);
-   EVP_PKEY_free(evkey);
-   return sc->SetError("Error creating RSA public key");
- }
- 
- int len = RSA_public_encrypt(plaintext_len, plaintext, ciphertext, rsa, padding);
- if(len == -1) {
+ // 10/25/2026: Use EVP_PKEY instead of the deprecated RSA_* calls
+ if(RSA_pkey_encrypt(evkey, plaintext, plaintext_len, ciphertext, ciphertext_len,
+		     encrypted_data_len, padding) != RSA_NO_ERROR) {
    BIO_free(keybio);
    X509_free(x509);
    EVP_PKEY_free(evkey);
    return sc->SetError("Public key encrypt failed");
  }
- *(encrypted_data_len) = len;
 
  BIO_free(keybio);
  X509_free(x509);

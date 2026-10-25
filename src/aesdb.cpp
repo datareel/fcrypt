@@ -79,7 +79,10 @@ const char *AES_err_strings[NUM_AES_ERRORS] =
 
 int AES_openssl_init()
 {
+  // OpenSSL 1.1.0 and later load all algorithms automatically
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
   OpenSSL_add_all_algorithms();
+#endif
   return 0;
 }
 
@@ -126,7 +129,7 @@ int AES_derive_key(const unsigned char secret[], unsigned int secret_len,
   if(key_len > AES_MAX_KEY_LEN) return AES_ERROR_KEY_MAX_LENGTH; 
   if(iv_len > AES_MAX_IV_LEN) return AES_ERROR_KEY_MAX_LENGTH; 
 
-  OpenSSL_add_all_algorithms();
+  AES_openssl_init();
   
   // Clear the key and IV
   memset(key, 0, key_len);
@@ -148,6 +151,95 @@ int AES_derive_key(const unsigned char secret[], unsigned int secret_len,
   return AES_NO_ERROR;
 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+struct AES_hmac_ctx {
+  EVP_MAC *mac;
+  EVP_MAC_CTX *ctx;
+};
+#else
+struct AES_hmac_ctx {
+  HMAC_CTX *ctx;
+};
+#endif
+
+AES_hmac_ctx *AES_hmac_new(const unsigned char key[], unsigned int key_len)
+// Start an HMAC-SHA256. Returns 0 for errors.
+{
+  if(!key || key_len < AES_256_KEY_SIZE) return 0;
+  AES_hmac_ctx *h = new AES_hmac_ctx;
+  if(!h) return 0;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  h->ctx = 0;
+  h->mac = EVP_MAC_fetch(0, "HMAC", 0);
+  if(h->mac) h->ctx = EVP_MAC_CTX_new(h->mac);
+  char digest[] = "SHA256";
+  OSSL_PARAM params[2];
+  params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, digest, 0);
+  params[1] = OSSL_PARAM_construct_end();
+  if(!h->ctx || !EVP_MAC_init(h->ctx, key, key_len, params)) {
+    AES_hmac_free(h);
+    return 0;
+  }
+#else
+#if OPENSSL_VERSION_NUMBER < 0x101010bfL
+  h->ctx = new HMAC_CTX;
+  if(h->ctx) HMAC_CTX_init(h->ctx);
+#else
+  h->ctx = HMAC_CTX_new();
+#endif
+  if(!h->ctx || !HMAC_Init_ex(h->ctx, key, key_len, EVP_sha256(), 0)) {
+    AES_hmac_free(h);
+    return 0;
+  }
+#endif
+  return h;
+}
+
+int AES_hmac_update(AES_hmac_ctx *h, const unsigned char data[], unsigned int data_len)
+// Returns 1 on success, 0 for errors
+{
+  if(!h || !h->ctx) return 0;
+  if(data_len == 0) return 1;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  return EVP_MAC_update(h->ctx, data, data_len) == 1;
+#else
+  return HMAC_Update(h->ctx, data, data_len) == 1;
+#endif
+}
+
+int AES_hmac_final(AES_hmac_ctx *h, unsigned char hash[], unsigned int hash_len)
+// Write the 32-byte MAC to hash. Returns 1 on success, 0 for errors.
+{
+  if(!h || !h->ctx || hash_len != AES_MAX_HMAC_LEN) return 0;
+  int ok;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  size_t len = 0;
+  ok = (EVP_MAC_final(h->ctx, hash, &len, hash_len) == 1) && (len == hash_len);
+#else
+  unsigned int len = hash_len;
+  ok = (HMAC_Final(h->ctx, hash, &len) == 1) && (len == hash_len);
+#endif
+  if(!ok) OPENSSL_cleanse(hash, hash_len);
+  return ok;
+}
+
+void AES_hmac_free(AES_hmac_ctx *h)
+{
+  if(!h) return;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  EVP_MAC_CTX_free(h->ctx);
+  EVP_MAC_free(h->mac);
+#elif OPENSSL_VERSION_NUMBER < 0x101010bfL
+  if(h->ctx) {
+    HMAC_CTX_cleanup(h->ctx);
+    delete h->ctx;
+  }
+#else
+  HMAC_CTX_free(h->ctx);
+#endif
+  delete h;
+}
+
 int AES_HMAC(const unsigned char key[], unsigned int key_len,
 	     const unsigned char data[], unsigned int data_len,
 	     unsigned char hash[], unsigned int hash_len)
@@ -157,37 +249,20 @@ int AES_HMAC(const unsigned char key[], unsigned int key_len,
   if(hash_len < AES_MAX_HMAC_LEN) return AES_ERROR_HMAC_MAX_LENGTH; 
   if(key_len < AES_256_KEY_SIZE) return AES_ERROR_KEY_LENGTH;
   
-  // grep OPENSSL_VERSION_NUMBER /usr/include/openssl/opensslv.h
-#if OPENSSL_VERSION_NUMBER < 0x101010bfL
-  HMAC_CTX hmac_ob;
-  HMAC_CTX *hmac = &hmac_ob;
-  HMAC_CTX_init(hmac);
-#else
-  HMAC_CTX *hmac = HMAC_CTX_new();
-  if(!hmac) {
-    return AES_ERROR_HMAC_INIT_FAILED;
-  }
-#endif
-
   // 10/24/2026: Check every HMAC return value so a failed HMAC is never
   // written to a file or accepted as a match.
+  // 10/25/2026: Only the first 32 bytes of the key are used, as before.
+  AES_hmac_ctx *hmac = AES_hmac_new(key, AES_256_KEY_SIZE);
+  if(!hmac) return AES_ERROR_HMAC_INIT_FAILED;
+
   int rv = AES_NO_ERROR;
-  unsigned int len = hash_len;
-  if(!HMAC_Init_ex(hmac, key, AES_256_KEY_SIZE, EVP_sha256(), 0)) {
-    rv = AES_ERROR_HMAC_INIT_FAILED;
-  }
-  else if(!HMAC_Update(hmac, data, data_len)) {
+  if(!AES_hmac_update(hmac, data, data_len)) {
     rv = AES_ERROR_HMAC_UPDATE_FAILED;
   }
-  else if(!HMAC_Final(hmac, hash, &len) || len != hash_len) {
+  else if(!AES_hmac_final(hmac, hash, hash_len)) {
     rv = AES_ERROR_HMAC_FINAL_FAILED;
   }
-
-#if OPENSSL_VERSION_NUMBER < 0x101010bfL
-  HMAC_CTX_cleanup(hmac);
-#else  
-  HMAC_CTX_free(hmac);
-#endif
+  AES_hmac_free(hmac);
 
   if(rv != AES_NO_ERROR) OPENSSL_cleanse(hash, hash_len);
   return rv;

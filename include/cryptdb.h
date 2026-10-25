@@ -358,7 +358,7 @@ private: // Device cache
   int path_mode;
   int has_integrity;
   CryptFileIntegrity integrity;
-  HMAC_CTX *integrity_ctx;
+  AES_hmac_ctx *integrity_ctx;
   FAU_t integrity_data_len;
   FAU_t integrity_plaintext_len;
   FAU_t header_offset;
