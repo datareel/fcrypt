@@ -68,7 +68,36 @@ const char *SC_default_error_message = "No smart card object errors reported";
 const char *SC_default_cert_id = "01";
 
 const char *SC_get_default_enginePath() { return SC_default_enginePath; }
+#if defined (__WIN32__)
+// 10/25/2026: Use the ActivClient PKCS#11 module when ActivClient is
+// installed to manage CAC logins, otherwise use OpenSC. A 32-bit build
+// needs the 32-bit modules from Program Files (x86).
+static const char *SC_windows_modules[] = {
+#if defined (_WIN64)
+  "C:\\Program Files\\HID Global\\ActivClient\\acpkcs211.dll",
+  "C:\\Program Files\\ActivIdentity\\ActivClient\\acpkcs211.dll",
+#else
+  "C:\\Program Files (x86)\\HID Global\\ActivClient\\acpkcs211.dll",
+  "C:\\Program Files (x86)\\ActivIdentity\\ActivClient\\acpkcs211.dll",
+  "C:\\Program Files (x86)\\OpenSC Project\\OpenSC\\pkcs11\\opensc-pkcs11.dll",
+#endif
+  0
+};
+
+const char *SC_get_default_modulePath()
+{
+  for(int i = 0; SC_windows_modules[i]; i++) {
+    FILE *fp = fopen(SC_windows_modules[i], "rb");
+    if(fp) {
+      fclose(fp);
+      return SC_windows_modules[i];
+    }
+  }
+  return SC_default_modulePath;
+}
+#else
 const char *SC_get_default_modulePath() { return SC_default_modulePath; }
+#endif
 const char *SC_get_default_engine_ID() { return SC_default_engine_ID; }
 const char *SC_get_default_cert_id() { return SC_default_cert_id; }
 
@@ -88,7 +117,7 @@ SmartCardOB::SmartCardOB()
   memset(err_string, 0, sizeof(err_string));
   strncpy(engine_ID, SC_default_engine_ID, (sizeof(engine_ID)-1));
   strncpy(enginePath, SC_default_enginePath, (sizeof(enginePath)-1));
-  strncpy(modulePath, SC_default_modulePath, (sizeof(modulePath)-1));
+  strncpy(modulePath, SC_get_default_modulePath(), (sizeof(modulePath)-1));
   strncpy(err_string, SC_default_error_message, (sizeof(err_string)-1));
   strncpy(cert_id, SC_default_cert_id, (sizeof(cert_id)-1));
   verbose_mode = 0;

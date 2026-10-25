@@ -539,4 +539,15 @@ keys when a card is replaced and the other keys cannot be recovered.
 Add access for a new card before the old card expires. A wrong PIN is
 never retried, CAC cards lock after three wrong PINs. Keys that ask
 for the PIN before every use are supported. On Windows, if ActivClient
-is installed, its PKCS#11 module can be used with --smartcard-provider.
+is installed, fcrypt uses the ActivClient PKCS#11 module by default:
+
+"C:\Program Files\HID Global\ActivClient\acpkcs211.dll"
+
+otherwise it uses OpenSC. Use --smartcard-provider to pick one. The
+key IDs from ActivClient are not the same as the OpenSC IDs above, so
+list them with the OpenSC pkcs11-tool and use that ID or label_name:
+
+> pkcs11-tool --module "C:\Program Files\HID Global\ActivClient\acpkcs211.dll" --list-objects
+
+Smart card access added on Linux with OpenSC works on Windows with
+ActivClient for the same card and key, only the cert ID may differ.
