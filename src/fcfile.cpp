@@ -1310,6 +1310,36 @@ int FCryptFile::DecryptFile(const char *outfile_name)
   }
   return ok;
 }
+// 10/25/2026: The crypto primitives of the 2026102 format, exported so
+// other programs built on fcrypt, such as the Encrypted Password
+// Database, use the same FIPS approved implementation. Each returns 1
+// if successful or 0 on failure, and runs in the library context set up
+// by FC_crypto_init(), or OpenSSL's default context.
+int FC_rand_bytes(unsigned char *buf, unsigned len, int priv)
+{
+  return fc_rand(buf, len, priv);
+}
+
+int FC_pbkdf2_sha256(const unsigned char *secret, unsigned secret_len,
+		     const unsigned char *salt, unsigned salt_len,
+		     unsigned iterations, unsigned char *out, unsigned out_len)
+{
+  return fc_pbkdf2(secret, secret_len, salt, salt_len, iterations, out, out_len);
+}
+
+int FC_kbkdf_sha256(const unsigned char key[FC_KEY_LEN], const char *label,
+		    const unsigned char *context, unsigned context_len,
+		    unsigned char out[FC_KEY_LEN])
+{
+  return fc_kbkdf(key, label, context, context_len, out);
+}
+
+int FC_aes256_cbc(int enc, const unsigned char key[FC_KEY_LEN], const unsigned char iv[FC_IV_LEN],
+		  const unsigned char *in, unsigned in_len, unsigned char *out, unsigned *out_len)
+{
+  return fc_cbc(enc, key, iv, in, in_len, out, out_len);
+}
+
 // ----------------------------------------------------------- //
 // ------------------------------- //
 // --------- End of File --------- //

@@ -134,6 +134,17 @@ enum { // File formats found by FC_file_format()
 // Returns the format of an encrypted file
 int FC_file_format(const char *fname);
 
+// 10/25/2026: Exported primitives, see fcfile.cpp. Return 1 if successful.
+int FC_rand_bytes(unsigned char *buf, unsigned len, int priv = 0);
+int FC_pbkdf2_sha256(const unsigned char *secret, unsigned secret_len,
+		     const unsigned char *salt, unsigned salt_len,
+		     unsigned iterations, unsigned char *out, unsigned out_len);
+int FC_kbkdf_sha256(const unsigned char key[FC_KEY_LEN], const char *label,
+		    const unsigned char *context, unsigned context_len,
+		    unsigned char out[FC_KEY_LEN]);
+int FC_aes256_cbc(int enc, const unsigned char key[FC_KEY_LEN], const unsigned char iv[FC_IV_LEN],
+		  const unsigned char *in, unsigned in_len, unsigned char *out, unsigned *out_len);
+
 // Name of a key slot type for messages
 const char *FC_slot_type_name(unsigned type);
 
