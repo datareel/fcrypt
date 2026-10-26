@@ -174,6 +174,7 @@ void HelpMessage()
   cout << "\n" << flush;
   cout << "          --smartcard-cert (Use a smart card for decryption)" << "\n" << flush;
   cout << "          --smartcard-pin=pin (Supply smart card PIN on the command line for scripting, use with caution)" << "\n" << flush;
+  cout << "          --smartcard-slot=N (Use only the card in PKCS#11 slot N, decimal or 0x hex)" << "\n" << flush;
   cout << "          --smartcard-allow-pin-count-low (Send the PIN when the card reports low PIN tries)" << "\n" << flush;
   cout << "          --smartcard-allow-final-try (Send the PIN when the card reports one PIN try left, a wrong PIN locks the card)" << "\n" << flush;
   cout << "          --smartcard-username=name (Username assigned to the smart card cert)" << "\n" << flush;
@@ -476,6 +477,16 @@ int ProcessDashDashArg(gxString &arg)
   }
 
   // 10/26/2026: Log in when the card reports low PIN tries or one try left
+  // 10/26/2026: Use only this PKCS#11 slot (reader), never another
+  if(arg == "smartcard-slot") {
+    unsigned long slot_id = 0;
+    if(!SC_parse_slot(equal_arg.c_str(), &slot_id)) {
+      cerr << "ERROR: --smartcard-slot needs a slot ID: --smartcard-slot=1 or --smartcard-slot=0x4" << "\n" << flush;
+      return 0;
+    }
+    sc.SetSlot(slot_id);
+    has_valid_args = 1;
+  }
   if(arg == "smartcard-allow-pin-count-low") {
     sc.allow_pin_count_low = 1;
     has_valid_args = 1;

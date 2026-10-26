@@ -32,6 +32,7 @@ Smartcard encryption and decryption routines.
 // ----------------------------------------------------------- // 
 #include <smart_card.h>
 #include <rsadb.h>
+#include <ctype.h>
 
 #ifdef __ENABLE_SMART_CARD__
 
@@ -110,6 +111,20 @@ static int SC_login_failed = 0;
 
 int SC_login_blocked() { return SC_login_failed; }
 
+int SC_parse_slot(const char *s, unsigned long *slot)
+// 10/26/2026: A PKCS#11 slot ID, decimal or 0x hex. Returns 1 if valid.
+{
+  if(!s || !*s || strlen(s) > 20) return 0;
+  int hex = (strncmp(s, "0x", 2) == 0 || strncmp(s, "0X", 2) == 0);
+  const char *p = hex ? s + 2 : s;
+  if(!*p) return 0;
+  for(const char *q = p; *q; q++) {
+    if(hex ? !isxdigit((unsigned char)*q) : !isdigit((unsigned char)*q)) return 0;
+  }
+  *(slot) = strtoul(p, 0, hex ? 16 : 10);
+  return 1;
+}
+
 int SC_is_pin_error(int level)
 {
   return (level == SC_ERROR_PIN_INCORRECT || level == SC_ERROR_PIN_LOCKED ||
@@ -143,6 +158,8 @@ SmartCardOB::SmartCardOB()
   verbose_mode = 0;
   error_level = 0;
   pin_too_long = 0;
+  has_slot = 0;
+  slot_id = 0;
   allow_pin_count_low = 0;
   allow_pin_final_try = 0;
   token_flags = 0;
@@ -404,7 +421,7 @@ static int SC_parse_cert_id(const char *cert_id, SC_key_id *kid)
   const char *p = cert_id;
   if(strncmp(p, "slot_", 5) == 0) {
     char *end = 0;
-    unsigned long slot = strtoul(p+5, &end, 10);
+    unsigned long slot = strtoul(p+5, &end, (strncmp(p+5, "0x", 2) == 0) ? 16 : 10);
     if(!end || end == p+5 || *end != '-') return 0;
     kid->has_slot = 1;
     kid->slot = (CK_SLOT_ID)slot;
@@ -510,11 +527,48 @@ static int SC_p11_find(SC_p11_session *p, CK_OBJECT_CLASS obj_class, const SC_ke
   return (rv == CKR_OK && found == 1);
 }
 
-static int SC_p11_open_token(SmartCardOB *sc, SC_p11_session *p, const SC_key_id *kid)
-// Open a session on the token that holds the key. Private keys can be
-// hidden until login, so if no token shows the key ID the first token
-// is used.
+static void SC_p11_slot_names(SC_p11_session *p, CK_SLOT_ID slots[], CK_ULONG num_slots,
+			      char out[], unsigned out_size)
+// 10/26/2026: "1 = 0x1 (CAC label), 4 = 0x4 (YubiKey label)" for error messages.
+// Reads the token labels only, no login.
 {
+  out[0] = 0;
+  unsigned len = 0;
+  for(CK_ULONG i = 0; i < num_slots && len < out_size; i++) {
+    CK_TOKEN_INFO ti;
+    memset(&ti, 0, sizeof(ti));
+    char label[33];
+    memset(label, 0, sizeof(label));
+    if(p->fl->C_GetTokenInfo(slots[i], &ti) == CKR_OK) {
+      memmove(label, ti.label, 32);
+      for(int k = 31; k >= 0 && (label[k] == ' ' || label[k] == 0); k--) label[k] = 0;
+    }
+    int n = snprintf(out + len, out_size - len, "%s%lu = 0x%lx (%s)", (i ? ", " : ""), (unsigned long)slots[i],
+		     (unsigned long)slots[i], label[0] ? label : "no label");
+    if(n < 0) break;
+    len += (unsigned)n;
+  }
+  if(len >= out_size) out[out_size-1] = 0;
+}
+
+static int SC_p11_open_token(SmartCardOB *sc, SC_p11_session *p, const SC_key_id *kid_in)
+// Open a session on the token that holds the key. Private keys can be
+// hidden until login, so if no token shows the key ID and only one
+// token is present that token is used. 10/26/2026: With a slot set in
+// sc (SetSlot) or in the cert ID, only that slot is used, no other slot
+// is opened.
+{
+  SC_key_id kid_buf;
+  memmove(&kid_buf, kid_in, sizeof(kid_buf));
+  SC_key_id *kid = &kid_buf;
+  if(sc->has_slot) {
+    if(kid->has_slot && kid->slot != (CK_SLOT_ID)sc->slot_id) {
+      return sc->SetError("Error the smart card slot and the slot in the cert ID are not the same");
+    }
+    kid->has_slot = 1;
+    kid->slot = (CK_SLOT_ID)sc->slot_id;
+  }
+
   CK_ULONG num_slots = 0;
   if(p->fl->C_GetSlotList(CK_TRUE, 0, &num_slots) != CKR_OK || num_slots == 0) {
     return sc->SetError("Error no smart card found in any reader");
@@ -530,7 +584,10 @@ static int SC_p11_open_token(SmartCardOB *sc, SC_p11_session *p, const SC_key_id
   CK_ULONG num_candidates = 0;
   int found = 0;
   CK_SLOT_ID found_slot = 0;
-  for(CK_ULONG i = 0; i < num_slots && !found; i++) {
+  // 10/26/2026: Look at every card. A cert ID found on more than one
+  // card (such as ID 03 on both a CAC and a YubiKey) is refused, the PIN
+  // could be sent to the wrong card.
+  for(CK_ULONG i = 0; i < num_slots; i++) {
     if(kid->has_slot && slots[i] != kid->slot) continue;
     num_candidates++;
     if(!have_first) {
@@ -542,22 +599,41 @@ static int SC_p11_open_token(SmartCardOB *sc, SC_p11_session *p, const SC_key_id
     CK_OBJECT_HANDLE obj;
     if(SC_p11_find(p, CKO_PRIVATE_KEY, kid, &obj) || SC_p11_find(p, CKO_PUBLIC_KEY, kid, &obj) ||
        SC_p11_find(p, CKO_CERTIFICATE, kid, &obj)) {
-      found = 1;
-      found_slot = slots[i];
+      if(!found) found_slot = slots[i];
+      found++;
     }
     p->fl->C_CloseSession(p->session);
     p->has_session = 0;
   }
+
+  char names[256];
+  if(found > 1 || (!found && num_candidates > 1)) SC_p11_slot_names(p, slots, num_slots, names, sizeof(names));
   delete[] slots;
 
+  if(found > 1) {
+    char msg[SC_err_string_size];
+    snprintf(msg, sizeof(msg), "Error the smart card cert ID was found on %d cards, the PIN was not sent. "
+	     "Cards in slots: %s. Remove the other cards or select the slot (--smartcard-slot=N)", found, names);
+    return sc->SetError(msg);
+  }
   if(!found) {
-    if(!have_first) return sc->SetError("Error no smart card found in the selected reader slot");
+    if(!have_first) {
+      if(kid->has_slot) {
+	char msg[SC_err_string_size];
+	snprintf(msg, sizeof(msg), "Error no smart card found in slot %lu", (unsigned long)kid->slot);
+	return sc->SetError(msg);
+      }
+      return sc->SetError("Error no smart card found in the selected reader slot");
+    }
     // 10/26/2026: Do not guess the card when the cert ID is not on any
     // card and more than one card is present, the PIN could be sent to
     // the wrong card
     if(num_candidates > 1) {
-      return sc->SetError("Error the smart card cert ID was not found on any card and more than one card is present, "
-			  "remove the other cards or use a slot_N- cert ID");
+      char msg[SC_err_string_size];
+      snprintf(msg, sizeof(msg), "Error the smart card cert ID was not found on any card and more than one card "
+	       "is present, the PIN was not sent. Cards in slots: %s. Remove the other cards or select the slot "
+	       "(--smartcard-slot=N)", names);
+      return sc->SetError(msg);
     }
     found_slot = first_slot;
   }

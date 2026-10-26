@@ -594,6 +594,13 @@ the card, such as 01, or any of these forms:
   slot_4-label_name    PKCS#11 slot ID and object label
   "pkcs11:id=%01"      PKCS#11 URI with id= and/or object=
 
+With more than one card or token inserted (for example a CAC and a
+YubiKey, which both have ID 03 with OpenSC), select the card with
+--smartcard-slot=N, the slot ID shown in parentheses by
+pkcs11-tool --list-token-slots (decimal or 0x hex). Only that slot is
+used. Without it, a cert ID found on more than one card, or on no card
+when several are inserted, is refused and no PIN is sent.
+
 List the objects on the card with:
 
 > pkcs11-tool --list-objects

@@ -108,6 +108,9 @@ struct SmartCardOB
   int verbose_mode;
   int error_level;
   int pin_too_long; // 10/26/2026: Set by SetPin() for a PIN that does not fit
+  int has_slot;          // 10/26/2026: 1 to use only the PKCS#11 slot slot_id
+  unsigned long slot_id;
+  void SetSlot(unsigned long id) { has_slot = 1; slot_id = id; }
   int allow_pin_count_low; // 10/26/2026: Set to log in when the card is low on PIN tries
   int allow_pin_final_try; // 10/26/2026: Set to log in when the card has one PIN try left
   unsigned long token_flags; // PKCS#11 token flags read before the last login
@@ -132,6 +135,8 @@ int SC_uses_engine(); // Returns 1 if the OpenSSL pkcs11 engine is used
 // logins are made in this program run (SC_login_blocked() returns 1).
 int SC_is_pin_error(int level);
 int SC_login_blocked();
+// 10/26/2026: Parses a PKCS#11 slot ID, decimal or 0x hex. Returns 1 if valid.
+int SC_parse_slot(const char *s, unsigned long *slot);
 // Text for the PIN tries the card reports in sc->token_flags
 const char *SC_pin_tries_string(SmartCardOB *sc);
 
