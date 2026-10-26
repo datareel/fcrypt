@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Release 2026.103
+Release 2026.104
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
@@ -37,6 +37,28 @@ FEATURES:
 	Multi user access to encrypted files using a smart card
 	Supports DOD CAC smart cards
 	
+SECURITY FIXES IN RELEASE 2026.104
+----------------------------------
+* fcrypt, fdecrypt and fmigrate refuse a --key file or a private
+  --rsa-key file that is not a regular file owned by you with no group
+  or other access, like ssh does for private keys. Run chmod 600 on
+  the file.
+
+* The * echo of password, passphrase and PIN prompts is written to
+  stderr instead of stdout, so it is not mixed with program output.
+
+* The bundled DataReel 6.1 library stops B-tree walks that would loop
+  on a damaged or crafted index file, guards its data file scans
+  against zero block lengths, and adds gxDatabase::SetWriteHook(). See
+  3plibs/datareel/RELEASE_NOTES_6.1.txt.
+
+* The PBKDF2, KBKDF and AES-256-CBC functions of the 2026102 file
+  format are exported as FC_pbkdf2_sha256(), FC_kbkdf_sha256(),
+  FC_aes256_cbc() and FC_rand_bytes() for other programs, such as the
+  Encrypted Password Database.
+
+* The encrypted file format is unchanged.
+
 SECURITY FIXES IN RELEASE 2026.103
 ----------------------------------
 * The bundled DataReel library is updated to version 6.1. DataReel 6.1
