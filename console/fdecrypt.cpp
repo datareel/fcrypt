@@ -174,6 +174,8 @@ void HelpMessage()
   cout << "\n" << flush;
   cout << "          --smartcard-cert (Use a smart card for decryption)" << "\n" << flush;
   cout << "          --smartcard-pin=pin (Supply smart card PIN on the command line for scripting, use with caution)" << "\n" << flush;
+  cout << "          --smartcard-allow-pin-count-low (Send the PIN when the card reports low PIN tries)" << "\n" << flush;
+  cout << "          --smartcard-allow-final-try (Send the PIN when the card reports one PIN try left, a wrong PIN locks the card)" << "\n" << flush;
   cout << "          --smartcard-username=name (Username assigned to the smart card cert)" << "\n" << flush;
   cout << "          --smartcard-cert-id=" << SC_get_default_cert_id() << " (Set the ID number for the smartcard cert)" << "\n" << flush;
   if(SC_uses_engine()) cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smartcard engine path)" << "\n" << flush;
@@ -470,6 +472,17 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     sc.SetPin(equal_arg.c_str());
+    has_valid_args = 1;
+  }
+
+  // 10/26/2026: Log in when the card reports low PIN tries or one try left
+  if(arg == "smartcard-allow-pin-count-low") {
+    sc.allow_pin_count_low = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "smartcard-allow-final-try") {
+    sc.allow_pin_count_low = 1;
+    sc.allow_pin_final_try = 1;
     has_valid_args = 1;
   }
 #endif

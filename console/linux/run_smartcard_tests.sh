@@ -48,14 +48,41 @@ mkdir -p ${testDIR}
 cat /dev/null > ${logFILE}
 cd ${testDIR}
 
+# 10/26/2026: CAC and PIV cards lock after 3 wrong PINs. Stop before any
+# login if the card reports a locked PIN, one try left or low tries, or
+# if more than one card is present, and stop at once after any PIN or
+# login error so the PIN is never sent to the card again.
+MODULE=${SC_MODULE:-/usr/lib64/opensc-pkcs11.so}
+if command -v pkcs11-tool >/dev/null 2>&1; then
+    TOKEN_INFO=$(pkcs11-tool --module "${MODULE}" --list-token-slots 2>&1)
+    if [ $(echo "${TOKEN_INFO}" | grep -c "token label") -ne 1 ]; then
+	echo "${TOKEN_INFO}"
+	echo "ERROR: Insert exactly one card"
+	exit 1
+    fi
+    if echo "${TOKEN_INFO}" | grep -i "token flags" | grep -qiE "PIN locked|final try|count low"; then
+	echo "${TOKEN_INFO}" | grep -i "token flags"
+	echo "ERROR: The card reports a locked PIN, one PIN try left or low PIN tries. No PIN was sent."
+	exit 1
+    fi
+fi
+PIN_ERRORS='PIN is incorrect|PIN is locked|login failed|PIN not sent|PIN error|PIN is empty|PIN may be wrong'
+
 function run_test() {
     echo "== $1" >> ${logFILE}
-    if eval "$2" >> ${logFILE} 2>&1; then
+    if eval "$2" > ${testDIR}/last_test.log 2>&1; then
+	cat ${testDIR}/last_test.log >> ${logFILE}
 	echo "Passed: $1"
 	passed=$((passed+1))
     else
+	cat ${testDIR}/last_test.log >> ${logFILE}
 	echo "FAILED: $1"
 	failed=$((failed+1))
+    fi
+    if grep -qE "${PIN_ERRORS}" ${testDIR}/last_test.log; then
+	grep -E "${PIN_ERRORS}" ${testDIR}/last_test.log
+	echo "STOPPING: smart card PIN or login error, no more card logins are made. Check the PIN tries left."
+	exit 2
     fi
 }
 
@@ -73,8 +100,14 @@ run_test "add smart card access from a cert file" \
     "cp orig.bin b.bin && ${FCRYPT} ${PW} b.bin && ${FCRYPT} ${PW} --add-smartcard-cert-file=${SC_CERT} --smartcard-username=certfile b.enc"
 run_test "decrypt the cert file access with the smart card" \
     "rm -f b.bin && ${FDECRYPT} --smartcard-cert --smartcard-username=certfile ${SC} ${PIN} b.enc && cmp b.bin orig.bin"
-run_test "FCRYPT_FIPS=1: add and decrypt smart card access" \
-    "cp orig.bin f.bin && ${FCRYPT} ${PW} f.bin && FCRYPT_FIPS=1 ${FCRYPT} ${PW} --add-smartcard-cert --smartcard-username=fips ${SC} f.enc && rm -f f.bin && FCRYPT_FIPS=1 ${FDECRYPT} --smartcard-cert --smartcard-username=fips ${SC} ${PIN} f.enc && cmp f.bin orig.bin"
+# SoftHSM2 uses OpenSSL inside the program and fails its login in FIPS
+# mode, which would look like a wrong PIN
+if echo "${TOKEN_INFO}" | grep -i "token manufacturer" | grep -qi "SoftHSM"; then
+    echo "Skipped: FCRYPT_FIPS=1 test, SoftHSM2 does not work in FIPS mode"
+else
+    run_test "FCRYPT_FIPS=1: add and decrypt smart card access" \
+        "cp orig.bin f.bin && ${FCRYPT} ${PW} f.bin && FCRYPT_FIPS=1 ${FCRYPT} ${PW} --add-smartcard-cert --smartcard-username=fips ${SC} f.enc && rm -f f.bin && FCRYPT_FIPS=1 ${FDECRYPT} --smartcard-cert --smartcard-username=fips ${SC} ${PIN} f.enc && cmp f.bin orig.bin"
+fi
 
 if [ -n "${OLD_DIR}" ]; then
     OLD_DIR=$(cd ${OLD_DIR} && pwd)

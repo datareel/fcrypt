@@ -69,8 +69,22 @@ const unsigned SC_max_pin_size = 32;
 const unsigned SC_max_cert_id_size = 256; // Room for long IDs and pkcs11: URIs
 const unsigned SC_max_engine_id_size = 32;
 const unsigned SC_max_path_size = 255;
-const unsigned SC_err_string_size = 255;
+const unsigned SC_err_string_size = 512;
 const int SC_RSA_padding = RSA_PKCS1_PADDING;
+
+// 10/26/2026: PIN safeguards. CAC and PIV cards lock after a few wrong
+// PINs, so the PIN is sent to the card at most once per program run
+// after a failure, never empty or cut short, and not at all when the
+// card reports it is locked, on its final try or (without permission)
+// low on tries. These error levels tell the caller what happened.
+const int SC_ERROR = -1;                 // Other errors, no PIN was sent
+const int SC_ERROR_PIN_INCORRECT = -2;   // The card refused the PIN, one try was used
+const int SC_ERROR_PIN_LOCKED = -3;      // The card PIN is locked
+const int SC_ERROR_PIN_FINAL_TRY = -4;   // Not sent, the card has one try left
+const int SC_ERROR_PIN_COUNT_LOW = -5;   // Not sent, the card is low on tries
+const int SC_ERROR_PIN_INVALID = -6;     // Not sent, the PIN is empty or the wrong length
+const int SC_ERROR_PIN_BLOCKED = -7;     // Not sent, a login already failed in this run
+const int SC_ERROR_LOGIN = -8;           // The card login failed for another reason
 const unsigned SC_max_cert_file_len = 8192;
 
 struct SmartCardOB
@@ -81,12 +95,23 @@ struct SmartCardOB
   void SetEnginePath(char *p) { strncpy(enginePath, p, (sizeof(enginePath)-1)); }
   void SetModulePath(char *p) { strncpy(modulePath, p, (sizeof(modulePath)-1)); }
   void SetEngineID(char *id) { strncpy(engine_ID, id, (sizeof(engine_ID)-1)); }
-  void SetPin(char *p) { strncpy(pin, p, (sizeof(pin)-1)); }
+  // 10/26/2026: A PIN that does not fit is not cut short (sending a cut
+  // PIN uses up a card PIN try), it is refused before the login
+  void SetPin(char *p) {
+    memset(pin, 0, sizeof(pin));
+    pin_too_long = (p && strlen(p) >= sizeof(pin));
+    if(p && !pin_too_long) strncpy(pin, p, (sizeof(pin)-1));
+  }
   void SetCertID(char *id) { strncpy(cert_id, id, (sizeof(cert_id)-1)); }
   int SetError(const char *message =  0, int level = -1);
   
   int verbose_mode;
   int error_level;
+  int pin_too_long; // 10/26/2026: Set by SetPin() for a PIN that does not fit
+  int allow_pin_count_low; // 10/26/2026: Set to log in when the card is low on PIN tries
+  int allow_pin_final_try; // 10/26/2026: Set to log in when the card has one PIN try left
+  unsigned long token_flags; // PKCS#11 token flags read before the last login
+  int token_flags_known;     // 1 if token_flags was read
   char err_string[SC_err_string_size];
   char pin[SC_max_pin_size];
   char cert_id[SC_max_cert_id_size];
@@ -102,6 +127,13 @@ const char *SC_get_default_modulePath();
 const char *SC_get_default_engine_ID();
 const char *SC_get_default_cert_id();
 int SC_uses_engine(); // Returns 1 if the OpenSSL pkcs11 engine is used
+// 10/26/2026: Returns 1 if the error level is a PIN error. After
+// SC_ERROR_PIN_INCORRECT, SC_ERROR_PIN_LOCKED or SC_ERROR_LOGIN no more
+// logins are made in this program run (SC_login_blocked() returns 1).
+int SC_is_pin_error(int level);
+int SC_login_blocked();
+// Text for the PIN tries the card reports in sc->token_flags
+const char *SC_pin_tries_string(SmartCardOB *sc);
 
 int SC_public_key_encrypt(SmartCardOB *sc,
 			  const unsigned char plaintext[], unsigned int plaintext_len,

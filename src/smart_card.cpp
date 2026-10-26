@@ -103,6 +103,30 @@ int SC_uses_engine() { return 1; }
 int SC_uses_engine() { return 0; }
 #endif
 
+// 10/26/2026: Set after a failed card login. No more logins are made in
+// this program run, so a wrong PIN is never sent again by a loop over
+// files, keys, sessions or fallbacks.
+static int SC_login_failed = 0;
+
+int SC_login_blocked() { return SC_login_failed; }
+
+int SC_is_pin_error(int level)
+{
+  return (level == SC_ERROR_PIN_INCORRECT || level == SC_ERROR_PIN_LOCKED ||
+	  level == SC_ERROR_PIN_FINAL_TRY || level == SC_ERROR_PIN_COUNT_LOW ||
+	  level == SC_ERROR_PIN_INVALID || level == SC_ERROR_PIN_BLOCKED ||
+	  level == SC_ERROR_LOGIN);
+}
+
+const char *SC_pin_tries_string(SmartCardOB *sc)
+{
+  if(!sc->token_flags_known) return "The card did not report its PIN tries";
+  if(sc->token_flags & (1UL << 18)) return "The card reports the PIN is locked";        // CKF_USER_PIN_LOCKED
+  if(sc->token_flags & (1UL << 17)) return "The card reports one PIN try is left";      // CKF_USER_PIN_FINAL_TRY
+  if(sc->token_flags & (1UL << 16)) return "The card reports it is low on PIN tries";   // CKF_USER_PIN_COUNT_LOW
+  return "The card does not report low PIN tries (some modules, such as ActivClient, may not report them)";
+}
+
 SmartCardOB::SmartCardOB()
 {
   memset(pin, 0, sizeof(pin));
@@ -118,6 +142,11 @@ SmartCardOB::SmartCardOB()
   strncpy(cert_id, SC_default_cert_id, (sizeof(cert_id)-1));
   verbose_mode = 0;
   error_level = 0;
+  pin_too_long = 0;
+  allow_pin_count_low = 0;
+  allow_pin_final_try = 0;
+  token_flags = 0;
+  token_flags_known = 0;
   memset(cert_file_buf, 0, SC_max_cert_file_len);
   cert_file_buf_len = 0;
 }
@@ -211,13 +240,26 @@ int SC_private_key_decrypt(SmartCardOB *sc,
 
   if(sc->verbose_mode) ENGINE_ctrl_cmd_string(engine, "VERBOSE", 0, 0);
 
+  // 10/26/2026: Never send an empty PIN or a PIN after a failed login
+  if(SC_login_failed) {
+    ENGINE_free(engine);
+    return sc->SetError("Smart card PIN not sent, a card login already failed in this run", SC_ERROR_PIN_BLOCKED);
+  }
+  if(sc->pin[0] == 0 || sc->pin_too_long) {
+    ENGINE_free(engine);
+    return sc->SetError("Smart card PIN not sent, the PIN is empty or too long", SC_ERROR_PIN_INVALID);
+  }
+
   // Set the users pin
   ENGINE_ctrl_cmd_string(engine, "PIN", sc->pin, 0);
   
   EVP_PKEY *evkey = ENGINE_load_private_key(engine, sc->cert_id, 0, 0);
   if(!evkey) {
+    // The engine does not say if the PIN was wrong, treat it as a login
+    // failure so the PIN is not sent again
+    SC_login_failed = 1;
     ENGINE_free(engine);
-    return  sc->SetError("Error loading smart card private key");
+    return  sc->SetError("Error loading smart card private key, the PIN may be wrong. The PIN will not be sent again in this run", SC_ERROR_LOGIN);
   }
   
   // 10/25/2026: Use EVP_PKEY instead of the deprecated RSA_* calls
@@ -485,10 +527,12 @@ static int SC_p11_open_token(SmartCardOB *sc, SC_p11_session *p, const SC_key_id
 
   int have_first = 0;
   CK_SLOT_ID first_slot = 0;
+  CK_ULONG num_candidates = 0;
   int found = 0;
   CK_SLOT_ID found_slot = 0;
   for(CK_ULONG i = 0; i < num_slots && !found; i++) {
     if(kid->has_slot && slots[i] != kid->slot) continue;
+    num_candidates++;
     if(!have_first) {
       have_first = 1;
       first_slot = slots[i];
@@ -508,6 +552,13 @@ static int SC_p11_open_token(SmartCardOB *sc, SC_p11_session *p, const SC_key_id
 
   if(!found) {
     if(!have_first) return sc->SetError("Error no smart card found in the selected reader slot");
+    // 10/26/2026: Do not guess the card when the cert ID is not on any
+    // card and more than one card is present, the PIN could be sent to
+    // the wrong card
+    if(num_candidates > 1) {
+      return sc->SetError("Error the smart card cert ID was not found on any card and more than one card is present, "
+			  "remove the other cards or use a slot_N- cert ID");
+    }
     found_slot = first_slot;
   }
   if(p->fl->C_OpenSession(found_slot, CKF_SERIAL_SESSION, 0, 0, &p->session) != CKR_OK) {
@@ -714,12 +765,116 @@ static int SC_p11_pin_error(CK_RV rv)
 	  rv == CKR_USER_NOT_LOGGED_IN);
 }
 
-static CK_RV SC_p11_context_login(SC_p11_session *p, SmartCardOB *sc)
+static int SC_p11_pin_pad(SmartCardOB *sc, SC_p11_session *p)
+// A PIN pad reader takes the PIN itself when no PIN is given
 {
-  if(sc->pin[0] == 0 && (p->token_flags & CKF_PROTECTED_AUTHENTICATION_PATH)) {
-    return p->fl->C_Login(p->session, CKU_CONTEXT_SPECIFIC, 0, 0);
+  return (sc->pin[0] == 0 && (p->token_flags & CKF_PROTECTED_AUTHENTICATION_PATH));
+}
+
+static void SC_p11_read_flags(SmartCardOB *sc, SC_p11_session *p)
+{
+  CK_TOKEN_INFO token_info;
+  memset(&token_info, 0, sizeof(token_info));
+  sc->token_flags_known = 0;
+  if(p->fl->C_GetTokenInfo(p->slot, &token_info) == CKR_OK) {
+    sc->token_flags = (unsigned long)token_info.flags;
+    sc->token_flags_known = 1;
+    p->token_flags = token_info.flags;
   }
-  return p->fl->C_Login(p->session, CKU_CONTEXT_SPECIFIC, (CK_UTF8CHAR_PTR)sc->pin, (CK_ULONG)strlen(sc->pin));
+}
+
+static int SC_p11_check_pin(SmartCardOB *sc, SC_p11_session *p)
+// 10/26/2026: Checks made before the PIN is sent to the card. Returns 0
+// if the PIN can be sent. Modules that do not report the PIN tries,
+// such as ActivClient may, pass these checks, so they are not a promise
+// the card has tries left.
+{
+  if(SC_login_failed) {
+    return sc->SetError("Smart card PIN not sent, a card login already failed in this run. "
+			"Check the PIN and the PIN tries left before running again", SC_ERROR_PIN_BLOCKED);
+  }
+  CK_TOKEN_INFO token_info;
+  memset(&token_info, 0, sizeof(token_info));
+  sc->token_flags_known = 0;
+  sc->token_flags = 0;
+  if(p->fl->C_GetTokenInfo(p->slot, &token_info) == CKR_OK) {
+    sc->token_flags = (unsigned long)token_info.flags;
+    sc->token_flags_known = 1;
+    p->token_flags = token_info.flags;
+  }
+  if(sc->token_flags_known) {
+    if(token_info.flags & CKF_USER_PIN_LOCKED) {
+      return sc->SetError("Smart card PIN is locked, the PIN was not sent. The card must be unlocked "
+			  "by its issuer (for a CAC, a DEERS/RAPIDS or local registration office)", SC_ERROR_PIN_LOCKED);
+    }
+    if((token_info.flags & CKF_USER_PIN_FINAL_TRY) && !sc->allow_pin_final_try) {
+      return sc->SetError("Smart card PIN not sent, the card reports ONE PIN try is left and a wrong PIN "
+			  "will lock it. Override only if you are sure of the PIN", SC_ERROR_PIN_FINAL_TRY);
+    }
+    if((token_info.flags & CKF_USER_PIN_COUNT_LOW) && !sc->allow_pin_count_low) {
+      return sc->SetError("Smart card PIN not sent, the card reports it is low on PIN tries "
+			  "(a wrong PIN was entered before). Override only if you are sure of the PIN", SC_ERROR_PIN_COUNT_LOW);
+    }
+  }
+  if(sc->pin_too_long) {
+    return sc->SetError("Smart card PIN not sent, the PIN is too long", SC_ERROR_PIN_INVALID);
+  }
+  if(SC_p11_pin_pad(sc, p)) return 0;
+  size_t len = strlen(sc->pin);
+  if(len == 0) {
+    return sc->SetError("Smart card PIN not sent, the PIN is empty", SC_ERROR_PIN_INVALID);
+  }
+  for(size_t i = 0; i < len; i++) {
+    if((unsigned char)sc->pin[i] < 0x20 || (unsigned char)sc->pin[i] == 0x7F) {
+      return sc->SetError("Smart card PIN not sent, the PIN has a control character such as a "
+			  "tab or carriage return", SC_ERROR_PIN_INVALID);
+    }
+  }
+  if(sc->token_flags_known && token_info.ulMaxPinLen != CK_UNAVAILABLE_INFORMATION &&
+     token_info.ulMaxPinLen > 0 && token_info.ulMaxPinLen <= 1024 &&
+     token_info.ulMinPinLen <= token_info.ulMaxPinLen &&
+     (len < token_info.ulMinPinLen || len > token_info.ulMaxPinLen)) {
+    char msg[SC_err_string_size];
+    snprintf(msg, sizeof(msg), "Smart card PIN not sent, the card PIN must be %lu to %lu characters",
+	     (unsigned long)token_info.ulMinPinLen, (unsigned long)token_info.ulMaxPinLen);
+    return sc->SetError(msg, SC_ERROR_PIN_INVALID);
+  }
+  return 0;
+}
+
+static CK_RV SC_p11_login(SmartCardOB *sc, SC_p11_session *p, CK_USER_TYPE user_type)
+// 10/26/2026: The only place the PIN is sent to the card. Any failure
+// blocks every later login in this program run.
+{
+  CK_RV rv;
+  if(SC_login_failed) return CKR_PIN_INCORRECT;
+  if(SC_p11_pin_pad(sc, p)) {
+    rv = p->fl->C_Login(p->session, user_type, 0, 0);
+  }
+  else {
+    rv = p->fl->C_Login(p->session, user_type, (CK_UTF8CHAR_PTR)sc->pin, (CK_ULONG)strlen(sc->pin));
+  }
+  if(rv != CKR_OK && !(user_type == CKU_USER && rv == CKR_USER_ALREADY_LOGGED_IN)) SC_login_failed = 1;
+  return rv;
+}
+
+static int SC_p11_login_error(SmartCardOB *sc, SC_p11_session *p, CK_RV rv)
+// Sets the error after a failed login. Call before closing the session.
+{
+  SC_p11_read_flags(sc, p);
+  char msg[SC_err_string_size];
+  if(rv == CKR_PIN_INCORRECT) {
+    snprintf(msg, sizeof(msg), "Smart card PIN is incorrect, ONE PIN try was used. %s. "
+	     "The PIN will not be sent again in this run, check the PIN tries left before trying again",
+	     SC_pin_tries_string(sc));
+    return sc->SetError(msg, SC_ERROR_PIN_INCORRECT);
+  }
+  if(rv == CKR_PIN_LOCKED) {
+    return sc->SetError("Smart card PIN is locked. The card must be unlocked by its issuer", SC_ERROR_PIN_LOCKED);
+  }
+  snprintf(msg, sizeof(msg), "Smart card login failed, PKCS#11 error 0x%lx. %s. "
+	   "The PIN will not be sent again in this run", (unsigned long)rv, SC_pin_tries_string(sc));
+  return sc->SetError(msg, SC_ERROR_LOGIN);
 }
 
 int SC_private_key_decrypt(SmartCardOB *sc,
@@ -763,22 +918,20 @@ int SC_private_key_decrypt(SmartCardOB *sc,
     return sc->error_level;
   }
 
-  // Set the users pin, a PIN pad reader takes the PIN itself
-  CK_RV rv;
-  if(sc->pin[0] == 0 && (p.token_flags & CKF_PROTECTED_AUTHENTICATION_PATH)) {
-    rv = p.fl->C_Login(p.session, CKU_USER, 0, 0);
+  // 10/26/2026: Check the card PIN flags and the PIN before sending it,
+  // then log in once
+  if(SC_p11_check_pin(sc, &p) != 0) {
+    SC_p11_close(&p);
+    return sc->error_level;
   }
-  else {
-    rv = p.fl->C_Login(p.session, CKU_USER, (CK_UTF8CHAR_PTR)sc->pin, (CK_ULONG)strlen(sc->pin));
-  }
+  CK_RV rv = SC_p11_login(sc, &p, CKU_USER);
   if(rv == CKR_OK) {
     p.logged_in = 1;
   }
   else if(rv != CKR_USER_ALREADY_LOGGED_IN) {
+    int level = SC_p11_login_error(sc, &p, rv);
     SC_p11_close(&p);
-    if(rv == CKR_PIN_INCORRECT) return sc->SetError("Smart card PIN is incorrect");
-    if(rv == CKR_PIN_LOCKED) return sc->SetError("Smart card PIN is locked");
-    return sc->SetError("Smart card login failed");
+    return level;
   }
 
   CK_OBJECT_HANDLE key;
@@ -800,16 +953,21 @@ int SC_private_key_decrypt(SmartCardOB *sc,
   unsigned char work[SC_max_rsa_len];
   CK_ULONG work_len = sizeof(work);
   int oaep_raw = 0;
+  int context_login_failed = 0;
   rv = p.fl->C_DecryptInit(p.session, &mech, key);
-  if(rv == CKR_OK && always_auth) rv = SC_p11_context_login(&p, sc);
+  if(rv == CKR_OK && always_auth) {
+    rv = SC_p11_login(sc, &p, CKU_CONTEXT_SPECIFIC);
+    if(rv != CKR_OK) context_login_failed = 1;
+  }
   if(rv == CKR_OK) {
     rv = p.fl->C_Decrypt(p.session, (CK_BYTE_PTR)ciphertext, ciphertext_len, work, &work_len);
   }
   CK_RV first_rv = rv;
   CK_RV raw_rv = CKR_OK;
   // Never retry after a PIN error, CAC and PIV cards lock after a few
-  if(rv != CKR_OK && !SC_p11_pin_error(rv) && padding == RSA_PKCS1_OAEP_PADDING &&
-     ciphertext_len <= sizeof(work)) {
+  // 10/26/2026: No fallback after any failed login, the PIN is sent once
+  if(rv != CKR_OK && !SC_p11_pin_error(rv) && !context_login_failed && !SC_login_failed &&
+     padding == RSA_PKCS1_OAEP_PADDING && ciphertext_len <= sizeof(work)) {
     // Many cards and SoftHSM have no SHA-256 OAEP, use raw RSA and
     // remove the OAEP padding here
     CK_MECHANISM raw_mech;
@@ -828,16 +986,27 @@ int SC_private_key_decrypt(SmartCardOB *sc,
 	rv = p.fl->C_DecryptInit(p.session, &raw_mech, key);
       }
     }
-    if(rv == CKR_OK && always_auth) rv = SC_p11_context_login(&p, sc);
+    if(rv == CKR_OK && always_auth) {
+      rv = SC_p11_login(sc, &p, CKU_CONTEXT_SPECIFIC);
+      if(rv != CKR_OK) context_login_failed = 1;
+    }
     if(rv == CKR_OK) {
       rv = p.fl->C_Decrypt(p.session, (CK_BYTE_PTR)ciphertext, ciphertext_len, work, &work_len);
     }
     raw_rv = rv;
     oaep_raw = 1;
   }
+  if(context_login_failed) {
+    int level = SC_p11_login_error(sc, &p, rv);
+    SC_p11_close(&p);
+    return level;
+  }
   SC_p11_close(&p);
-  if(rv == CKR_PIN_INCORRECT) return sc->SetError("Smart card PIN is incorrect");
-  if(rv == CKR_PIN_LOCKED) return sc->SetError("Smart card PIN is locked");
+  if(rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED || rv == CKR_USER_NOT_LOGGED_IN) {
+    // A PIN error from the decrypt itself, do not log in again
+    SC_login_failed = 1;
+    return sc->SetError("Smart card PIN error during the decrypt. The PIN will not be sent again in this run", SC_ERROR_LOGIN);
+  }
 
   int ok = (rv == CKR_OK);
   unsigned out_len = (unsigned)work_len;
