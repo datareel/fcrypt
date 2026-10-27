@@ -46,6 +46,10 @@ Fixed header, 128 bytes, not encrypted:
   40 PBKDF2 salt                 32
   72 file ID                     16
   88 reserved (0)                40
+     Since 2026.106 a file that was rekeyed has, in the reserved
+     bytes (older versions write zeros and never read them, and the
+     header MAC covers them):
+     88 "FCX1"  4, 92 key generation  4, 96 rekey time, UTC seconds  8
 
 Key slot area, key slot area length bytes, not encrypted. Each slot:
   type (1 = password or key file, 2 = RSA key, 3 = smart card)  4
@@ -117,6 +121,7 @@ const unsigned FC_MAX_WRAPPED_LEN = 1024; // RSA keys up to 8192 bits
 const unsigned FC_MIN_RSA_BITS = 2048;
 const unsigned FC_KDF_PBKDF2_SHA256 = 1;
 const unsigned FC_CIPHER_AES256_CBC_HMAC_SHA256 = 1;
+const unsigned FC_HDR_EXT_OFFSET = 88; // 10/27/2026: Key generation, see above
 
 enum { // Key slot types
   FC_SLOT_END = 0,
@@ -208,6 +213,30 @@ public: // After an Unlock
   int AddWrappedKey(unsigned type, const char *username, const unsigned char *wrapped, unsigned wrapped_len);
   // The file key, for wrapping it with a smart card
   const unsigned char *FileKey() const { return unlocked ? file_key : 0; }
+  const unsigned char *FileID() const { return file_id; }
+  gxString FileIDHex() const;
+
+public: // 10/27/2026: Key management. The file is rewritten to a temp
+        // file, checked, flushed to disk and renamed over the original.
+  // Removes the RSA or smart card slot of a user. A backup copy of the
+  // original is kept as backup_file unless keep_backup is 0. Refuses to
+  // remove the last slot. Returns 1 if successful.
+  int RemoveSlot(unsigned type, const char *username, int keep_backup, gxString &backup_file);
+  // Number of slots that can open the file
+  unsigned NumSlots();
+  // Rekey: BeginRekey() makes a new random file key, the caller wraps it
+  // for each RSA and smart card slot to keep (AddRekeySlot()), then
+  // FinishRekey() writes the file again with a new salt, file ID and
+  // key. new_secret is the password or key for the password slot, or
+  // null for a file without one. Every record is decrypted with the old
+  // keys and encrypted with the new ones, and the new file must decrypt
+  // to the same data before it replaces the original.
+  int BeginRekey();
+  const unsigned char *NewFileKey() const { return rekey_started ? new_file_key : 0; }
+  int AddRekeySlot(unsigned type, const char *username, const unsigned char *wrapped, unsigned wrapped_len);
+  int FinishRekey(const MemoryBuffer *new_secret, int keep_backup, gxString &backup_file);
+  unsigned KeyGeneration() const; // 0 if the file was never rekeyed
+  unsigned long long RekeyTime() const;
 
 public: // Settings
   unsigned iterations;
@@ -261,6 +290,19 @@ private:
   unsigned char *enc_pend; // Data for the next record
   unsigned enc_pend_len;
   FAU_t enc_index;
+
+private: // 10/27/2026: Key management
+  const unsigned char *preset_key; // Set by FinishRekey() for the new file
+  gxList<FCKeySlot> preset_slots;
+  int preset_no_secret;
+  unsigned key_generation;
+  unsigned long long rekey_time;
+  int rekey_started;
+  unsigned char new_file_key[FC_KEY_LEN];
+  gxList<FCKeySlot> rekey_slots;
+  int WriteCopy(const char *out_name, gxString &e); // New header, same records
+  int VerifyCopy(const char *fname, const unsigned char key[FC_KEY_LEN], MemoryBuffer *digest, gxString &e);
+  int KeepBackup(gxString &backup_file);
 
 private: // Disallow copying
   FCryptFile(const FCryptFile &ob) { }

@@ -40,6 +40,7 @@ using namespace std; // Use unqualified names for Standard C++ library
 #endif // __USE_ANSI_CPP__
 
 #include "fcrypt.h"
+#include "fckeymgmt.h"
 
 #ifdef __MSVC_DEBUG__
 #include "leaktest.h"
@@ -93,8 +94,26 @@ gxString rsa_key_passphrase;
 int has_passphrase = 0;
 unsigned static_data_size = FC_DEF_SLOT_AREA_LEN;
 gxString decrypted_output_filename;
+// 10/27/2026: Key management
+int remove_user = 0;
+gxString remove_username;
+unsigned remove_user_type = 0; // 0 = the only slot of the user
+int rekey = 0;
+gxString rekey_input_fd;
+gxString rekey_input_file;
+gxString rekey_new_password_fd;
+gxString rekey_new_password_file;
+int use_private_rsa_key = 0; // Authenticate key management with a private RSA key
+gxString private_rsa_key_file;
+char private_key[RSA_max_keybuf_len];
+unsigned private_key_len = 0;
+int private_key_has_passphrase = 0;
+int access_log = 0;
+gxString access_log_file;
+int access_log_warned = 0;
 #ifdef __ENABLE_SMART_CARD__
 SmartCardOB sc;
+int use_smartcard_auth = 0;  // 10/27/2026: Authenticate key management with a smart card
 gxString smartcard_cert_username;
 int add_smart_card = 0;
 int use_smartcard_cert = 0;
@@ -107,6 +126,8 @@ void DisplayVersion();
 void HelpMessage();
 int ProcessDashDashArg(gxString &arg);
 int ProcessArgs(char *arg);
+int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret);
+int KeyManagement();
 int DEBUG_m(char *message, int level = 1, int rv = 0);
 int ExitProgram(int rv = 0, char *exit_message = 0);
 
@@ -172,8 +193,12 @@ void HelpMessage()
   cout << "          --no-fips (Do not use FIPS mode, even if the system is in FIPS mode)" << "\n" << flush;
   cout << "          --outfile=fname (Write encrypted output to specified file name)" << "\n" << flush;
   cout << "          --outdir=dir (Write encrypted output to this directory)" << "\n" << flush;
-  cout << "          --password (Use a password for symmetric file encryption)" << "\n" << flush;
+  cout << "          --password (Use a password for symmetric file encryption, prompts for the password)" << "\n" << flush;
+  cout << "          --password-file=file (Read the password from the first line of a file only you can read)" << "\n" << flush;
+  cout << "          --password-fd=n (Read the password from the first line of open file descriptor n)" << "\n" << flush;
   cout << "          --rsa-key-passphrase (Passphrase for public RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase-file=file (Read the RSA key passphrase from a file only you can read)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase-fd=n (Read the RSA key passphrase from open file descriptor n)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Assign a name to the public RSA key)" << "\n" << flush;
   cout << "          --static-data-size=num (Set size of the key slot area, default " << FC_DEF_SLOT_AREA_LEN << ")" << "\n" << flush;  
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;  
@@ -190,6 +215,30 @@ void HelpMessage()
   cout << "          --add-smartcard-cert-file (Add access to an encrypted file for another users exported smart card cert)" << "\n" << flush;
   cout << "          --add-smartcard-cert-file input arg must be a file name" << "\n" << flush;
 #endif // __ENABLE_SMART_CARD__
+  cout << "\n" << flush;
+  cout << "Key management (2026102 format files):" << "\n" << flush;
+  cout << "          --remove-user=name (Remove the RSA key or smart card access of a user)" << "\n" << flush;
+  cout << "          --remove-user-type=rsa|smartcard (Which access to remove when the user has both)" << "\n" << flush;
+  cout << "                 Removing a user does not revoke a file key the user already recovered, run --rekey after" << "\n" << flush;
+  cout << "          --rekey (Give the file a new key and encrypt it again, every RSA and smart card user is rewrapped)" << "\n" << flush;
+  cout << "          --rekey-file=file (Read the rekey input from a file only you can read, default stdin)" << "\n" << flush;
+  cout << "          --rekey-fd=n (Read the rekey input from open file descriptor n)" << "\n" << flush;
+  cout << "                 Rekey input lines: password=, new-password=, drop-password=yes," << "\n" << flush;
+  cout << "                 rsa:user=public_key.pem, smartcard:user=cert.pem or smartcard:user=card (no PIN)," << "\n" << flush;
+  cout << "                 drop-rsa:user=yes, drop-smartcard:user=yes. Values use \\n \\t \\\\ escapes, see README.txt" << "\n" << flush;
+  cout << "          --rekey-new-password-file=file (Generate a new password for the password slot and write it to a new file)" << "\n" << flush;
+  cout << "          --rekey-new-password-fd=n (Generate a new password and write it to open file descriptor n)" << "\n" << flush;
+  cout << "          Authenticate key management with --password, --password-file, --password-fd or --key, or" << "\n" << flush;
+  cout << "          --rsa-key=private_key.pem with --rsa-key-username" << "\n" << flush;
+#ifdef __ENABLE_SMART_CARD__
+  cout << "          --smartcard-cert (Authenticate key management with the smart card, logs in to the card once)" << "\n" << flush;
+  cout << "          --smartcard-pin-file=file (Read the smart card PIN from a file only you can read)" << "\n" << flush;
+  cout << "          --smartcard-pin-fd=n (Read the smart card PIN from open file descriptor n)" << "\n" << flush;
+  cout << "          --smartcard-allow-pin-count-low (Send the PIN when the card reports low PIN tries)" << "\n" << flush;
+  cout << "          --smartcard-allow-final-try (Send the PIN when the card reports one PIN try left, a wrong PIN locks the card)" << "\n" << flush;
+#endif // __ENABLE_SMART_CARD__
+  cout << "          --access-log[=file] (Log user changes and rekeys, default " << FC_default_log_file(".fcrypt").c_str() << ")" << "\n" << flush;
+  cout << "          --no-access-log (Do not log, the default)" << "\n" << flush;
 
   cout << "\n"; // End of list
 }
@@ -296,6 +345,7 @@ int ProcessDashDashArg(gxString &arg)
 
   if(arg == "password") {
     if(!equal_arg.is_null()) {
+      FC_warn_secret_on_command_line("--password", "--password-file or --password-fd");
       password = equal_arg;
     }
     use_password  = 1;
@@ -437,6 +487,120 @@ int ProcessDashDashArg(gxString &arg)
     has_valid_args = 1;
   }
 
+  // 10/27/2026: Secrets from a file or file descriptor, never argv
+  if((arg == "password-file") || (arg == "password-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(ReadSecretArg(arg, equal_arg, password) != 0) return 0;
+    use_password = 1;
+    has_valid_args = 1;
+  }
+  if((arg == "rsa-key-passphrase-file") || (arg == "rsa-key-passphrase-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(ReadSecretArg(arg, equal_arg, rsa_key_passphrase) != 0) return 0;
+    has_valid_args = 1;
+  }
+
+  // 10/27/2026: Key management
+  if(arg == "remove-user") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --remove-user missing name: --remove-user=name" << "\n" << flush;
+      return 0;
+    }
+    remove_username = equal_arg;
+    remove_user = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "remove-user-type") {
+    gxString t = equal_arg;
+    t.ToLower();
+    if(t == "rsa") remove_user_type = FC_SLOT_RSA;
+    else if(t == "smartcard") remove_user_type = FC_SLOT_SMARTCARD;
+    else {
+      cerr << "ERROR: --remove-user-type must be rsa or smartcard" << "\n" << flush;
+      return 0;
+    }
+    has_valid_args = 1;
+  }
+  if(arg == "rekey") {
+    rekey = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "rekey-fd" || arg == "rekey-file" || arg == "rekey-new-password-fd" || arg == "rekey-new-password-file") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(arg == "rekey-fd") rekey_input_fd = equal_arg;
+    if(arg == "rekey-file") rekey_input_file = equal_arg;
+    if(arg == "rekey-new-password-fd") rekey_new_password_fd = equal_arg;
+    if(arg == "rekey-new-password-file") rekey_new_password_file = equal_arg;
+    has_valid_args = 1;
+  }
+  if(arg == "rsa-key") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --rsa-key missing filename: --rsa-key=$HOME/keys/rsa_key.pem" << "\n" << flush;
+      return 0;
+    }
+    private_rsa_key_file = equal_arg;
+    if(!futils_exists(private_rsa_key_file.c_str()) || !futils_isfile(private_rsa_key_file.c_str())) {
+      cerr << "ERROR: Private RSA key file " << private_rsa_key_file.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
+      return 0;
+    }
+    if(check_private_key_file(private_rsa_key_file.c_str(), ebuf) != 0) {
+      cerr << "ERROR: " << ebuf.c_str() << "\n" << flush;
+      return 0;
+    }
+    rv = RSA_read_key_file(private_rsa_key_file.c_str(), private_key, sizeof(private_key), &private_key_len, &private_key_has_passphrase);
+    if(rv != RSA_NO_ERROR) {
+      cerr << "ERROR: " << RSA_err_string(rv) << "\n" << flush;
+      return 0;
+    }
+    use_private_rsa_key = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "access-log") {
+    access_log = 1;
+    if(!equal_arg.is_null()) access_log_file = equal_arg;
+    has_valid_args = 1;
+  }
+  if(arg == "no-access-log") {
+    access_log = 0;
+    has_valid_args = 1;
+  }
+
+#ifdef __ENABLE_SMART_CARD__
+  if(arg == "smartcard-cert") {
+    use_smartcard_auth = 1;
+    has_valid_args = 1;
+  }
+  if((arg == "smartcard-pin-file") || (arg == "smartcard-pin-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    gxString pin_buf;
+    if(ReadSecretArg(arg, equal_arg, pin_buf) != 0) return 0;
+    sc.SetPin((char *)pin_buf.c_str());
+    pin_buf.Clear(1);
+    has_valid_args = 1;
+  }
+  if(arg == "smartcard-allow-pin-count-low") {
+    sc.allow_pin_count_low = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "smartcard-allow-final-try") {
+    sc.allow_pin_count_low = 1;
+    sc.allow_pin_final_try = 1;
+    has_valid_args = 1;
+  }
+#endif
+
 #ifdef __ENABLE_SMART_CARD__
   if(arg == "add-smartcard-cert") {
     add_smart_card = 1;
@@ -535,6 +699,18 @@ int ProcessDashDashArg(gxString &arg)
   return has_valid_args;
 }
 
+int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret)
+// 10/27/2026: Read a secret for a --xxx-file or --xxx-fd argument.
+// Returns 0 if successful or 1 after printing an error.
+{
+  gxString err;
+  int rv;
+  if(arg.Find("-fd") != -1) rv = FC_read_secret_fd(value.c_str(), secret, err);
+  else rv = FC_read_secret_file(value.c_str(), secret, err);
+  if(rv != 0) cerr << "ERROR: " << err.c_str() << "\n" << flush;
+  return rv;
+}
+
 int ProcessArgs(char *arg)
 {
   gxString sbuf;
@@ -610,6 +786,7 @@ int ExitProgram(int rv, char *exit_message)
   rsa_key_username.Clear(1);
   memset(rsa_ciphertext, 0, sizeof(rsa_ciphertext));
   memset(public_key, 0, sizeof(public_key));
+  memset(private_key, 0, sizeof(private_key));
   rsa_key_passphrase.Clear(1);
   
   if(!debug_message.is_null()) DEBUG_m(debug_message.c_str(), debug_level);
@@ -674,6 +851,463 @@ int OpenNewFormatFile(FCryptFile &fc, const char *fname, const MemoryBuffer &sec
   return 1;
 }
 
+// ----------------------------------------------------------- //
+// 10/27/2026: Key management: --remove-user and --rekey
+// ----------------------------------------------------------- //
+const char *AuthName()
+{
+  if(use_private_rsa_key) return "rsa-key";
+#ifdef __ENABLE_SMART_CARD__
+  if(use_smartcard_auth) return "smartcard";
+#endif
+  if(use_key_file) return "key-file";
+  return "password";
+}
+
+gxString AuthSlotName()
+{
+  if(use_private_rsa_key) return rsa_key_username;
+#ifdef __ENABLE_SMART_CARD__
+  if(use_smartcard_auth) return smartcard_cert_username;
+#endif
+  return gxString();
+}
+
+void LogEvent(const char *fname, const gxString &id, const char *action, const gxString &slot, int ok,
+	      const char *detail, const unsigned char *log_key)
+// Writes an access log entry when --access-log is on. A log that cannot
+// be written is reported once and never stops the operation.
+{
+  if(!access_log) return;
+  FCLogEntry e;
+  e.tool = "fcrypt";
+  e.file = FC_abs_path(fname);
+  e.id = id;
+  e.auth = AuthName();
+  e.slot = slot;
+  e.action = action;
+  e.ok = ok;
+  if(detail) e.detail = detail;
+  gxString err;
+  if(FC_log_append(access_log_file.c_str(), e, log_key, err) != 0 && !access_log_warned) {
+    access_log_warned = 1;
+    cerr << "WARNING: " << err.c_str() << ", continuing without the access log" << "\n" << flush;
+  }
+}
+
+int UnlockForKeyManagement(FCryptFile &nf, const char *fname, gxString &err)
+// Opens the file with the credential given on the command line. A smart
+// card is used through the one card login of SC_private_key_decrypt().
+{
+  if(!nf.LoadHeader(fname)) {
+    err = nf.err;
+    return 0;
+  }
+  if(use_private_rsa_key) {
+    char *passphrase = 0;
+    if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
+    if(!nf.UnlockWithRSAKey(rsa_key_username.c_str(), private_key, private_key_len, passphrase)) {
+      err = nf.err;
+      return 0;
+    }
+    return 1;
+  }
+#ifdef __ENABLE_SMART_CARD__
+  if(use_smartcard_auth) {
+    FCKeySlot *slot = nf.FindSlot(FC_SLOT_SMARTCARD, smartcard_cert_username.c_str());
+    if(!slot) {
+      err << clear << "No smart card slot for user " << smartcard_cert_username;
+      return 0;
+    }
+    unsigned char file_key[FC_MAX_WRAPPED_LEN];
+    unsigned file_key_len = 0;
+    int rv = SC_private_key_decrypt(&sc, slot->wrapped.m_buf(), slot->wrapped.length(),
+				    file_key, sizeof(file_key), &file_key_len, RSA_PKCS1_OAEP_PADDING);
+    int ok = 0;
+    if(rv != 0) err << clear << "Smart card private key decrypt failed for cert ID " << sc.cert_id << ": " << sc.err_string;
+    else if(file_key_len != FC_KEY_LEN) err << clear << "Bad length for decrypted key";
+    else {
+      ok = nf.UnlockWithFileKey(file_key);
+      if(!ok) err = nf.err;
+    }
+    OPENSSL_cleanse(file_key, sizeof(file_key));
+    return ok;
+  }
+#endif
+  if(!nf.UnlockWithSecret(aes_file_encrypt_secret)) {
+    err = nf.err;
+    return 0;
+  }
+  return 1;
+}
+
+int WrapForRekey(const FCRekeySlot &slot, const unsigned char key[FC_KEY_LEN],
+		 unsigned char *wrapped, unsigned *wrapped_len, gxString &err)
+// Wraps the new file key with the public key of an RSA or smart card
+// slot. Never logs in to a card.
+{
+  if(slot.type == FC_SLOT_RSA) {
+    char pub[RSA_max_keybuf_len];
+    unsigned pub_len = 0;
+    int has_pass = 0;
+    if(RSA_read_key_file(slot.source.c_str(), pub, sizeof(pub), &pub_len, &has_pass) != RSA_NO_ERROR) {
+      err << clear << "Cannot read the public key file " << slot.source << " for user " << slot.username;
+      return 0;
+    }
+    EVP_PKEY *pkey = RSA_load_public_key((const unsigned char *)pub, pub_len, 0);
+    memset(pub, 0, sizeof(pub));
+    if(!pkey) {
+      err << clear << slot.source << " is not a public RSA key (user " << slot.username << ")";
+      return 0;
+    }
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    int ok = EVP_PKEY_is_a(pkey, "RSA") && EVP_PKEY_get_bits(pkey) >= (int)FC_MIN_RSA_BITS;
+#else
+    int ok = (EVP_PKEY_base_id(pkey) == EVP_PKEY_RSA) && EVP_PKEY_bits(pkey) >= (int)FC_MIN_RSA_BITS;
+#endif
+    if(ok) ok = (RSA_pkey_encrypt(pkey, key, FC_KEY_LEN, wrapped, FC_MAX_WRAPPED_LEN, wrapped_len,
+				  RSA_PKCS1_OAEP_PADDING) == RSA_NO_ERROR);
+    EVP_PKEY_free(pkey);
+    if(!ok) err << clear << "Cannot wrap the new key with the RSA key of user " << slot.username
+		<< " (it must be an RSA key of at least " << FC_MIN_RSA_BITS << " bits)";
+    return ok;
+  }
+#ifdef __ENABLE_SMART_CARD__
+  if(slot.type == FC_SLOT_SMARTCARD) {
+    int rv;
+    if(slot.source == "card") {
+      // Reads the public key from the card, no PIN
+      rv = SC_public_key_encrypt(&sc, key, FC_KEY_LEN, wrapped, FC_MAX_WRAPPED_LEN, wrapped_len, RSA_PKCS1_OAEP_PADDING);
+      if(rv != 0) err << clear << "Cannot read the cert of user " << slot.username << " from the card: " << sc.err_string;
+    }
+    else {
+      SmartCardOB cert;
+      rv = SC_read_cert_file(&cert, slot.source.c_str());
+      if(rv == 0) rv = SC_cert_file_public_key_encrypt(&cert, key, FC_KEY_LEN, wrapped, FC_MAX_WRAPPED_LEN,
+						       wrapped_len, RSA_PKCS1_OAEP_PADDING);
+      if(rv != 0) err << clear << "Cannot wrap the new key with the cert " << slot.source << " of user "
+		      << slot.username << ": " << cert.err_string;
+    }
+    return rv == 0;
+  }
+#else
+  if(slot.type == FC_SLOT_SMARTCARD) {
+    err << clear << "Smart card support is not enabled, cannot rewrap the smart card slot of " << slot.username;
+    return 0;
+  }
+#endif
+  err << clear << "Unknown slot type";
+  return 0;
+}
+
+int ReadRekeyInput(FCRekeyInput &in)
+{
+  MemoryBuffer data;
+  gxString err;
+  int rv;
+  if(!rekey_input_file.is_null()) rv = FC_read_input_file(rekey_input_file.c_str(), data, err);
+  else if(!rekey_input_fd.is_null()) rv = FC_read_input_fd(rekey_input_fd.c_str(), data, err);
+  else if(FC_stdin_is_terminal()) rv = 0; // No input, the plan lists what is missing
+  else rv = FC_read_input_fd("0", data, err);
+  gxList<FCNameValue> list;
+  if(rv == 0) rv = FC_parse_name_values(data, list, err);
+  data.Clear(1);
+  if(rv == 0) rv = FC_parse_rekey_input(list, in, err);
+  FC_wipe_name_values(list);
+  if(rv != 0) cerr << "ERROR: Rekey input: " << err.c_str() << "\n" << flush;
+  return rv == 0;
+}
+
+int RekeyFile(FCryptFile &nf, const char *fname, FCRekeyInput &in, const unsigned char old_log_key[FC_LOG_KEY_LEN])
+{
+  gxList<FCRekeySlot> existing, keep;
+  int has_password_slot = 0;
+  for(gxListNode<FCKeySlot> *p = nf.slots.GetHead(); p; p = p->next) {
+    if(p->data.type == FC_SLOT_SECRET) {
+      has_password_slot = 1;
+      continue;
+    }
+    FCRekeySlot r;
+    r.type = p->data.type;
+    r.username = p->data.username;
+    existing.Add(r);
+  }
+  int password_supplied = !use_private_rsa_key;
+#ifdef __ENABLE_SMART_CARD__
+  if(use_smartcard_auth) password_supplied = 0;
+#endif
+  int generate = !rekey_new_password_file.is_null() || !rekey_new_password_fd.is_null();
+  int pw_action = 0;
+  gxString missing, err;
+  int rv = FC_rekey_plan(existing, has_password_slot, password_supplied, generate, in, keep, pw_action, missing, err);
+  if(rv == 1) {
+    cerr << "ERROR: The rekey of " << fname << " needs a choice for every key slot, nothing was changed. Missing from the rekey input:" << "\n"
+	 << missing.c_str() << flush;
+    return 0;
+  }
+  if(rv != 0) {
+    cerr << "ERROR: " << err.c_str() << "\n" << flush;
+    return 0;
+  }
+
+  // The secret for the password slot
+  MemoryBuffer new_secret;
+  gxString generated;
+  if(pw_action == FC_REKEY_PW_KEEP) {
+    if(password_supplied) new_secret = aes_file_encrypt_secret;
+    else {
+      new_secret.Cat(in.password.GetSPtr(), in.password.length());
+      FCryptFile chk; // The given password must open the password slot
+      if(!chk.LoadHeader(fname) || !chk.UnlockWithSecret(new_secret)) {
+	cerr << "ERROR: The password= in the rekey input does not open the password slot of " << fname << "\n" << flush;
+	new_secret.Clear(1);
+	return 0;
+      }
+    }
+  }
+  else if(pw_action == FC_REKEY_PW_NEW) {
+    if((int)in.new_password.length() < AES_MIN_SECRET_LEN) {
+      cerr << "ERROR: The new password must be at least " << AES_MIN_SECRET_LEN << " characters long" << "\n" << flush;
+      return 0;
+    }
+    new_secret.Cat(in.new_password.GetSPtr(), in.new_password.length());
+  }
+  else if(pw_action == FC_REKEY_PW_GENERATE) {
+    if(!FC_generate_secret(generated)) {
+      cerr << "ERROR: Cannot generate a password" << "\n" << flush;
+      return 0;
+    }
+    // Written before the file is changed, so it cannot be lost
+    gxString werr;
+    int wrv = !rekey_new_password_file.is_null() ?
+      FC_write_secret_file(rekey_new_password_file.c_str(), generated, werr) :
+      FC_write_secret_fd(rekey_new_password_fd.c_str(), generated, werr);
+    if(wrv != 0) {
+      cerr << "ERROR: " << werr.c_str() << ", the file was not changed" << "\n" << flush;
+      generated.Clear(1);
+      return 0;
+    }
+    new_secret.Cat(generated.GetSPtr(), generated.length());
+  }
+
+  if(!nf.BeginRekey()) {
+    cerr << "ERROR: " << nf.err.c_str() << "\n" << flush;
+    return 0;
+  }
+  unsigned char new_key[FC_KEY_LEN];
+  memmove(new_key, nf.NewFileKey(), sizeof(new_key));
+  int ok = 1;
+  for(gxListNode<FCRekeySlot> *p = keep.GetHead(); ok && p; p = p->next) {
+    unsigned char wrapped[FC_MAX_WRAPPED_LEN];
+    unsigned wrapped_len = 0;
+    ok = WrapForRekey(p->data, new_key, wrapped, &wrapped_len, err);
+    if(ok) ok = nf.AddRekeySlot(p->data.type, p->data.username.c_str(), wrapped, wrapped_len);
+    if(!ok && err.is_null()) err = nf.err;
+  }
+  gxString old_id = nf.FileIDHex();
+  gxString backup;
+  if(ok) {
+    ok = nf.FinishRekey(pw_action == FC_REKEY_PW_NONE ? 0 : &new_secret, 1, backup);
+    if(!ok) err = nf.err;
+  }
+  new_secret.Clear(1);
+  if(!ok) {
+    OPENSSL_cleanse(new_key, sizeof(new_key));
+    LogEvent(fname, old_id, "rekey", AuthSlotName(), 0, "not changed", old_log_key);
+    cerr << "ERROR: Rekey of " << fname << " failed: " << err.c_str() << "\n" << flush;
+    if(pw_action == FC_REKEY_PW_GENERATE) {
+      if(!rekey_new_password_file.is_null()) futils_remove(rekey_new_password_file.c_str());
+      cerr << "The generated password was not used" << "\n" << flush;
+    }
+    generated.Clear(1);
+    return 0;
+  }
+  generated.Clear(1);
+  cerr << "Rekeyed " << fname << ": new file key, every record encrypted again" << "\n" << flush;
+  for(gxListNode<FCRekeySlot> *p = keep.GetHead(); p; p = p->next) {
+    cerr << "  kept " << (p->data.type == FC_SLOT_RSA ? "RSA key" : "smart card") << " user " << p->data.username.c_str() << "\n" << flush;
+  }
+  if(pw_action == FC_REKEY_PW_KEEP) cerr << "  kept the password slot with the same password" << "\n" << flush;
+  if(pw_action == FC_REKEY_PW_NEW) cerr << "  the password slot has the new password" << "\n" << flush;
+  if(pw_action == FC_REKEY_PW_GENERATE) {
+    cerr << "  the password slot has a generated password, written to "
+	 << (rekey_new_password_file.is_null() ? "the file descriptor" : rekey_new_password_file.c_str()) << "\n" << flush;
+  }
+  if(pw_action == FC_REKEY_PW_NONE && has_password_slot) cerr << "  the password slot was removed" << "\n" << flush;
+  cerr << "The original file was saved to " << backup.c_str() << ", delete it when you no longer need it, it opens with the old credentials" << "\n" << flush;
+
+  // Access log: close the old chain and carry it to the new key
+  if(access_log) {
+    FCryptFile after;
+    unsigned char new_log_key[FC_LOG_KEY_LEN];
+    if(after.LoadHeader(fname) &&
+       FC_log_key(new_key, FC_KEY_LEN, after.FileID(), FC_FILE_ID_LEN, new_log_key)) {
+      gxString detail;
+      detail << "new-id=" << after.FileIDHex();
+      LogEvent(fname, old_id, "rekey", AuthSlotName(), 1, detail.c_str(), old_log_key);
+      gxString lbackup, lerr;
+      int lrv = FC_log_rekey(access_log_file.c_str(), old_id.c_str(), old_log_key,
+			     after.FileIDHex().c_str(), new_log_key, lbackup, lerr);
+      if(lrv == 1) cerr << "WARNING: " << lerr.c_str() << ". The log was kept as " << lbackup.c_str() << " and a new log started" << "\n" << flush;
+      else if(lrv < 0 && !access_log_warned) {
+	access_log_warned = 1;
+	cerr << "WARNING: " << lerr.c_str() << "\n" << flush;
+      }
+      LogEvent(fname, after.FileIDHex(), "access-log-rekey", AuthSlotName(), 1, 0, new_log_key);
+      OPENSSL_cleanse(new_log_key, sizeof(new_log_key));
+    }
+  }
+  OPENSSL_cleanse(new_key, sizeof(new_key));
+  return 1;
+}
+
+int KeyManagement()
+// Returns the exit code
+{
+  if(remove_user && rekey) {
+    cerr << "ERROR: Use --remove-user and --rekey in separate runs" << "\n" << flush;
+    return 1;
+  }
+  // The credential
+  if(use_private_rsa_key) {
+    if(rsa_key_username.is_null()) {
+      cerr << "ERROR: --rsa-key requires --rsa-key-username" << "\n" << flush;
+      return 1;
+    }
+    if(private_key_has_passphrase && rsa_key_passphrase.is_null()) {
+      cerr << "RSA key passphrase: " << flush;
+      if(!consoleGetString(rsa_key_passphrase, 1)) {
+	rsa_key_passphrase.Clear(1);
+	cerr << "\n" << "Invalid entry!" << "\n" << flush;
+	return 1;
+      }
+      cerr << "\n" << flush;
+    }
+  }
+#ifdef __ENABLE_SMART_CARD__
+  else if(use_smartcard_auth) {
+    if(smartcard_cert_username.is_null()) {
+      cerr << "ERROR: --smartcard-cert requires --smartcard-username" << "\n" << flush;
+      return 1;
+    }
+    if(!futils_exists(sc.modulePath) || !futils_isfile(sc.modulePath)) {
+      cerr << "ERROR: Smart card provider " << sc.modulePath << " does not exist or cannot be read" <<  "\n" << flush;
+      return 1;
+    }
+    if(sc.pin_too_long) {
+      cerr << "ERROR: The smart card PIN is longer than " << (SC_max_pin_size-1) << " characters, the PIN was not sent" << "\n" << flush;
+      return 1;
+    }
+    if(sc.pin[0] == 0) {
+      gxString pin_buf;
+      cerr << "Smart card PIN: " << flush;
+      if(!consoleGetString(pin_buf, 1) || pin_buf.is_null() || pin_buf.length() >= SC_max_pin_size) {
+	pin_buf.Clear(1);
+	cerr << "\n" << "ERROR: The smart card PIN is empty or too long, the PIN was not sent" << "\n" << flush;
+	return 1;
+      }
+      cerr << "\n" << flush;
+      sc.SetPin((char *)pin_buf.c_str());
+      pin_buf.Clear(1);
+    }
+    if(debug_mode) sc.verbose_mode = 1;
+  }
+#endif
+  else if(use_key_file) {
+    aes_file_encrypt_secret.Clear(1);
+    aes_file_encrypt_secret.Cat(key.m_buf(), key.length());
+  }
+  else {
+    if(password.is_null()) {
+      cerr << "Password: " << flush;
+      if(!consoleGetString(password, 1)) {
+	password.Clear(1);
+	cerr << "\n" << "Invalid entry!" << "\n" << flush;
+	return 1;
+      }
+      cerr << "\n" << flush;
+    }
+    aes_file_encrypt_secret.Clear(1);
+    aes_file_encrypt_secret.Cat(password.GetSPtr(), password.length());
+  }
+
+  FCRekeyInput in;
+  if(rekey && !ReadRekeyInput(in)) return 1;
+
+  int errors = 0;
+  gxListNode<gxString> *ptr = file_list.GetHead();
+  while(ptr) {
+    const char *fname = ptr->data.c_str();
+    ptr = ptr->next;
+    int fmt;
+    if(!CheckLegacyFile(fname, fmt)) {
+      errors++;
+      continue;
+    }
+    if(fmt != FC_FORMAT_2026102) {
+      FCVersionInfo vi;
+      gxString verr;
+      if(FC_check_version(fname, vi, verr) == 0 && vi.is_v1) cerr << FC_v1_warning(fname, vi).c_str() << "\n" << flush;
+      cerr << "ERROR: " << fname << " uses the old file format. --remove-user and --rekey need the "
+	   << FC_FILE_VERSION << " format, convert it first with fmigrate" << "\n" << flush;
+      errors++;
+      continue;
+    }
+    FCryptFile nf;
+    gxString err;
+    if(!UnlockForKeyManagement(nf, fname, err)) {
+      LogEvent(fname, nf.FileIDHex(), "open", AuthSlotName(), 0, "credential did not open the file", 0);
+      cerr << "ERROR: " << fname << ": " << err.c_str() << "\n" << flush;
+      errors++;
+#ifdef __ENABLE_SMART_CARD__
+      if(use_smartcard_auth) { // Never send the PIN again in this run
+	OPENSSL_cleanse(sc.pin, sizeof(sc.pin));
+	break;
+      }
+#endif
+      continue;
+    }
+    unsigned char log_key[FC_LOG_KEY_LEN];
+    FC_log_key(nf.FileKey(), FC_KEY_LEN, nf.FileID(), FC_FILE_ID_LEN, log_key);
+    gxString id = nf.FileIDHex();
+    LogEvent(fname, id, "open", AuthSlotName(), 1, 0, log_key);
+
+    if(remove_user) {
+      unsigned type = remove_user_type;
+      if(!type) {
+	FCKeySlot *r = nf.FindSlot(FC_SLOT_RSA, remove_username.c_str());
+	FCKeySlot *c = nf.FindSlot(FC_SLOT_SMARTCARD, remove_username.c_str());
+	if(r && c) {
+	  cerr << "ERROR: User " << remove_username.c_str() << " has RSA key and smart card access to " << fname
+	       << ", give --remove-user-type=rsa or --remove-user-type=smartcard" << "\n" << flush;
+	  errors++;
+	  OPENSSL_cleanse(log_key, sizeof(log_key));
+	  continue;
+	}
+	type = c ? FC_SLOT_SMARTCARD : FC_SLOT_RSA;
+      }
+      gxString backup;
+      if(!nf.RemoveSlot(type, remove_username.c_str(), 1, backup)) {
+	cerr << "ERROR: " << nf.err.c_str() << "\n" << flush;
+	LogEvent(fname, id, "remove-user", remove_username, 0, "not changed", log_key);
+	errors++;
+      }
+      else {
+	cerr << "Removed " << FC_slot_type_name(type) << " access for user " << remove_username.c_str() << " from " << fname << "\n" << flush;
+	cerr << "The original file was saved to " << backup.c_str() << ", delete it when you no longer need it" << "\n" << flush;
+	cerr << "NOTE: Removing a user does not revoke a file key the user may already have recovered, "
+	     << "or copies of the file made before. Run fcrypt --rekey on the file to give it a new key." << "\n" << flush;
+	LogEvent(fname, id, "remove-user", remove_username, 1, 0, log_key);
+	if(clientcfg->verbose_mode) ListNewFormatUsers(nf);
+      }
+    }
+    if(rekey && !RekeyFile(nf, fname, in, log_key)) errors++;
+    OPENSSL_cleanse(log_key, sizeof(log_key));
+  }
+  in.Wipe();
+  return errors ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
 #ifdef __MSVC_DEBUG__
@@ -690,7 +1324,13 @@ int main(int argc, char **argv)
   timeout.tv_sec  = 0;
   timeout.tv_usec = 5000;
 
-  int selectRetVal = select(1, &readfds, &writefds, &exceptfds, &timeout);
+  // 10/27/2026: Only --add-rsa-key with no file name reads the key from
+  // stdin, so stdin stays free for --password-fd=0 and --rekey input
+  int stdin_key = 0;
+  for(int i = 1; i < argc; i++) {
+    if(strcmp(argv[i], "--add-rsa-key") == 0) stdin_key = 1;
+  }
+  int selectRetVal = stdin_key ? select(1, &readfds, &writefds, &exceptfds, &timeout) : 0;
   char buf[1];
   unsigned bytes_read = 0;
   
@@ -744,7 +1384,9 @@ int main(int argc, char **argv)
     while (narg < argc) {
       if (arg[0] != '\0') {
 	if (arg[0] == '-') { // Look for command line arguments
-	  if(!ProcessArgs(arg)) return ExitProgram(1); // Exit if argument is not valid
+	  int arg_ok = ProcessArgs(arg);
+	  FC_wipe_secret_arg(argv[narg]); // 10/27/2026: Remove secrets from the process arguments
+	  if(!arg_ok) return ExitProgram(1); // Exit if argument is not valid
 	}
 	else { 
 	  // Process the command line string after last - argument
@@ -799,6 +1441,14 @@ int main(int argc, char **argv)
   }
   if(clientcfg->verbose_mode) cerr << FC_crypto_status().c_str() << "\n" << flush;
   
+  if(futils_chdir(top_pwd) != 0) {
+    cerr << "Encountered fatal fcrypt error" << "\n";
+    cerr << "Error resetting top present working DIR" << "\n";
+    return ExitProgram(1);
+  }
+  if(access_log && access_log_file.is_null()) access_log_file = FC_default_log_file(".fcrypt");
+  if(remove_user || rekey) return ExitProgram(KeyManagement()); // 10/27/2026
+
   if(futils_chdir(top_pwd) != 0) {
     cerr << "Encountered fatal fcrypt error" << "\n";
     cerr << "Error resetting top present working DIR" << "\n";

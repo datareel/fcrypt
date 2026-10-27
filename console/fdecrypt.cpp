@@ -40,6 +40,7 @@ using namespace std; // Use unqualified names for Standard C++ library
 #endif // __USE_ANSI_CPP__
 
 #include "fcrypt.h"
+#include "fckeymgmt.h"
 #include "gxlist.h"
 #include "gxs_b64.h"
 
@@ -82,6 +83,11 @@ int has_passphrase = 0;
 gxString rsa_key_username;
 int list_users = 0;
 int fips_request = FC_FIPS_AUTO;
+int check_version = 0;   // 10/27/2026: --check-version
+int access_log = 0;      // 10/27/2026: --access-log
+gxString access_log_file;
+int access_log_warned = 0;
+int verify_access_log = 0;
 #ifdef __ENABLE_SMART_CARD__
 SmartCardOB sc;
 gxString smartcard_cert_username;
@@ -98,6 +104,8 @@ int ExitProgram(int rv = 0, char *exit_message = 0);
 int CheckFileFormat(const char *fname, int &fmt);
 int ListNewFormatUsers(const char *fname);
 int DecryptNewFormatFile(const char *fname);
+int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret);
+int CheckVersions();
 
 void DisplayVersion()
 {
@@ -147,7 +155,11 @@ void HelpMessage()
   cout << "\n" << flush;
   cout << "          --absolute-path (Restore to the exact path stored in the enc file)" << "\n" << flush;
   cout << "          --allow-unencrypted (Allow decrypting mode 0 test files that are not encrypted)" << "\n" << flush;
+  cout << "          --access-log[=file] (Log each decrypt, default " << FC_default_log_file(".fcrypt").c_str() << ")" << "\n" << flush;
+  cout << "          --no-access-log (Do not log, the default)" << "\n" << flush;
+  cout << "          --verify-access-log (Check the access log entries of the files, needs the file credential)" << "\n" << flush;
   cout << "          --cache=size (Set the cache size)" << "\n" << flush;
+  cout << "          --check-version (Report the file format of each file without decrypting, exit 1 if any is v1)" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
   cout << "          --fips (Use only the OpenSSL FIPS provider, see README.txt)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
@@ -162,10 +174,14 @@ void HelpMessage()
   cout << "          --no-path (Restore only the file name, without the stored path)" << "\n" << flush;
   cout << "          --outfile=fname (Write decrypted output to specified file name)" << "\n" << flush;
   cout << "          --outdir=dir (Write decrypted output to this directory)" << "\n" << flush;
-  cout << "          --password (Use a password for symmetric file decryption)" << "\n" << flush;
+  cout << "          --password (Use a password for symmetric file decryption, prompts for the password)" << "\n" << flush;
+  cout << "          --password-file=file (Read the password from the first line of a file only you can read)" << "\n" << flush;
+  cout << "          --password-fd=n (Read the password from the first line of open file descriptor n)" << "\n" << flush;
   cout << "          --rsa-key (Use a private RSA key for decryption)" << "\n" << flush;
   cout << "          --rsa-key input args can be a private key file name or a pipe" << "\n" << flush;
-  cout << "          --rsa-key-passphrase (Passphrase for private RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase=pass (Passphrase for private RSA key, visible to other users, not recommended)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase-file=file (Read the private RSA key passphrase from a file only you can read)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase-fd=n (Read the private RSA key passphrase from open file descriptor n)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Username that owns the private RSA key)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
@@ -173,7 +189,9 @@ void HelpMessage()
 #ifdef __ENABLE_SMART_CARD__
   cout << "\n" << flush;
   cout << "          --smartcard-cert (Use a smart card for decryption)" << "\n" << flush;
-  cout << "          --smartcard-pin=pin (Supply smart card PIN on the command line for scripting, use with caution)" << "\n" << flush;
+  cout << "          --smartcard-pin=pin (Smart card PIN, visible to other users, not recommended)" << "\n" << flush;
+  cout << "          --smartcard-pin-file=file (Read the smart card PIN from a file only you can read)" << "\n" << flush;
+  cout << "          --smartcard-pin-fd=n (Read the smart card PIN from open file descriptor n)" << "\n" << flush;
   cout << "          --smartcard-slot=N (Use only the card in PKCS#11 slot N, decimal or 0x hex)" << "\n" << flush;
   cout << "          --smartcard-allow-pin-count-low (Send the PIN when the card reports low PIN tries)" << "\n" << flush;
   cout << "          --smartcard-allow-final-try (Send the PIN when the card reports one PIN try left, a wrong PIN locks the card)" << "\n" << flush;
@@ -304,12 +322,51 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: --rsa-key-passphrase requires an input argument" << "\n" << flush;
       return 0;
     }
+    FC_warn_secret_on_command_line("--rsa-key-passphrase", "--rsa-key-passphrase-file or --rsa-key-passphrase-fd");
     rsa_key_passphrase = equal_arg;
+    has_valid_args = 1;
+  }
+
+  // 10/27/2026: Secrets from a file or file descriptor, as in the
+  // Encrypted Password Database. The buffers are wiped on exit.
+  if((arg == "rsa-key-passphrase-file") || (arg == "rsa-key-passphrase-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(ReadSecretArg(arg, equal_arg, rsa_key_passphrase) != 0) return 0;
+    has_valid_args = 1;
+  }
+  if((arg == "password-file") || (arg == "password-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(ReadSecretArg(arg, equal_arg, password) != 0) return 0;
+    use_password = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "check-version") {
+    check_version = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "access-log") {
+    access_log = 1;
+    if(!equal_arg.is_null()) access_log_file = equal_arg;
+    has_valid_args = 1;
+  }
+  if(arg == "no-access-log") {
+    access_log = 0;
+    has_valid_args = 1;
+  }
+  if(arg == "verify-access-log") {
+    verify_access_log = 1;
     has_valid_args = 1;
   }
 
   if(arg == "password") {
     if(!equal_arg.is_null()) {
+      FC_warn_secret_on_command_line("--password", "--password-file or --password-fd");
       password = equal_arg;
     }
     use_password  = 1;
@@ -472,7 +529,19 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: --smartcard-pin missing pin number: --smartcard-pin=12345" << "\n" << flush;
       return 0;
     }
+    FC_warn_secret_on_command_line("--smartcard-pin", "--smartcard-pin-file or --smartcard-pin-fd");
     sc.SetPin(equal_arg.c_str());
+    has_valid_args = 1;
+  }
+  if((arg == "smartcard-pin-file") || (arg == "smartcard-pin-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    gxString pin_buf;
+    if(ReadSecretArg(arg, equal_arg, pin_buf) != 0) return 0;
+    sc.SetPin((char *)pin_buf.c_str());
+    pin_buf.Clear(1);
     has_valid_args = 1;
   }
 
@@ -644,6 +713,111 @@ int ListNewFormatUsers(const char *fname)
   return 1;
 }
 
+// 10/27/2026: Secrets from files and descriptors, version check and log
+int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret)
+// Returns 0 if successful or 1 after printing an error
+{
+  gxString err;
+  int rv;
+  if(arg.Find("-fd") != -1) rv = FC_read_secret_fd(value.c_str(), secret, err);
+  else rv = FC_read_secret_file(value.c_str(), secret, err);
+  if(rv != 0) cerr << "ERROR: " << err.c_str() << "\n" << flush;
+  return rv;
+}
+
+int CheckVersions()
+// Reports the format of each file without decrypting it and without a
+// smart card. Returns 1 if any file is v1, 2 if a file cannot be read
+// or is not an encrypted file, else 0.
+{
+  int any_v1 = 0, any_error = 0;
+  gxListNode<gxString> *ptr = file_list.GetHead();
+  while(ptr) {
+    FCVersionInfo vi;
+    gxString err;
+    int rv = FC_check_version(ptr->data.c_str(), vi, err);
+    if(rv != 0) {
+      cout << ptr->data.c_str() << ": unknown: " << err.c_str() << "\n" << flush;
+      any_error = 1;
+    }
+    else if(vi.is_v1) {
+      cout << ptr->data.c_str() << ": v1: " << vi.version.c_str() << ", upgrade with: " << vi.upgrade.c_str() << "\n" << flush;
+      any_v1 = 1;
+    }
+    else {
+      cout << ptr->data.c_str() << ": v2: " << vi.version.c_str() << "\n" << flush;
+    }
+    ptr = ptr->next;
+  }
+  return any_v1 ? 1 : (any_error ? 2 : 0);
+}
+
+const char *AuthName()
+{
+  if(use_private_rsa_key) return "rsa-key";
+#ifdef __ENABLE_SMART_CARD__
+  if(use_smartcard_cert) return "smartcard";
+#endif
+  if(use_key_file) return "key-file";
+  return "password";
+}
+
+gxString AuthSlotName()
+{
+  if(use_private_rsa_key) return rsa_key_username;
+#ifdef __ENABLE_SMART_CARD__
+  if(use_smartcard_cert) return smartcard_cert_username;
+#endif
+  return gxString();
+}
+
+void LogEvent(const char *fname, const gxString &id, const char *action, int ok,
+	      const char *detail, const unsigned char *log_key)
+// A log that cannot be written is reported once and never stops a decrypt
+{
+  if(!access_log) return;
+  FCLogEntry e;
+  e.tool = "fdecrypt";
+  e.file = FC_abs_path(fname);
+  e.id = id;
+  e.auth = AuthName();
+  e.slot = AuthSlotName();
+  e.action = action;
+  e.ok = ok;
+  if(detail) e.detail = detail;
+  gxString err;
+  if(FC_log_append(access_log_file.c_str(), e, log_key, err) != 0 && !access_log_warned) {
+    access_log_warned = 1;
+    cerr << "WARNING: " << err.c_str() << ", continuing without the access log" << "\n" << flush;
+  }
+}
+
+int VerifyAccessLog(const char *fname, FCryptFile &fc)
+// Checks the log lines of an unlocked file. Returns 1 if they verify.
+{
+  unsigned char key[FC_LOG_KEY_LEN];
+  FC_log_key(fc.FileKey(), FC_KEY_LEN, fc.FileID(), FC_FILE_ID_LEN, key);
+  FCLogVerifyResult r;
+  gxString err;
+  int rv = FC_log_verify(access_log_file.c_str(), fc.FileIDHex().c_str(), key, r, err);
+  OPENSSL_cleanse(key, sizeof(key));
+  if(rv < 0) {
+    cerr << "ERROR: " << err.c_str() << "\n" << flush;
+    return 0;
+  }
+  cout << "Access log " << access_log_file.c_str() << " for " << fname << ": " << r.id_lines << " entries, "
+       << r.tagged << " tags verified, " << r.untagged_covered << " untagged entries covered";
+  if(r.trailing_untagged) cout << ", " << r.trailing_untagged << " untagged entries after the last tag (not checked)";
+  cout << "\n" << flush;
+  if(rv != 0) {
+    cout << "TAMPERED: " << r.bad_lines << " problem(s), first at line " << r.first_bad_line << ": "
+	 << r.first_bad_reason.c_str() << "\n" << flush;
+    return 0;
+  }
+  cout << "OK: no changes found" << "\n" << flush;
+  return 1;
+}
+
 int DecryptNewFormatFile(const char *fname)
 {
   FCryptFile fc;
@@ -695,10 +869,19 @@ int DecryptNewFormatFile(const char *fname)
     ok = fc.UnlockWithSecret(aes_file_decrypt_secret);
   }
   if(!ok) {
+    LogEvent(fname, fc.FileIDHex(), "open", 0, "credential did not open the file", 0);
     cerr << "ERROR: File decrypt failed " << fname << "\n" << flush;
     cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
     return 0;
   }
+  unsigned char log_key[FC_LOG_KEY_LEN];
+  FC_log_key(fc.FileKey(), FC_KEY_LEN, fc.FileID(), FC_FILE_ID_LEN, log_key);
+  if(verify_access_log) {
+    OPENSSL_cleanse(log_key, sizeof(log_key));
+    return VerifyAccessLog(fname, fc);
+  }
+  LogEvent(fname, fc.FileIDHex(), "open", 1, 0, log_key);
+  OPENSSL_cleanse(log_key, sizeof(log_key));
 
   if(list_file_names) {
     gxString sbuf;
@@ -750,7 +933,13 @@ int main(int argc, char **argv)
   timeout.tv_sec  = 0;
   timeout.tv_usec = 5000;
 
-  int selectRetVal = select(1, &readfds, &writefds, &exceptfds, &timeout);
+  // 10/27/2026: Only --rsa-key with no file name reads the key from
+  // stdin, so stdin stays free for --password-fd=0
+  int stdin_key = 0;
+  for(int i = 1; i < argc; i++) {
+    if(strcmp(argv[i], "--rsa-key") == 0) stdin_key = 1;
+  }
+  int selectRetVal = stdin_key ? select(1, &readfds, &writefds, &exceptfds, &timeout) : 0;
   char buf[1];
   unsigned bytes_read = 0;
   
@@ -804,7 +993,9 @@ int main(int argc, char **argv)
     while (narg < argc) {
       if (arg[0] != '\0') {
 	if (arg[0] == '-') { // Look for command line arguments
-	  if(!ProcessArgs(arg)) return ExitProgram(1); // Exit if argument is not valid
+	  int arg_ok = ProcessArgs(arg);
+	  FC_wipe_secret_arg(argv[narg]); // 10/27/2026: Remove secrets from the process arguments
+	  if(!arg_ok) return ExitProgram(1); // Exit if argument is not valid
 	}
 	else { 
 	  fn = arg;
@@ -861,6 +1052,11 @@ int main(int argc, char **argv)
     return ExitProgram(1);
   }
   if(clientcfg->verbose_mode) cerr << FC_crypto_status().c_str() << "\n" << flush;
+
+  // 10/27/2026: Never asks for a credential or touches a smart card
+  if(check_version) return ExitProgram(CheckVersions());
+  if(verify_access_log && !access_log) access_log = 1;
+  if(access_log && access_log_file.is_null()) access_log_file = FC_default_log_file(".fcrypt");
 
   if(use_key_file) {
     if(clientcfg->verbose_mode) cerr << "Using key file for decryption" << "\n" << flush;
@@ -1012,6 +1208,20 @@ int main(int argc, char **argv)
     }
 
     // Files from releases before 2026.102
+    {
+      FCVersionInfo vi; // 10/27/2026: Warn about v1 files still in use
+      gxString verr;
+      if(FC_check_version(ptr->data.c_str(), vi, verr) == 0 && vi.is_v1) {
+	cerr << FC_v1_warning(ptr->data.c_str(), vi).c_str() << "\n" << flush;
+      }
+      if(verify_access_log) {
+	cerr << "ERROR: " << ptr->data.c_str() << " is a v1 file, its access log entries have no tags to verify" << "\n" << flush;
+	err = 1;
+	ptr = ptr->next;
+	continue;
+      }
+      LogEvent(ptr->data.c_str(), gxString(), "open", 1, "v1 file, decrypt result follows on stderr", 0);
+    }
     
     FCryptCache fc(num_buckets);
     fc.key_iterations = key_iterations;

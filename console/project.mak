@@ -17,6 +17,8 @@ FCFIPS_DEP = $(APPINC_PATH)fcfips.h $(APPINC_PATH)aesdb.h
 
 FCFILE_DEP = $(APPINC_PATH)fcfile.h $(APPINC_PATH)fcfips.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)rsadb.h $(APPINC_PATH)cryptdb.h
 
+FCKEYMGMT_DEP = $(APPINC_PATH)fckeymgmt.h $(APPINC_PATH)fcfile.h $(APPINC_PATH)aesdb.h
+
 GLOBALS_DEP = $(APPINC_PATH)globals.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
 C_CONFIG_DEP = $(APPINC_PATH)c_config.h $(APPINC_PATH)globals.h $(APPINC_PATH)c_thread.h \
@@ -26,7 +28,7 @@ C_THREAD_DEP = $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
 	$(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h \
 	$(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
 
-PROJECT_DEP = ../fcrypt.h $(APPINC_PATH)fcfips.h $(APPINC_PATH)fcfile.h \
+PROJECT_DEP = ../fcrypt.h $(APPINC_PATH)fcfips.h $(APPINC_PATH)fcfile.h $(APPINC_PATH)fckeymgmt.h \
 	    $(APPINC_PATH)c_thread.h $(APPINC_PATH)globals.h \
 	    $(APPINC_PATH)c_config.h $(APPINC_PATH)aesdb.h $(APPINC_PATH)cryptdb.h \
 	    $(APPINC_PATH)rsadb.h $(APPINC_PATH)smart_card.h
@@ -49,6 +51,9 @@ fcfips$(OBJ_EXT):	$(APPSRC_PATH)fcfips.cpp $(FCFIPS_DEP)
 
 fcfile$(OBJ_EXT):	$(APPSRC_PATH)fcfile.cpp $(FCFILE_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)fcfile.cpp
+
+fckeymgmt$(OBJ_EXT):	$(APPSRC_PATH)fckeymgmt.cpp $(FCKEYMGMT_DEP)
+	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)fckeymgmt.cpp
 
 globals$(OBJ_EXT):	$(APPSRC_PATH)globals.cpp $(GLOBALS_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) $(APPSRC_PATH)globals.cpp
@@ -188,6 +193,7 @@ OBJECTS = $(PROJECT)$(OBJ_EXT) \
 	smart_card$(OBJ_EXT) \
 	fcfips$(OBJ_EXT) \
 	fcfile$(OBJ_EXT) \
+	fckeymgmt$(OBJ_EXT) \
 	c_config$(OBJ_EXT) \
 	c_thread$(OBJ_EXT)
 # ===============================================================

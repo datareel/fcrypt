@@ -55,6 +55,7 @@ using namespace std; // Use unqualified names for Standard C++ library
 #endif // __USE_ANSI_CPP__
 
 #include "fcrypt.h"
+#include "fckeymgmt.h"
 #include "gxlist.h"
 
 #include <openssl/pem.h>
@@ -101,6 +102,7 @@ void DisplayVersion();
 void HelpMessage();
 int ProcessDashDashArg(gxString &arg);
 int ProcessArgs(char *arg);
+int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret);
 int DEBUG_m(char *message, int level = 1, int rv = 0);
 int ExitProgram(int rv = 0, char *exit_message = 0);
 int OldFormatVersion(const char *fname);
@@ -239,14 +241,20 @@ void HelpMessage()
   cout << "          --outdir=dir (Write the new files to this directory and keep the old files)" << "\n" << flush;
   cout << "          --password (Password the old files were encrypted with)" << "\n" << flush;
   cout << "          --rsa-key=file (Open the old files with a private RSA key)" << "\n" << flush;
-  cout << "          --rsa-key-passphrase (Passphrase for private RSA key)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase=pass (Passphrase for private RSA key, visible to other users, not recommended)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase-file=file (Read the private RSA key passphrase from a file only you can read)" << "\n" << flush;
+  cout << "          --rsa-key-passphrase-fd=n (Read the private RSA key passphrase from open file descriptor n)" << "\n" << flush;
+  cout << "          --password-file=file (Read the password from the first line of a file only you can read)" << "\n" << flush;
+  cout << "          --password-fd=n (Read the password from the first line of open file descriptor n)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Username that owns the private RSA key)" << "\n" << flush;
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
   cout << "          --version (Display program version number)" << "\n" << flush;
 #ifdef __ENABLE_SMART_CARD__
   cout << "\n" << flush;
   cout << "          --smartcard-cert (Open the old files with a smart card)" << "\n" << flush;
-  cout << "          --smartcard-pin=pin (Supply smart card PIN on the command line for scripting, use with caution)" << "\n" << flush;
+  cout << "          --smartcard-pin=pin (Smart card PIN, visible to other users, not recommended)" << "\n" << flush;
+  cout << "          --smartcard-pin-file=file (Read the smart card PIN from a file only you can read)" << "\n" << flush;
+  cout << "          --smartcard-pin-fd=n (Read the smart card PIN from open file descriptor n)" << "\n" << flush;
   cout << "          --smartcard-slot=N (Use only the card in PKCS#11 slot N, decimal or 0x hex)" << "\n" << flush;
   cout << "          --smartcard-allow-pin-count-low (Send the PIN when the card reports low PIN tries)" << "\n" << flush;
   cout << "          --smartcard-allow-final-try (Send the PIN when the card reports one PIN try left, a wrong PIN locks the card)" << "\n" << flush;
@@ -364,12 +372,33 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: --rsa-key-passphrase requires an input argument" << "\n" << flush;
       return 0;
     }
+    FC_warn_secret_on_command_line("--rsa-key-passphrase", "--rsa-key-passphrase-file or --rsa-key-passphrase-fd");
     rsa_key_passphrase = equal_arg;
+    has_valid_args = 1;
+  }
+
+  // 10/27/2026: Secrets from a file or file descriptor
+  if((arg == "rsa-key-passphrase-file") || (arg == "rsa-key-passphrase-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(ReadSecretArg(arg, equal_arg, rsa_key_passphrase) != 0) return 0;
+    has_valid_args = 1;
+  }
+  if((arg == "password-file") || (arg == "password-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(ReadSecretArg(arg, equal_arg, password) != 0) return 0;
+    use_password = 1;
     has_valid_args = 1;
   }
 
   if(arg == "password") {
     if(!equal_arg.is_null()) {
+      FC_warn_secret_on_command_line("--password", "--password-file or --password-fd");
       password = equal_arg;
     }
     use_password  = 1;
@@ -484,7 +513,19 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: --smartcard-pin missing pin number: --smartcard-pin=12345" << "\n" << flush;
       return 0;
     }
+    FC_warn_secret_on_command_line("--smartcard-pin", "--smartcard-pin-file or --smartcard-pin-fd");
     sc.SetPin(equal_arg.c_str());
+    has_valid_args = 1;
+  }
+  if((arg == "smartcard-pin-file") || (arg == "smartcard-pin-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    gxString pin_buf;
+    if(ReadSecretArg(arg, equal_arg, pin_buf) != 0) return 0;
+    sc.SetPin((char *)pin_buf.c_str());
+    pin_buf.Clear(1);
     has_valid_args = 1;
   }
 
@@ -517,6 +558,17 @@ int ProcessDashDashArg(gxString &arg)
 
   arg.Clear();
   return has_valid_args;
+}
+
+int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret)
+// 10/27/2026: Returns 0 if successful or 1 after printing an error
+{
+  gxString err;
+  int rv;
+  if(arg.Find("-fd") != -1) rv = FC_read_secret_fd(value.c_str(), secret, err);
+  else rv = FC_read_secret_file(value.c_str(), secret, err);
+  if(rv != 0) cerr << "ERROR: " << err.c_str() << "\n" << flush;
+  return rv;
 }
 
 int ProcessArgs(char *arg)
@@ -940,7 +992,9 @@ int main(int argc, char **argv)
   while(narg < argc) {
     if(arg[0] != '\0') {
       if(arg[0] == '-') { // Look for command line arguments
-	if(!ProcessArgs(arg)) return ExitProgram(1); // Exit if argument is not valid
+	int arg_ok = ProcessArgs(arg);
+	FC_wipe_secret_arg(argv[narg]); // 10/27/2026: Remove secrets from the process arguments
+	if(!arg_ok) return ExitProgram(1); // Exit if argument is not valid
       }
       else {
 	fn = arg;

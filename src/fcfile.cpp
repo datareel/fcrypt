@@ -34,6 +34,7 @@ fcrypt file format version 2026102. See fcfile.h for the layout.
 #include "fcfips.h"
 #include "cryptdb.h"
 #include "futils.h"
+#include "fckeymgmt.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -47,6 +48,7 @@ static const unsigned char FC_FILE_MAGIC[FC_MAGIC_LEN] = { 'F', 'C', 'R', 'Y', '
 static const char *FC_LABEL_HDR_MAC = "fcrypt 2026102 header MAC";
 static const char *FC_LABEL_ENC = "fcrypt 2026102 data encryption";
 static const char *FC_LABEL_MAC = "fcrypt 2026102 data MAC";
+static const unsigned char FC_HDR_EXT_MAGIC[4] = { 'F', 'C', 'X', '1' };
 
 // ----------------------------------------------------------- //
 // Little endian helpers
@@ -307,6 +309,12 @@ FCryptFile::FCryptFile()
   enc_pend = 0;
   enc_pend_len = 0;
   enc_index = (FAU_t)0;
+  preset_key = 0;
+  preset_no_secret = 0;
+  key_generation = 0;
+  rekey_time = 0;
+  rekey_started = 0;
+  memset(new_file_key, 0, sizeof(new_file_key));
   memset(header, 0, sizeof(header));
   memset(header_mac, 0, sizeof(header_mac));
   memset(salt, 0, sizeof(salt));
@@ -325,6 +333,8 @@ FCryptFile::~FCryptFile()
 void FCryptFile::Wipe()
 {
   OPENSSL_cleanse(file_key, sizeof(file_key));
+  OPENSSL_cleanse(new_file_key, sizeof(new_file_key));
+  rekey_started = 0;
   OPENSSL_cleanse(hdr_mac_key, sizeof(hdr_mac_key));
   OPENSSL_cleanse(enc_key, sizeof(enc_key));
   OPENSSL_cleanse(mac_key, sizeof(mac_key));
@@ -545,7 +555,7 @@ int FCryptFile::BeginEncrypt(const MemoryBuffer &secret, const char *stored_name
   }
   ofname = out_name;
   gxString name = stored_name;
-  if(secret.length() < AES_MIN_SECRET_LEN || secret.length() > AES_MAX_SECRET_LEN) {
+  if(!preset_no_secret && (secret.length() < AES_MIN_SECRET_LEN || secret.length() > AES_MAX_SECRET_LEN)) {
     err << clear << "The password or key must be " << AES_MIN_SECRET_LEN << " to " << AES_MAX_SECRET_LEN << " bytes";
     return 0;
   }
@@ -567,24 +577,35 @@ int FCryptFile::BeginEncrypt(const MemoryBuffer &secret, const char *stored_name
   unsigned char kek[FC_KEY_LEN];
   unsigned char wrapped[FC_WRAPPED_KEY_LEN + 16];
   unsigned wrapped_len = 0;
-  int ok = fc_rand(salt, sizeof(salt), 0) && fc_rand(file_id, sizeof(file_id), 0) &&
-    fc_rand(file_key, sizeof(file_key), 1);
-  if(!ok) err << clear << "Random number generator failed";
+  int ok = fc_rand(salt, sizeof(salt), 0) && fc_rand(file_id, sizeof(file_id), 0);
+  // 10/27/2026: A rekey sets the new file key, see BeginRekey()
   if(ok) {
+    if(preset_key) memmove(file_key, preset_key, sizeof(file_key));
+    else ok = fc_rand(file_key, sizeof(file_key), 1);
+  }
+  if(!ok) err << clear << "Random number generator failed";
+  if(ok && !preset_no_secret) {
     ok = fc_pbkdf2(secret.m_buf(), secret.length(), salt, sizeof(salt), iterations, kek, sizeof(kek));
     if(!ok) err << clear << "Password key derivation (PBKDF2) failed";
-  }
-  if(ok) {
-    ok = fc_key_wrap(1, kek, file_key, sizeof(file_key), wrapped, &wrapped_len);
-    if(!ok) err << clear << "AES key wrap failed";
+    if(ok) {
+      ok = fc_key_wrap(1, kek, file_key, sizeof(file_key), wrapped, &wrapped_len);
+      if(!ok) err << clear << "AES key wrap failed";
+    }
   }
   OPENSSL_cleanse(kek, sizeof(kek));
   if(ok) ok = DeriveKeys();
-  if(ok) {
+  if(ok && !preset_no_secret) {
     FCKeySlot slot;
     slot.type = FC_SLOT_SECRET;
     slot.wrapped.Load(wrapped, wrapped_len);
     slots.Add(slot);
+  }
+  if(ok && preset_key) { // RSA and smart card slots wrapped with the new key
+    gxListNode<FCKeySlot> *pp = preset_slots.GetHead();
+    while(pp) {
+      slots.Add(pp->data);
+      pp = pp->next;
+    }
   }
   OPENSSL_cleanse(wrapped, sizeof(wrapped));
   if(!ok) {
@@ -605,6 +626,13 @@ int FCryptFile::BeginEncrypt(const MemoryBuffer &secret, const char *stored_name
   fc_put32(header+36, slot_area_len);
   memmove(header+40, salt, sizeof(salt));
   memmove(header+72, file_id, sizeof(file_id));
+  // 10/27/2026: Key generation and rekey time in the reserved bytes,
+  // which older versions write as zero and never read
+  if(key_generation) {
+    memmove(header+FC_HDR_EXT_OFFSET, FC_HDR_EXT_MAGIC, 4);
+    fc_put32(header+FC_HDR_EXT_OFFSET+4, key_generation);
+    fc_put64(header+FC_HDR_EXT_OFFSET+8, (FAU_t)rekey_time);
+  }
   file_slot_area_len = slot_area_len;
   chunk_size = FC_CHUNK_SIZE;
 
@@ -1310,6 +1338,344 @@ int FCryptFile::DecryptFile(const char *outfile_name)
   }
   return ok;
 }
+// ----------------------------------------------------------- //
+// 10/27/2026: Key management, see fcfile.h
+// ----------------------------------------------------------- //
+class FCHmacSink : public CryptDataSink
+// HMAC of the decrypted data, to check a rewritten file holds the same
+// data without keeping it
+{
+public:
+  FCHmacSink(const unsigned char key[FC_KEY_LEN]) { h = AES_hmac_new(key, FC_KEY_LEN); len = (FAU_t)0; }
+  ~FCHmacSink() { if(h) AES_hmac_free(h); }
+  int WriteData(const unsigned char *buf, unsigned n) {
+    len += n;
+    return h && AES_hmac_update(h, buf, n);
+  }
+  int Final(unsigned char out[FC_TAG_LEN]) {
+    unsigned char l[8];
+    fc_put64(l, len);
+    int ok = h && AES_hmac_update(h, l, sizeof(l)) && AES_hmac_final(h, out, FC_TAG_LEN);
+    return ok;
+  }
+  AES_hmac_ctx *h;
+  FAU_t len;
+};
+
+class FCReencryptSink : public CryptDataSink
+{
+public:
+  FCReencryptSink(FCryptFile *f, FCHmacSink *m) { nf = f; mac = m; }
+  int WriteData(const unsigned char *buf, unsigned n) {
+    return mac->WriteData(buf, n) && nf->WriteData(buf, n);
+  }
+  FCryptFile *nf;
+  FCHmacSink *mac;
+};
+
+static unsigned fc_count_slots(gxList<FCKeySlot> &l)
+{
+  unsigned n = 0;
+  for(gxListNode<FCKeySlot> *p = l.GetHead(); p; p = p->next) n++;
+  return n;
+}
+
+unsigned FCryptFile::NumSlots()
+{
+  return fc_count_slots(slots);
+}
+
+gxString FCryptFile::FileIDHex() const
+{
+  return FC_hex(file_id, sizeof(file_id));
+}
+
+unsigned FCryptFile::KeyGeneration() const
+{
+  if(memcmp(header+FC_HDR_EXT_OFFSET, FC_HDR_EXT_MAGIC, 4) != 0) return 0;
+  return fc_get32(header+FC_HDR_EXT_OFFSET+4);
+}
+
+unsigned long long FCryptFile::RekeyTime() const
+{
+  if(memcmp(header+FC_HDR_EXT_OFFSET, FC_HDR_EXT_MAGIC, 4) != 0) return 0;
+  unsigned long long v = 0;
+  for(int i = 7; i >= 0; i--) v = (v << 8) | header[FC_HDR_EXT_OFFSET+8+i];
+  return v;
+}
+
+int FCryptFile::WriteCopy(const char *out_name, gxString &e)
+// Writes the header with the current slots, then the records of the
+// original file unchanged
+{
+  if(!cryptdb_create_private_file(out_name)) {
+    e << clear << "Cannot create " << out_name << " (remove it if it is left from an earlier run)";
+    return 0;
+  }
+  FILE *out = fopen(out_name, "wb");
+  FILE *in = fopen(filename.c_str(), "rb");
+  int ok = (out && in);
+  if(!ok) e << clear << "Cannot open " << out_name;
+  gxString keep_ofname = ofname;
+  ofname = out_name;
+  if(ok) ok = WriteHeader(out);
+  ofname = keep_ofname;
+  if(!ok && e.is_null()) e = err;
+  if(ok && fseek(in, (long)data_offset, SEEK_SET) != 0) ok = 0;
+  unsigned char buf[65536];
+  size_t n;
+  while(ok && (n = fread(buf, 1, sizeof(buf), in)) > 0) ok = fc_write_exact(out, buf, (unsigned)n);
+  if(ok && ferror(in)) ok = 0;
+  if(in) fclose(in);
+  if(out && fclose(out) != 0) ok = 0;
+  if(!ok) {
+    if(e.is_null()) e << clear << "Error writing " << out_name;
+    futils_remove(out_name);
+  }
+  return ok;
+}
+
+int FCryptFile::VerifyCopy(const char *fname, const unsigned char key[FC_KEY_LEN], MemoryBuffer *digest, gxString &e)
+// Opens fname with key and decrypts every record. With digest set the
+// HMAC of the data is compared with it.
+{
+  FCryptFile chk;
+  if(!chk.LoadHeader(fname) || !chk.UnlockWithFileKey(key)) {
+    e << clear << "The rewritten file does not open: " << chk.err;
+    return 0;
+  }
+  unsigned char hkey[FC_KEY_LEN], tag[FC_TAG_LEN];
+  if(digest) memmove(hkey, digest->m_buf(), FC_KEY_LEN);
+  else if(!fc_rand(hkey, sizeof(hkey), 0)) return 0;
+  FCHmacSink sink(hkey);
+  chk.data_sink = &sink;
+  int ok = chk.DecryptFile(0);
+  if(!ok) e << clear << "The rewritten file does not decrypt: " << chk.err;
+  if(ok && digest) {
+    ok = sink.Final(tag) && CRYPTO_memcmp(tag, (unsigned char *)digest->m_buf() + FC_KEY_LEN, FC_TAG_LEN) == 0;
+    if(!ok) e << clear << "The rewritten file does not hold the same data";
+  }
+  OPENSSL_cleanse(hkey, sizeof(hkey));
+  return ok;
+}
+
+int FCryptFile::KeepBackup(gxString &backup_file)
+{
+  gxString ext;
+  int dot = FC_find_last(filename.c_str(), ".");
+  int slash = FC_find_last(filename.c_str(), "/");
+  int bslash = FC_find_last(filename.c_str(), "\\");
+  if(dot > slash && dot > bslash && dot > 0) ext = filename.c_str() + dot;
+  backup_file = FC_backup_name(filename.c_str(), "backup", ext.is_null() ? 0 : ext.c_str());
+  gxString e;
+  if(FC_copy_private(filename.c_str(), backup_file.c_str(), e) != 0) {
+    err = e;
+    backup_file.Clear();
+    return 0;
+  }
+  return 1;
+}
+
+int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup, gxString &backup_file)
+{
+  backup_file.Clear();
+  if(!unlocked) {
+    err << clear << "The encrypted file is not unlocked";
+    return 0;
+  }
+  if(type != FC_SLOT_RSA && type != FC_SLOT_SMARTCARD) {
+    err << clear << "Only RSA key and smart card users can be removed";
+    return 0;
+  }
+  gxListNode<FCKeySlot> *node = slots.GetHead();
+  while(node && !(node->data.type == type && node->data.username == username)) node = node->next;
+  if(!node) {
+    err << clear << "User " << username << " has no " << FC_slot_type_name(type) << " access to " << filename;
+    return 0;
+  }
+  if(fc_count_slots(slots) <= 1) {
+    err << clear << "User " << username << " holds the last key slot of " << filename
+	<< ", removing it would leave a file nothing can open";
+    return 0;
+  }
+
+  // Digest of the data before the change
+  unsigned char hkey[FC_KEY_LEN], tag[FC_TAG_LEN];
+  if(!fc_rand(hkey, sizeof(hkey), 0)) {
+    err << clear << "Random number generator failed";
+    return 0;
+  }
+  MemoryBuffer digest;
+  {
+    FCHmacSink sink(hkey);
+    CryptDataSink *keep = data_sink;
+    data_sink = &sink;
+    int ok = DecryptFile(0);
+    data_sink = keep;
+    if(!ok || !sink.Final(tag)) {
+      OPENSSL_cleanse(hkey, sizeof(hkey));
+      return 0;
+    }
+    digest.Cat(hkey, sizeof(hkey));
+    digest.Cat(tag, sizeof(tag));
+  }
+  OPENSSL_cleanse(hkey, sizeof(hkey));
+
+  FCKeySlot removed = node->data;
+  slots.Remove(node);
+  unsigned char *area = new unsigned char[file_slot_area_len];
+  int ok = BuildSlotArea(area, err);
+  if(ok) memmove(slot_area, area, file_slot_area_len);
+  delete[] area;
+  gxString tmp, e;
+  tmp << filename << ".remove-user.tmp";
+  if(ok) ok = WriteCopy(tmp.c_str(), e);
+  if(ok) ok = VerifyCopy(tmp.c_str(), file_key, &digest, e);
+  if(ok && keep_backup) {
+    ok = KeepBackup(backup_file);
+    if(!ok) e = err;
+  }
+  if(ok) ok = (FC_replace_file(tmp.c_str(), filename.c_str(), e) == 0);
+  digest.Clear(1);
+  if(!ok) {
+    futils_remove(tmp.c_str());
+    if(!backup_file.is_null()) futils_remove(backup_file.c_str());
+    backup_file.Clear();
+    slots.Add(removed); // The original file is unchanged
+    err << clear << "The file was not changed: " << e;
+    return 0;
+  }
+  return 1;
+}
+
+int FCryptFile::BeginRekey()
+{
+  if(!unlocked) {
+    err << clear << "The encrypted file is not unlocked";
+    return 0;
+  }
+  rekey_slots.ClearList();
+  if(!fc_rand(new_file_key, sizeof(new_file_key), 1)) {
+    err << clear << "Random number generator failed";
+    return 0;
+  }
+  rekey_started = 1;
+  return 1;
+}
+
+int FCryptFile::AddRekeySlot(unsigned type, const char *username, const unsigned char *wrapped, unsigned wrapped_len)
+{
+  if(!rekey_started) {
+    err << clear << "The rekey was not started";
+    return 0;
+  }
+  if((type != FC_SLOT_RSA && type != FC_SLOT_SMARTCARD) || !username || !*username ||
+     strlen(username) > FC_MAX_USERNAME_LEN || wrapped_len == 0 || wrapped_len > FC_MAX_WRAPPED_LEN) {
+    err << clear << "Bad key slot for the rekey";
+    return 0;
+  }
+  FCKeySlot slot;
+  slot.type = type;
+  slot.username = username;
+  slot.wrapped.Load(wrapped, wrapped_len);
+  rekey_slots.Add(slot);
+  return 1;
+}
+
+int FCryptFile::FinishRekey(const MemoryBuffer *new_secret, int keep_backup, gxString &backup_file)
+{
+  backup_file.Clear();
+  if(!unlocked || !rekey_started) {
+    err << clear << "The rekey was not started";
+    return 0;
+  }
+  if(!new_secret && fc_count_slots(rekey_slots) == 0) {
+    err << clear << "The rekey would leave no key slot, nothing could open " << filename;
+    return 0;
+  }
+  gxString name;
+  if(!DecryptStoredName(name)) return 0;
+
+  gxString tmp, e;
+  tmp << filename << ".rekey.tmp";
+  if(futils_exists(tmp.c_str())) {
+    err << clear << tmp << " exists from an earlier rekey that did not finish, check it and remove it";
+    return 0;
+  }
+  unsigned char hkey[FC_KEY_LEN], tag[FC_TAG_LEN];
+  if(!fc_rand(hkey, sizeof(hkey), 0)) {
+    err << clear << "Random number generator failed";
+    return 0;
+  }
+  MemoryBuffer digest;
+  int ok;
+  {
+    FCryptFile nf;
+    nf.iterations = file_iterations;
+    nf.slot_area_len = file_slot_area_len;
+    nf.overwrite = 1;
+    nf.preset_key = new_file_key;
+    nf.preset_no_secret = new_secret ? 0 : 1;
+    gxListNode<FCKeySlot> *p = rekey_slots.GetHead();
+    while(p) {
+      nf.preset_slots.Add(p->data);
+      p = p->next;
+    }
+    nf.key_generation = KeyGeneration() + 1;
+    nf.rekey_time = (unsigned long long)time(0);
+    MemoryBuffer none;
+    ok = nf.BeginEncrypt(new_secret ? *new_secret : none, name.c_str(), tmp.c_str());
+    if(!ok) e = nf.err;
+    FCHmacSink mac(hkey);
+    if(ok) {
+      FCReencryptSink sink(&nf, &mac);
+      CryptDataSink *keep = data_sink;
+      data_sink = &sink;
+      ok = DecryptFile(0);
+      data_sink = keep;
+      if(!ok) e = err.is_null() ? nf.err : err;
+    }
+    if(ok) {
+      ok = nf.FinishEncrypt();
+      if(!ok) e = nf.err;
+    }
+    else {
+      nf.AbortEncrypt();
+    }
+    if(ok && mac.Final(tag)) {
+      digest.Cat(hkey, sizeof(hkey));
+      digest.Cat(tag, sizeof(tag));
+    }
+    else if(ok) {
+      ok = 0;
+      e << clear << "Cannot compute the data check";
+    }
+  }
+  OPENSSL_cleanse(hkey, sizeof(hkey));
+  if(ok) ok = VerifyCopy(tmp.c_str(), new_file_key, &digest, e);
+  if(ok && new_secret) { // The password slot opens the new file
+    FCryptFile chk;
+    ok = chk.LoadHeader(tmp.c_str()) && chk.UnlockWithSecret(*new_secret);
+    if(!ok) e << clear << "The password slot of the rewritten file does not open it: " << chk.err;
+  }
+  if(ok && keep_backup) {
+    ok = KeepBackup(backup_file);
+    if(!ok) e = err;
+  }
+  if(ok) ok = (FC_replace_file(tmp.c_str(), filename.c_str(), e) == 0);
+  digest.Clear(1);
+  if(!ok) {
+    futils_remove(tmp.c_str());
+    if(!backup_file.is_null()) futils_remove(backup_file.c_str());
+    backup_file.Clear();
+    err << clear << "The file was not changed: " << e;
+    return 0;
+  }
+  rekey_started = 0;
+  OPENSSL_cleanse(new_file_key, sizeof(new_file_key));
+  return 1;
+}
+
 // 10/25/2026: The crypto primitives of the 2026102 format, exported so
 // other programs built on fcrypt, such as the Encrypted Password
 // Database, use the same FIPS approved implementation. Each returns 1
