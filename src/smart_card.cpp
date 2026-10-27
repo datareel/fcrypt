@@ -295,6 +295,15 @@ int SC_private_key_decrypt(SmartCardOB *sc,
   return 0;
 }
 
+int SC_list_tokens(const char *module_path, std::vector<SC_TokenInfo> &out, std::string &err)
+// 10/27/2026: The pkcs11 engine has no way to list cards without a login
+{
+  out.clear();
+  err = "Listing smart cards is not supported by this build, it uses the OpenSSL pkcs11 engine. "
+    "Use smartcard_list or pkcs11-tool --list-token-slots";
+  return SC_ERROR;
+}
+
 #else // __SC_USE_PKCS11__
 // 10/25/2026: Smart card access through the PKCS#11 module for OpenSSL 3.
 // The card does the RSA private key operation, so the wrapped keys are
@@ -710,7 +719,8 @@ static EVP_PKEY *SC_p11_rsa_public_key(SC_p11_session *p, CK_OBJECT_HANDLE obj)
   return pkey;
 }
 
-static EVP_PKEY *SC_p11_cert_public_key(SC_p11_session *p, CK_OBJECT_HANDLE obj)
+static X509 *SC_p11_cert_x509(SC_p11_session *p, CK_OBJECT_HANDLE obj)
+// The caller frees the cert
 {
   unsigned char *der = 0;
   CK_ULONG der_len = 0;
@@ -718,6 +728,12 @@ static EVP_PKEY *SC_p11_cert_public_key(SC_p11_session *p, CK_OBJECT_HANDLE obj)
   const unsigned char *dp = der;
   X509 *x509 = d2i_X509(0, &dp, (long)der_len);
   delete[] der;
+  return x509;
+}
+
+static EVP_PKEY *SC_p11_cert_public_key(SC_p11_session *p, CK_OBJECT_HANDLE obj)
+{
+  X509 *x509 = SC_p11_cert_x509(p, obj);
   if(!x509) return 0;
   EVP_PKEY *pkey = X509_get_pubkey(x509);
   X509_free(x509);
@@ -1121,6 +1137,231 @@ int SC_private_key_decrypt(SmartCardOB *sc,
   *(unencrypted_data_len) = out_len;
   return 0;
 }
+
+// ----------------------------------------------------------- //
+// 10/27/2026: Smart card listing. No C_Login, no PIN: C_GetSlotList,
+// C_GetSlotInfo, C_GetTokenInfo and a public session that finds the
+// certificate and public key objects the card shows before login.
+// ----------------------------------------------------------- //
+static std::string SC_p11_text(const CK_UTF8CHAR *text, unsigned len)
+// PKCS#11 info fields are blank padded and not null terminated
+{
+  std::string s((const char *)text, len);
+  size_t end = s.find_last_not_of(" \t");
+  s.erase((end == std::string::npos) ? 0 : end + 1);
+  size_t nul = s.find('\0');
+  if(nul != std::string::npos) s.erase(nul);
+  return s;
+}
+
+static std::string SC_hex_string(const unsigned char *buf, unsigned len)
+{
+  static const char hexd[] = "0123456789abcdef";
+  std::string s;
+  for(unsigned i = 0; i < len; i++) {
+    s += hexd[(buf[i] >> 4) & 0x0F];
+    s += hexd[buf[i] & 0x0F];
+  }
+  return s;
+}
+
+static unsigned SC_p11_find_all(SC_p11_session *p, CK_OBJECT_CLASS obj_class,
+				CK_OBJECT_HANDLE objs[], unsigned max_objs)
+// Returns the number of objects of this class found
+{
+  CK_ATTRIBUTE tmpl[1];
+  tmpl[0].type = CKA_CLASS;
+  tmpl[0].pValue = &obj_class;
+  tmpl[0].ulValueLen = sizeof(obj_class);
+  if(p->fl->C_FindObjectsInit(p->session, tmpl, 1) != CKR_OK) return 0;
+  unsigned total = 0;
+  while(total < max_objs) {
+    CK_ULONG found = 0;
+    if(p->fl->C_FindObjects(p->session, objs + total, (CK_ULONG)(max_objs - total), &found) != CKR_OK) break;
+    if(found == 0) break;
+    total += (unsigned)found;
+  }
+  p->fl->C_FindObjectsFinal(p->session);
+  return total;
+}
+
+static std::string SC_name_cn(X509_NAME *name)
+{
+  char cn[256];
+  memset(cn, 0, sizeof(cn));
+  if(!name || X509_NAME_get_text_by_NID(name, NID_commonName, cn, sizeof(cn)) < 0) return std::string();
+  return std::string(cn);
+}
+
+static void SC_key_info(EVP_PKEY *pkey, SC_CertInfo &ci)
+{
+  if(!pkey) return;
+  ci.key_bits = EVP_PKEY_get_bits(pkey);
+  ci.is_rsa = (EVP_PKEY_get_base_id(pkey) == EVP_PKEY_RSA);
+  unsigned char *der = 0;
+  int der_len = i2d_PUBKEY(pkey, &der);
+  if(der_len > 0) {
+    unsigned char md[32];
+    unsigned int md_len = 0;
+    if(EVP_Digest(der, (size_t)der_len, md, &md_len, EVP_sha256(), 0)) ci.spki_sha256 = SC_hex_string(md, md_len);
+  }
+  OPENSSL_free(der);
+}
+
+static void SC_p11_object_id(SC_p11_session *p, CK_OBJECT_HANDLE obj, SC_CertInfo &ci)
+{
+  unsigned char *value = 0;
+  CK_ULONG value_len = 0;
+  if(SC_p11_get_attr(p, obj, CKA_ID, &value, &value_len)) {
+    ci.id_hex = SC_hex_string(value, (unsigned)value_len);
+    delete[] value;
+  }
+  if(SC_p11_get_attr(p, obj, CKA_LABEL, &value, &value_len)) {
+    ci.label = SC_p11_text(value, (unsigned)value_len);
+    delete[] value;
+  }
+}
+
+static void SC_p11_list_objects(SC_p11_session *p, SC_TokenInfo &ti)
+{
+  const unsigned max_objs = 64;
+  CK_OBJECT_HANDLE objs[max_objs];
+  unsigned n = SC_p11_find_all(p, CKO_CERTIFICATE, objs, max_objs);
+  for(unsigned i = 0; i < n; i++) {
+    SC_CertInfo ci;
+    SC_p11_object_id(p, objs[i], ci);
+    X509 *x509 = SC_p11_cert_x509(p, objs[i]);
+    if(x509) {
+      ci.has_cert = 1;
+      ci.subject_cn = SC_name_cn(X509_get_subject_name(x509));
+      ci.issuer_cn = SC_name_cn(X509_get_issuer_name(x509));
+      struct tm tm;
+      memset(&tm, 0, sizeof(tm));
+      if(ASN1_TIME_to_tm(X509_get0_notAfter(x509), &tm)) {
+	char buf[32];
+	strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+	ci.not_after = buf;
+      }
+      EVP_PKEY *pkey = X509_get_pubkey(x509);
+      SC_key_info(pkey, ci);
+      EVP_PKEY_free(pkey);
+      X509_free(x509);
+    }
+    ti.certs.push_back(ci);
+  }
+
+  // Public key objects with no cert of the same ID, such as a key made
+  // on the card before a cert was loaded
+  n = SC_p11_find_all(p, CKO_PUBLIC_KEY, objs, max_objs);
+  for(unsigned i = 0; i < n; i++) {
+    SC_CertInfo ci;
+    SC_p11_object_id(p, objs[i], ci);
+    int have = 0;
+    for(size_t k = 0; k < ti.certs.size(); k++) {
+      if(ti.certs[k].has_cert && ti.certs[k].id_hex == ci.id_hex) have = 1;
+    }
+    if(have) continue;
+    unsigned char *value = 0;
+    CK_ULONG value_len = 0;
+    CK_KEY_TYPE key_type = CKK_RSA;
+    if(SC_p11_get_attr(p, objs[i], CKA_KEY_TYPE, &value, &value_len)) {
+      if(value_len == sizeof(CK_KEY_TYPE)) memmove(&key_type, value, sizeof(CK_KEY_TYPE));
+      delete[] value;
+    }
+    if(key_type == CKK_RSA) {
+      EVP_PKEY *pkey = SC_p11_rsa_public_key(p, objs[i]);
+      SC_key_info(pkey, ci);
+      EVP_PKEY_free(pkey);
+    }
+    ti.certs.push_back(ci);
+  }
+}
+
+int SC_list_tokens(const char *module_path, std::vector<SC_TokenInfo> &out, std::string &err)
+{
+  out.clear();
+  err.clear();
+  RSA_openssl_init();
+
+  // SC_p11_load() only uses the module path and the error string
+  SmartCardOB sc;
+  if(module_path && *module_path) {
+    if(strlen(module_path) >= sizeof(sc.modulePath)) {
+      err = "Error the smart card provider module path is too long";
+      return SC_ERROR;
+    }
+    sc.SetModulePath((char *)module_path);
+  }
+  SC_p11_session p;
+  if(SC_p11_load(&sc, &p) != 0) {
+    err = sc.err_string;
+    return SC_ERROR;
+  }
+
+  CK_ULONG num_slots = 0;
+  if(p.fl->C_GetSlotList(CK_TRUE, 0, &num_slots) != CKR_OK) {
+    SC_p11_close(&p);
+    err = "Error listing the smart card readers";
+    return SC_ERROR;
+  }
+  if(num_slots == 0) {
+    SC_p11_close(&p);
+    return 0;
+  }
+  CK_SLOT_ID *slots = new CK_SLOT_ID[num_slots];
+  if(p.fl->C_GetSlotList(CK_TRUE, slots, &num_slots) != CKR_OK) {
+    delete[] slots;
+    SC_p11_close(&p);
+    err = "Error listing the smart card readers";
+    return SC_ERROR;
+  }
+
+  for(CK_ULONG i = 0; i < num_slots; i++) {
+    SC_TokenInfo ti;
+    ti.slot_id = (unsigned long)slots[i];
+    CK_SLOT_INFO si;
+    memset(&si, 0, sizeof(si));
+    if(p.fl->C_GetSlotInfo(slots[i], &si) == CKR_OK) {
+      ti.slot_description = SC_p11_text(si.slotDescription, sizeof(si.slotDescription));
+    }
+    CK_TOKEN_INFO tk;
+    memset(&tk, 0, sizeof(tk));
+    if(p.fl->C_GetTokenInfo(slots[i], &tk) == CKR_OK) {
+      ti.token_label = SC_p11_text(tk.label, sizeof(tk.label));
+      ti.manufacturer = SC_p11_text(tk.manufacturerID, sizeof(tk.manufacturerID));
+      ti.model = SC_p11_text(tk.model, sizeof(tk.model));
+      ti.serial = SC_p11_text(tk.serialNumber, sizeof(tk.serialNumber));
+      ti.flags = (unsigned long)tk.flags;
+      ti.token_initialized = (tk.flags & CKF_TOKEN_INITIALIZED) != 0;
+      ti.login_required = (tk.flags & CKF_LOGIN_REQUIRED) != 0;
+      ti.protected_auth_path = (tk.flags & CKF_PROTECTED_AUTHENTICATION_PATH) != 0;
+      ti.user_pin_initialized = (tk.flags & CKF_USER_PIN_INITIALIZED) != 0;
+      ti.user_pin_locked = (tk.flags & CKF_USER_PIN_LOCKED) != 0;
+      ti.user_pin_final_try = (tk.flags & CKF_USER_PIN_FINAL_TRY) != 0;
+      ti.user_pin_count_low = (tk.flags & CKF_USER_PIN_COUNT_LOW) != 0;
+      ti.user_pin_to_be_changed = (tk.flags & CKF_USER_PIN_TO_BE_CHANGED) != 0;
+      // Some modules report CK_UNAVAILABLE_INFORMATION or nonsense lengths
+      if(tk.ulMaxPinLen != CK_UNAVAILABLE_INFORMATION && tk.ulMaxPinLen > 0 && tk.ulMaxPinLen <= 1024 &&
+	 tk.ulMinPinLen <= tk.ulMaxPinLen) {
+	ti.min_pin_len = (unsigned long)tk.ulMinPinLen;
+	ti.max_pin_len = (unsigned long)tk.ulMaxPinLen;
+      }
+    }
+    // A read-only public session, objects marked private stay hidden
+    if(p.fl->C_OpenSession(slots[i], CKF_SERIAL_SESSION, 0, 0, &p.session) == CKR_OK) {
+      p.has_session = 1;
+      p.slot = slots[i];
+      SC_p11_list_objects(&p, ti);
+      ti.objects_listed = 1;
+      p.fl->C_CloseSession(p.session);
+      p.has_session = 0;
+    }
+    out.push_back(ti);
+  }
+  delete[] slots;
+  SC_p11_close(&p);
+  return 0;
+}
 #endif // __SC_USE_ENGINE__
 
 int SC_read_cert_file(SmartCardOB *sc, const char *fname)
@@ -1203,6 +1444,100 @@ int SC_cert_file_public_key_encrypt(SmartCardOB *sc,
  EVP_PKEY_free(evkey);
   
   return 0;
+}
+
+// ----------------------------------------------------------- //
+// 10/27/2026: Key fingerprints and card matching, no card access
+// ----------------------------------------------------------- //
+SC_TokenInfo::SC_TokenInfo()
+{
+  slot_id = 0;
+  flags = 0;
+  token_initialized = login_required = protected_auth_path = user_pin_initialized = 0;
+  user_pin_locked = user_pin_final_try = user_pin_count_low = user_pin_to_be_changed = 0;
+  min_pin_len = max_pin_len = 0;
+  objects_listed = 0;
+}
+
+static EVP_PKEY *SC_read_any_public_key(const unsigned char *buf, unsigned len)
+// DER or PEM SubjectPublicKeyInfo or X.509 cert
+{
+  if(!buf || len == 0) return 0;
+  const unsigned char *dp = buf;
+  EVP_PKEY *pkey = d2i_PUBKEY(0, &dp, (long)len);
+  if(pkey) return pkey;
+  dp = buf;
+  X509 *x509 = d2i_X509(0, &dp, (long)len);
+  if(!x509) {
+    BIO *bio = BIO_new_mem_buf(buf, (int)len);
+    if(!bio) return 0;
+    x509 = PEM_read_bio_X509(bio, 0, 0, 0);
+    if(!x509) {
+      BIO_free(bio);
+      bio = BIO_new_mem_buf(buf, (int)len);
+      if(!bio) return 0;
+      pkey = PEM_read_bio_PUBKEY(bio, 0, 0, 0);
+    }
+    BIO_free(bio);
+    ERR_clear_error();
+    if(pkey) return pkey;
+    if(!x509) return 0;
+  }
+  pkey = X509_get_pubkey(x509);
+  X509_free(x509);
+  return pkey;
+}
+
+int SC_spki_sha256(const unsigned char *buf, unsigned len, std::string &hex)
+{
+  hex.clear();
+  EVP_PKEY *pkey = SC_read_any_public_key(buf, len);
+  if(!pkey) return SC_ERROR;
+  unsigned char *der = 0;
+  int der_len = i2d_PUBKEY(pkey, &der);
+  EVP_PKEY_free(pkey);
+  if(der_len <= 0) return SC_ERROR;
+  unsigned char md[32];
+  unsigned int md_len = 0;
+  int ok = EVP_Digest(der, (size_t)der_len, md, &md_len, EVP_sha256(), 0);
+  OPENSSL_free(der);
+  if(!ok) return SC_ERROR;
+  static const char hexd[] = "0123456789abcdef";
+  for(unsigned i = 0; i < md_len; i++) {
+    hex += hexd[(md[i] >> 4) & 0x0F];
+    hex += hexd[md[i] & 0x0F];
+  }
+  return 0;
+}
+
+unsigned SC_match_public_keys(const std::vector<SC_TokenInfo> &tokens,
+			      const std::vector<std::string> &keys,
+			      std::vector<SC_CertMatch> &matches)
+{
+  matches.clear();
+  for(size_t k = 0; k < keys.size(); k++) {
+    std::string fp;
+    if(SC_spki_sha256((const unsigned char *)keys[k].data(), (unsigned)keys[k].size(), fp) != 0) continue;
+    for(size_t t = 0; t < tokens.size(); t++) {
+      for(size_t c = 0; c < tokens[t].certs.size(); c++) {
+	const SC_CertInfo &ci = tokens[t].certs[c];
+	if(ci.spki_sha256.empty() || ci.spki_sha256 != fp) continue;
+	int dup = 0; // A key on the card as a cert and a public key object
+	for(size_t m = 0; m < matches.size(); m++) {
+	  if(matches[m].key_index == (unsigned)k && matches[m].slot_id == tokens[t].slot_id &&
+	     matches[m].id_hex == ci.id_hex) dup = 1;
+	}
+	if(dup) continue;
+	SC_CertMatch cm;
+	cm.slot_id = tokens[t].slot_id;
+	cm.token_label = tokens[t].token_label;
+	cm.id_hex = ci.id_hex;
+	cm.key_index = (unsigned)k;
+	matches.push_back(cm);
+      }
+    }
+  }
+  return (unsigned)matches.size();
 }
 
 #endif // __ENABLE_SMART_CARD__

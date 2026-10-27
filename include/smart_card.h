@@ -64,6 +64,8 @@ Smartcard encryption and decryption routines.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
+#include <vector>
 
 const unsigned SC_max_pin_size = 32;
 const unsigned SC_max_cert_id_size = 256; // Room for long IDs and pkcs11: URIs
@@ -154,6 +156,76 @@ int SC_cert_file_public_key_encrypt(SmartCardOB *sc,
 				    const unsigned char plaintext[], unsigned int plaintext_len,
 				    unsigned char ciphertext[], unsigned int ciphertext_len,
 				    unsigned *encrypted_data_len, int padding =SC_RSA_padding);
+
+// 10/27/2026: Smart card listing for card pickers and auto-detect. The
+// list never logs in to a card: no PIN is taken or sent, and the PIN
+// safeguards above are not used or changed. Only the token information
+// and the public objects (certificates and public keys) a card shows
+// before login are read. PKCS#11 builds only, the engine build returns
+// SC_ERROR with a "not supported" message.
+struct SC_CertInfo
+{
+  SC_CertInfo() { key_bits = 0; is_rsa = 0; has_cert = 0; }
+
+  std::string id_hex;      // CKA_ID in hex, the --smartcard-cert-id value
+  std::string label;       // CKA_LABEL
+  std::string subject_cn;  // Cert subject common name (empty without a cert)
+  std::string issuer_cn;   // Cert issuer common name
+  std::string not_after;   // Cert expiry, such as 2027-05-01T12:00:00Z
+  std::string spki_sha256; // SHA-256 of the DER SubjectPublicKeyInfo, hex
+  int key_bits;            // Public key size, 0 if not known
+  int is_rsa;              // 1 for RSA keys, EC and other keys cannot be used
+  int has_cert;            // 1 for a certificate, 0 for a public key object only
+};
+
+struct SC_TokenInfo
+{
+  SC_TokenInfo();
+
+  unsigned long slot_id;
+  std::string slot_description; // Reader name
+  std::string token_label;
+  std::string manufacturer;
+  std::string model;
+  std::string serial;
+  unsigned long flags;      // PKCS#11 token flags (CKF_...)
+  int token_initialized;    // CKF_TOKEN_INITIALIZED, 0 for an empty or new card
+  int login_required;       // CKF_LOGIN_REQUIRED
+  int protected_auth_path;  // CKF_PROTECTED_AUTHENTICATION_PATH, a PIN pad reader
+  int user_pin_initialized; // CKF_USER_PIN_INITIALIZED
+  int user_pin_locked;      // CKF_USER_PIN_LOCKED
+  int user_pin_final_try;   // CKF_USER_PIN_FINAL_TRY
+  int user_pin_count_low;   // CKF_USER_PIN_COUNT_LOW
+  int user_pin_to_be_changed; // CKF_USER_PIN_TO_BE_CHANGED
+  unsigned long min_pin_len; // 0 if the card does not say
+  unsigned long max_pin_len; // 0 if the card does not say
+  int objects_listed;       // 0 if a session could not be opened to list the objects
+  std::vector<SC_CertInfo> certs;
+};
+
+// Lists every card present with module_path, or the default module when
+// module_path is null or empty. Returns 0 if the module loaded (the list
+// may be empty when no card is present) or SC_ERROR with the reason in err.
+int SC_list_tokens(const char *module_path, std::vector<SC_TokenInfo> &out, std::string &err);
+
+// SHA-256 hex of the DER SubjectPublicKeyInfo of a key, given as a DER or
+// PEM SubjectPublicKeyInfo or X.509 cert. Returns 0 on success or SC_ERROR.
+int SC_spki_sha256(const unsigned char *buf, unsigned len, std::string &hex);
+
+struct SC_CertMatch
+{
+  unsigned long slot_id;
+  std::string token_label;
+  std::string id_hex;  // Use as the cert ID with SetSlot(slot_id)
+  unsigned key_index;  // Index into the keys given to SC_match_public_keys()
+};
+
+// Finds the card objects whose public key is one of keys[] (each a DER or
+// PEM SubjectPublicKeyInfo or X.509 cert, such as a user's exported cert).
+// Keys that cannot be read are skipped. Returns the number of matches.
+unsigned SC_match_public_keys(const std::vector<SC_TokenInfo> &tokens,
+			      const std::vector<std::string> &keys,
+			      std::vector<SC_CertMatch> &matches);
 #endif // __ENABLE_SMART_CARD__
 
 #endif //__SMART_CARD_HPP__
