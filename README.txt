@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Release 2026.104
+Release 2026.105
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
@@ -37,6 +37,36 @@ FEATURES:
 	Multi user access to encrypted files using a smart card
 	Supports DOD CAC smart cards
 	
+SMART CARD SAFEGUARDS IN RELEASE 2026.105
+-----------------------------------------
+Tested with a DoD CAC through ActivClient (Windows) and OpenSC (RHEL
+10 and Windows), and with a YubiKey PIV key through OpenSC.
+
+* PIN safeguards, so testing or a typing mistake does not lock a CAC
+  or PIV card (they lock after 3 wrong PINs):
+  - The PIN is sent to the card once per decrypt and never retried.
+    After any failed card login no more logins are made until the
+    program is run again, not for the next file and not by any
+    fallback.
+  - The PIN is not sent when it is empty, too long (it is no longer
+    cut short), has a control character such as a tab or carriage
+    return, or is outside the card's PIN length.
+  - The card's PIN flags are read first. A locked PIN is refused.
+    When the card reports one PIN try left or low PIN tries, the PIN
+    is only sent with --smartcard-allow-final-try or
+    --smartcard-allow-pin-count-low. Some modules, possibly
+    ActivClient, do not report the PIN tries.
+  - After a wrong PIN the error says one PIN try was used and what
+    the card reports about the tries left.
+* --smartcard-slot=N uses only the card in PKCS#11 slot N. With more
+  than one card inserted (a CAC and a YubiKey both have ID 03 with
+  OpenSC), a cert ID found on more than one card, or on no card, is
+  refused and no PIN is sent. The error lists the slots.
+* smartcard_list.sh (Linux) and smartcard_list.bat (Windows) list the
+  readers, cards, PIN flags and every cert and key with its ID, label
+  and type, without a PIN, so you can find the slot and the cert ID.
+* The encrypted file format is unchanged.
+
 SECURITY FIXES IN RELEASE 2026.104
 ----------------------------------
 * fcrypt, fdecrypt and fmigrate refuse a --key file or a private
@@ -647,3 +677,34 @@ PIV CHUID and CCC objects, which ykman can write:
 
 > ykman piv objects generate chuid
 > ykman piv objects generate ccc
+
+FINDING THE SLOT AND CERT ID WITHOUT A PIN
+------------------------------------------
+List the readers, cards and certs without a PIN:
+
+  Linux:   console/scripts/smartcard_list.sh [module]
+           (the default module is /usr/lib64/opensc-pkcs11.so)
+  Windows: smartcard_list.bat (in the Windows package, or
+           console/msvc/smartcard_list.bat), lists the cards through
+           ActivClient and OpenSC and writes smartcard_list.log in
+           %TEMP%
+
+Each slot is shown as "Slot n (0xID)": use the 0xID with
+--smartcard-slot. Under each slot, use the ID or label of the
+encryption cert:
+
+  OpenSC (CAC, PIV, YubiKey):  ID 03, "Certificate for Key Management"
+  ActivClient (CAC):           the long hex ID, or the label
+                               "Encryption - LAST.FIRST.MIDDLE.1234567890"
+                               as label_Encryption - LAST.FIRST...
+
+Do not use ID 01 (PIV Authentication), 02 (Digital Signature) or 04
+(Card Authentication). For a YubiKey, ID 03 is PIV slot 9D.
+
+The card key must be RSA. EC keys (P-256 or P-384, found on some PIV
+cards and YubiKey slots) are refused, the file key is wrapped with RSA.
+
+Remote Desktop: when smart card redirection is on in the RDP client
+(Local Resources, More, Smart cards), programs in the RDP session see
+only the client's cards, not the readers of the remote computer or
+VM. Turn it off or use the computer's own console to use its readers.

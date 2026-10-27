@@ -185,6 +185,7 @@ void HelpMessage()
   cout << "          --smartcard-cert-id=" << SC_get_default_cert_id() << " (Set the ID number for the smart card cert)" << "\n" << flush;
   if(SC_uses_engine()) cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smart card engine path)" << "\n" << flush;
   cout << "          --smartcard-provider=" << SC_get_default_modulePath() << " (Set the smart card provider)" << "\n" << flush;
+  cout << "          --smartcard-slot=N (Use only the card in PKCS#11 slot N, decimal or 0x hex, see smartcard_list)" << "\n" << flush;
   cout << "\n" << flush;
   cout << "          --add-smartcard-cert-file (Add access to an encrypted file for another users exported smart card cert)" << "\n" << flush;
   cout << "          --add-smartcard-cert-file input arg must be a file name" << "\n" << flush;
@@ -491,6 +492,17 @@ int ProcessDashDashArg(gxString &arg)
       cerr << "ERROR: Smart card provider " << sc.modulePath << " does not exist or cannot be read" <<  "\n" << flush;
       return 0;
     }
+    has_valid_args = 1;
+  }
+
+  // 10/26/2026: Use only the card in this PKCS#11 slot
+  if(arg == "smartcard-slot") {
+    unsigned long slot_id = 0;
+    if(!SC_parse_slot(equal_arg.c_str(), &slot_id)) {
+      cerr << "ERROR: --smartcard-slot needs a slot ID: --smartcard-slot=1 or --smartcard-slot=0x4" << "\n" << flush;
+      return 0;
+    }
+    sc.SetSlot(slot_id);
     has_valid_args = 1;
   }
 
