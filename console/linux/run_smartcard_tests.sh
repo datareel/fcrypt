@@ -42,11 +42,14 @@ if [ ! -f ${FCRYPT} ] || [ ! -f ${FDECRYPT} ] || [ ! -f ${FMIGRATE} ]; then
 fi
 SC_CERT=$(cd $(dirname ${SC_CERT}) && pwd)/$(basename ${SC_CERT})
 SC="--smartcard-cert-id=${SC_ID:-01} --smartcard-provider=${SC_MODULE:-/usr/lib64/opensc-pkcs11.so}"
-PIN="--smartcard-pin=${SC_PIN}"
-
 mkdir -p ${testDIR}
 cat /dev/null > ${logFILE}
 cd ${testDIR}
+# 10/27/2026: The PIN goes in a file only you can read, never argv
+umask 077
+printf '%s\n' "${SC_PIN}" > ${testDIR}/pin.txt
+trap 'rm -f ${testDIR}/pin.txt' EXIT
+PIN="--smartcard-pin-file=${testDIR}/pin.txt"
 
 # 10/26/2026: CAC and PIV cards lock after 3 wrong PINs. Stop before any
 # login if the card reports a locked PIN, one try left or low tries, or
@@ -107,6 +110,31 @@ if echo "${TOKEN_INFO}" | grep -i "token manufacturer" | grep -qi "SoftHSM"; the
 else
     run_test "FCRYPT_FIPS=1: add and decrypt smart card access" \
         "cp orig.bin f.bin && ${FCRYPT} ${PW} f.bin && FCRYPT_FIPS=1 ${FCRYPT} ${PW} --add-smartcard-cert --smartcard-username=fips ${SC} f.enc && rm -f f.bin && FCRYPT_FIPS=1 ${FDECRYPT} --smartcard-cert --smartcard-username=fips ${SC} ${PIN} f.enc && cmp f.bin orig.bin"
+fi
+
+# 10/27/2026: Key management with a card user. C_Login calls are
+# counted with OpenSC's pkcs11-spy module when it is installed.
+SPY=/usr/lib64/pkcs11-spy.so
+logins() { if [ -f ${testDIR}/spy.log ]; then grep -c "^[0-9]*: C_Login$" ${testDIR}/spy.log; else echo 0; fi; }
+spy() { rm -f ${testDIR}/spy.log; PKCS11SPY=${MODULE} PKCS11SPY_OUTPUT=${testDIR}/spy.log "$@"; }
+if [ -f ${SPY} ]; then
+    SPYSC="--smartcard-cert-id=${SC_ID:-01} --smartcard-provider=${SPY}"
+    printf '%s\n' "Known-Pass#2026" > ${testDIR}/pw.txt
+    openssl genrsa -out alice.pem 2048 >/dev/null 2>&1; openssl rsa -in alice.pem -pubout -out alice.pub >/dev/null 2>&1
+    run_test "remove a smart card user with the password: no card login" \
+	"cp orig.bin k.bin && ${FCRYPT} --password-file=pw.txt k.bin && ${FCRYPT} --password-file=pw.txt --add-smartcard-cert-file=${SC_CERT} --smartcard-username=card k.enc && ${FCRYPT} --password-file=pw.txt --add-rsa-key=alice.pub --rsa-key-username=alice k.enc && cp k.enc k2.enc && spy ${FCRYPT} --password-file=pw.txt --non-interactive --remove-user=card ${SPYSC} k2.enc && [ \$(logins) -eq 0 ]"
+    run_test "rekey reads the card public key with no login" \
+	"printf 'rsa:alice=alice.pub\nsmartcard:card=card\n' | spy ${FCRYPT} --password-file=pw.txt --non-interactive --rekey ${SPYSC} k.enc && [ \$(logins) -eq 0 ]"
+    run_test "the card user decrypts the rekeyed file with one C_Login" \
+	"rm -f k.bin && spy ${FDECRYPT} --smartcard-cert --smartcard-username=card ${SPYSC} ${PIN} k.enc && cmp k.bin orig.bin && [ \$(logins) -eq 1 ]"
+    run_test "rekey with the card user's cert file: no login" \
+	"printf 'rsa:alice=alice.pub\nsmartcard:card=${SC_CERT}\n' | spy ${FCRYPT} --password-file=pw.txt --non-interactive --rekey ${SPYSC} k.enc && [ \$(logins) -eq 0 ]"
+    run_test "rekey authenticated with the card: exactly one C_Login" \
+	"printf 'password=Known-Pass#2026\nrsa:alice=alice.pub\nsmartcard:card=card\n' > rk.txt && spy ${FCRYPT} --smartcard-cert --smartcard-username=card ${SPYSC} ${PIN} --non-interactive --rekey --rekey-file=rk.txt k.enc && [ \$(logins) -eq 1 ] && rm -f k.bin && ${FDECRYPT} --password-file=pw.txt k.enc && cmp k.bin orig.bin"
+    run_test "--check-version never touches the card" \
+	"spy ${FDECRYPT} --check-version k.enc ${SPYSC} && [ \$(logins) -eq 0 ]"
+else
+    echo "Skipped: card login counts, ${SPY} (opensc) is not installed"
 fi
 
 if [ -n "${OLD_DIR}" ]; then
