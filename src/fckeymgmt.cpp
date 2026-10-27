@@ -396,7 +396,10 @@ int FC_parse_name_values(const MemoryBuffer &data_in, gxList<FCNameValue> &list,
       }
       v[n++] = c;
     }
-    nv.value.SetString(v, n);
+    // SetString() takes a length of 0 as "up to the null", so an empty
+    // value is set with Clear()
+    if(n) nv.value.SetString(v, n);
+    else nv.value.Clear();
     OPENSSL_cleanse(v, vlen+1);
     delete[] v;
     list.Add(nv);
