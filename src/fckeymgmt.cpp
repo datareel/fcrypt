@@ -1544,7 +1544,8 @@ static const char *FC_LABEL_RING_MAC = "FCRING01 MAC";
 
 static const char *fc_action_names[FC_ACTION_LAST] = {
   "-", "open", "add-record", "update-record", "delete-record", "add-user",
-  "remove-user", "rekey", "upgrade", "access-log-on", "access-log-off"
+  "remove-user", "rekey", "upgrade", "access-log-on", "access-log-off", "undo", "redo",
+  "settings"
 };
 static const char *fc_auth_names[FC_AUTH_LAST] = {
   "none", "password", "key-file", "rsa-key", "smartcard"

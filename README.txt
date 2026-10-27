@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Release 2026.105
+Release 2026.106
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
@@ -36,7 +36,161 @@ FEATURES:
 	Multi user access to encrypted files using RSA keys
 	Multi user access to encrypted files using a smart card
 	Supports DOD CAC smart cards
+	Remove users and rekey files (2026.106)
+	Tamper evident access log (2026.106)
 	
+KEY MANAGEMENT IN RELEASE 2026.106
+----------------------------------
+* fcrypt --remove-user=name removes the RSA key or smart card access of
+  a user (--remove-user-type=rsa|smartcard when the user has both).
+  The file is written to a temp file, checked by decrypting it, flushed
+  to disk and renamed over the original; a backup copy
+  (name.backup-YYYYMMDD-HHMMSS.enc) is kept. The last key slot is never
+  removed. Removing a user does not revoke a file key the user already
+  recovered: run fcrypt --rekey after it.
+
+* fcrypt --rekey gives the file a new random file key, a new salt and
+  file ID, encrypts every record again and rewraps the key for every
+  slot that is kept. RSA and smart card slots are rewrapped with their
+  public keys, so no card login is needed. A slot without a choice in
+  the rekey input makes the rekey stop and list what is missing; no
+  slot is dropped silently. The new file must decrypt to the same data
+  before it replaces the original. See REKEY INPUT below.
+
+* Key management can be authenticated with the password or key file
+  (as --add-rsa-key), with --rsa-key=private_key.pem --rsa-key-username,
+  or with --smartcard-cert (one card login through the existing single
+  login path; the PIN safeguards of 2026.105 apply).
+
+* --password-file, --password-fd, --rsa-key-passphrase-file,
+  --rsa-key-passphrase-fd, --smartcard-pin-file and --smartcard-pin-fd
+  in fcrypt, fdecrypt and fmigrate, as in the Encrypted Password
+  Database: the secret is the first line, a file must be a regular file
+  only you can read, the buffers are wiped. --password=, 
+  --rsa-key-passphrase= and --smartcard-pin= still work but warn and are
+  wiped from the process arguments after they are read.
+
+* --access-log[=file] logs decrypts, user changes and rekeys to a
+  per-user log (default ~/.fcrypt/logs/access.log, directory mode 700,
+  file mode 600). Logging is off unless asked for. fdecrypt
+  --verify-access-log checks the HMAC chain of a file's entries. See
+  ACCESS LOG below.
+
+* fdecrypt --check-version reports v1 (2023102/2023103) or v2
+  (2026102) for each file without decrypting and without a smart card,
+  and exits 5 if any file is v1. Decrypting a v1 file prints a warning
+  that names fmigrate.
+
+* Automation: --non-interactive, --quiet, --dry-run, --lock-timeout,
+  --json (fdecrypt --check-version and --list-users) and stable exit
+  codes, see AUTOMATION AND PRODUCTION USE below.
+
+* File format: unchanged. A rekeyed file stores its key generation and
+  rekey time in reserved header bytes 88-103 ("FCX1", generation,
+  time), which 2026.105 and older versions write as zeros and never
+  read; the header MAC covers them. 2026.105 decrypts files written by
+  this release.
+
+BEHAVIOR CHANGES IN RELEASE 2026.106
+------------------------------------
+* fdecrypt exits 2 when the password, key or RSA key does not open a
+  file, 3 when the file does not exist, and fdecrypt --check-version
+  exits 5 for a v1 file and 7 for a file that is not encrypted. Scripts
+  that test for exit code 1 should test for non-zero.
+* fcrypt and fdecrypt read a public or private key from stdin only for
+  a bare --add-rsa-key or --rsa-key (no =file), so stdin is free for
+  --password-fd=0 and the rekey input.
+
+REKEY INPUT
+-----------
+fcrypt --rekey reads name=value lines from stdin, --rekey-fd=n or
+--rekey-file=file (a file only you can read). Blank lines and lines
+starting with # are skipped. In values \n is a newline, \t a tab and
+\\ a backslash.
+
+  password=<current password>      Keep the password slot with this password
+                                   (implied when you authenticate with
+                                   --password-file, --password-fd or --key)
+  new-password=<password>          Give the password slot a new password
+  drop-password=yes                Remove the password slot
+  rsa:<user>=<public key file>     Rewrap the RSA slot of <user>
+  smartcard:<user>=<cert file>     Rewrap the smart card slot, PEM or DER cert
+  smartcard:<user>=card            Read the cert from the card in the reader
+                                   (--smartcard-cert-id, --smartcard-slot), no PIN
+  drop-rsa:<user>=yes              Remove the RSA slot of <user>
+  drop-smartcard:<user>=yes        Remove the smart card slot of <user>
+
+--rekey-new-password-file=file (a new file, mode 600) or
+--rekey-new-password-fd=n makes a random password (64 hex digits) for
+the password slot instead; it is written before the file is changed
+and is never printed. A rekey that would leave no slot is refused.
+
+Example, remove bob and rotate the key:
+
+$ ./fcrypt --password-file=$HOME/.keys/pw --remove-user=bob secret.enc
+$ printf 'rsa:alice=%s\n' $HOME/keys/alice.pub | ./fcrypt --password-file=$HOME/.keys/pw --rekey secret.enc
+
+ACCESS LOG
+----------
+One line per entry, tab separated name=value fields:
+
+  FCLOG1 time= user= host= pid= tool= file= id= auth= slot= action=
+  record= result= detail= mac=
+
+time is UTC, id is the file ID, action is open, add-user, remove-user,
+rekey or access-log-rekey, result is ok or fail. No password, PIN or
+file content is ever logged. mac is an HMAC-SHA256 chain per file ID,
+keyed with a key derived from the file key, so an entry cannot be
+changed, removed, reordered or inserted without --verify-access-log
+noticing, unless the person has the file key. Entries written without
+the key (a failed decrypt) are covered by the next tagged entry.
+Entries after the last tagged entry, and removing whole entries from
+the end, cannot be detected. After a rekey the entries of the file are
+checked with the old key and tagged again with the new key. See
+include/fckeymgmt.h for the details.
+
+AUTOMATION AND PRODUCTION USE
+-----------------------------
+* --non-interactive (or --batch): never prompt. A missing password,
+  passphrase, PIN or input is an error.
+* --quiet: only errors.
+* --dry-run (fcrypt --remove-user and --rekey): the new file is written
+  and checked, then removed; the file is not changed.
+* --lock-timeout=seconds: fcrypt --remove-user and --rekey take an
+  advisory lock on file.lock (flock on Linux, LockFileEx on Windows) and
+  wait this long (default 10) for another writer, then exit 4.
+* --json: fdecrypt --check-version and --list-users.
+* Errors go to stderr; requested output (--stdout data, --check-version,
+  --list-users) goes to stdout.
+* Exit codes: 0 ok, 1 usage or other error, 2 the credential did not
+  open the file, 3 file or user not found, 4 locked by another writer,
+  5 --check-version found a v1 file, 7 read or write error.
+
+Secrets never belong in argv, shell history or temp files. Read them
+from a file only you can read, or a pipe:
+
+$ ./fdecrypt --password-fd=3 --stdout data.enc 3<$HOME/.keys/pw
+$ ./fdecrypt --rsa-key=$HOME/.keys/id_rsa.pem --rsa-key-username=$USER --rsa-key-passphrase-file=$HOME/.keys/pp data.enc
+
+Using AWS KMS and Secrets Manager
+
+fcrypt has no AWS code. Pipe the secret straight into a -fd option.
+Linux (bash):
+
+$ aws kms decrypt --ciphertext-blob fileb://pw.enc --query Plaintext --output text | base64 -d | ./fdecrypt --password-fd=0 --stdout data.enc
+$ aws secretsmanager get-secret-value --secret-id fcrypt/pw --query SecretString --output text | ./fdecrypt --password-fd=0 --stdout data.enc
+$ aws secretsmanager get-secret-value --secret-id fcrypt/rsa-pass --query SecretString --output text | ./fdecrypt --rsa-key=$HOME/.keys/id_rsa.pem --rsa-key-username=$USER --rsa-key-passphrase-fd=0 --stdout data.enc
+
+Windows (PowerShell):
+
+PS> aws secretsmanager get-secret-value --secret-id fcrypt/pw --query SecretString --output text | .\fdecrypt.exe --password-fd=0 --stdout data.enc
+PS> [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String((aws kms decrypt --ciphertext-blob fileb://pw.enc --query Plaintext --output text))) | .\fdecrypt.exe --password-fd=0 --stdout data.enc
+
+The secret then never lands in argv, shell history or a temp file. Do
+not use "--password=$(aws ...)", which puts it on the command line.
+AWS CloudHSM's PKCS#11 library may work with --smartcard-provider,
+but it is untested.
+
 SMART CARD SAFEGUARDS IN RELEASE 2026.105
 -----------------------------------------
 Tested with a DoD CAC through ActivClient (Windows) and OpenSC (RHEL

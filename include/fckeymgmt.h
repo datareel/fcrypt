@@ -49,7 +49,9 @@ are written as \\, \t, \r and \n. A field that does not apply is "-".
   auth    password, key-file, rsa-key, smartcard or none
   slot    user name of the RSA key or smart card slot used or changed
   action  open, add-record, update-record, delete-record, add-user,
-          remove-user, rekey, upgrade or access-log-rekey
+          remove-user, rekey, upgrade, undo, redo, settings,
+          access-log-on, access-log-off, import, merge, export,
+          show-record, get-field or self-destruct
   record  record (key) name for record actions
   result  ok or fail
   detail  short reason, never a secret or a record value
@@ -387,7 +389,8 @@ const unsigned FC_RING_PLAIN_LEN = 32;
 enum { // Action codes
   FC_ACTION_NONE = 0, FC_ACTION_OPEN, FC_ACTION_ADD_RECORD, FC_ACTION_UPDATE_RECORD,
   FC_ACTION_DELETE_RECORD, FC_ACTION_ADD_USER, FC_ACTION_REMOVE_USER, FC_ACTION_REKEY,
-  FC_ACTION_UPGRADE, FC_ACTION_LOG_ON, FC_ACTION_LOG_OFF, FC_ACTION_LAST
+  FC_ACTION_UPGRADE, FC_ACTION_LOG_ON, FC_ACTION_LOG_OFF, FC_ACTION_UNDO, FC_ACTION_REDO,
+  FC_ACTION_SETTINGS, FC_ACTION_LAST
 };
 enum { // Auth methods
   FC_AUTH_NONE = 0, FC_AUTH_PASSWORD, FC_AUTH_KEY_FILE, FC_AUTH_RSA_KEY, FC_AUTH_SMARTCARD, FC_AUTH_LAST
