@@ -38,6 +38,10 @@ fcrypt file format version 2026102. See fcfile.h for the layout.
 
 #include <string.h>
 #include <stdlib.h>
+#if defined (__WIN32__)
+#include <io.h>
+#include <fcntl.h>
+#endif
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
 #include <openssl/kdf.h>
@@ -1297,6 +1301,11 @@ int FCryptFile::DecryptFile(const char *outfile_name)
   FILE *out = 0;
   if(to_console) {
     out = (ofname == "stderr") ? stderr : stdout;
+#if defined (__WIN32__)
+    // 10/27/2026: Text mode added a CR before every LF of the data
+    fflush(out);
+    _setmode(_fileno(out), _O_BINARY);
+#endif
   }
   else if(!OpenDecryptOutput(&out)) {
     fclose(in);

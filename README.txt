@@ -85,6 +85,9 @@ KEY MANAGEMENT IN RELEASE 2026.106
   --json (fdecrypt --check-version and --list-users) and stable exit
   codes, see AUTOMATION AND PRODUCTION USE below.
 
+* Fixed: on Windows fdecrypt --stdout wrote stdout in text mode, which
+  put a carriage return before every line feed of the decrypted data.
+
 * File format: unchanged. A rekeyed file stores its key generation and
   rekey time in reserved header bytes 88-103 ("FCX1", generation,
   time), which 2026.105 and older versions write as zeros and never
