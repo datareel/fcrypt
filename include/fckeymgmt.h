@@ -139,6 +139,51 @@ int FC_parse_name_values(const MemoryBuffer &data, gxList<FCNameValue> &list, gx
 void FC_wipe_name_values(gxList<FCNameValue> &list);
 
 // ----------------------------------------------------------- //
+// Exit codes for scripts, the same in every tool
+// ----------------------------------------------------------- //
+const int FC_EXIT_OK = 0;
+const int FC_EXIT_USAGE = 1;      // Bad arguments, missing input, other errors
+const int FC_EXIT_AUTH = 2;       // The password, key, RSA key or smart card did not open the file
+const int FC_EXIT_NOT_FOUND = 3;  // File, record or user not found
+const int FC_EXIT_LOCKED = 4;     // Another program holds the lock (--lock-timeout)
+const int FC_EXIT_V1 = 5;         // --check-version found a v1 file
+const int FC_EXIT_DESTROYED = 6;  // The database was destroyed (self-destruct), or a read-only refusal
+const int FC_EXIT_IO = 7;         // A file cannot be read or written
+
+// ----------------------------------------------------------- //
+// Advisory lock around writes: <file>.lock, flock() on Linux and
+// LockFileEx() on Windows. Every writer of the tools takes it, so two
+// writers wait for each other instead of corrupting the file.
+// ----------------------------------------------------------- //
+struct GXDLCODE_API FCLock
+{
+  FCLock() { fd = -1; }
+  ~FCLock() { Release(); }
+  void Release();
+  int fd;
+  gxString name;
+};
+// Waits up to timeout seconds. Returns 0 if locked, 1 on timeout and
+// -1 on error (err is set).
+int FC_lock_file(const char *target, unsigned timeout, FCLock &lock, gxString &err);
+const unsigned FC_DEF_LOCK_TIMEOUT = 10;
+
+// ----------------------------------------------------------- //
+// JSON
+// ----------------------------------------------------------- //
+// JSON string with quotes and escapes
+gxString FC_json_string(const char *s, unsigned len);
+gxString FC_json_string(const gxString &s);
+struct cJSON;
+// Parses JSON with the vendored cJSON (3plibs/cjson). Duplicate keys
+// and input over FC_MAX_INPUT_LEN are refused. Every allocation is wiped
+// when freed. Returns the root or 0 with err holding the position.
+cJSON *FC_json_parse(const MemoryBuffer &data, gxString &err);
+void FC_json_free(cJSON *root);
+// Returns 1 if data starts with { or [ after spaces
+int FC_input_is_json(const MemoryBuffer &data);
+
+// ----------------------------------------------------------- //
 // Rekey input and plan
 // ----------------------------------------------------------- //
 // Rekey input, name=value lines read from stdin, --rekey-fd=N or

@@ -111,6 +111,13 @@ int private_key_has_passphrase = 0;
 int access_log = 0;
 gxString access_log_file;
 int access_log_warned = 0;
+int non_interactive = 0;  // 10/27/2026: Automation
+int dry_run = 0;
+int quiet_mode = 0;
+unsigned lock_timeout = FC_DEF_LOCK_TIMEOUT;
+int exit_code = 0;
+void SetExit(int code) { if(!exit_code) exit_code = code; }
+#define NOTE if(!quiet_mode) cerr
 #ifdef __ENABLE_SMART_CARD__
 SmartCardOB sc;
 int use_smartcard_auth = 0;  // 10/27/2026: Authenticate key management with a smart card
@@ -239,6 +246,12 @@ void HelpMessage()
 #endif // __ENABLE_SMART_CARD__
   cout << "          --access-log[=file] (Log user changes and rekeys, default " << FC_default_log_file(".fcrypt").c_str() << ")" << "\n" << flush;
   cout << "          --no-access-log (Do not log, the default)" << "\n" << flush;
+  cout << "          --dry-run (Write and check the changed file for --remove-user or --rekey, then remove it)" << "\n" << flush;
+  cout << "          --non-interactive, --batch (Never prompt, a missing password, PIN or input is an error)" << "\n" << flush;
+  cout << "          --quiet (Only errors)" << "\n" << flush;
+  cout << "          --lock-timeout=seconds (Wait this long for another writer of the file, default " << FC_DEF_LOCK_TIMEOUT << ")" << "\n" << flush;
+  cout << "          Exit codes for --remove-user and --rekey: 0 ok, 1 usage or other error, 2 the credential did not" << "\n" << flush;
+  cout << "          open the file, 3 file or user not found, 4 locked by another writer, 7 read or write error" << "\n" << flush;
 
   cout << "\n"; // End of list
 }
@@ -571,6 +584,26 @@ int ProcessDashDashArg(gxString &arg)
   }
   if(arg == "no-access-log") {
     access_log = 0;
+    has_valid_args = 1;
+  }
+  if(arg == "non-interactive" || arg == "batch") {
+    non_interactive = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "dry-run") {
+    dry_run = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "quiet") {
+    quiet_mode = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "lock-timeout") {
+    if(equal_arg.is_null() || equal_arg.Atoi() < 0 || equal_arg.Atoi() > 3600) {
+      cerr << "ERROR: --lock-timeout must be 0 to 3600 seconds" << "\n" << flush;
+      return 0;
+    }
+    lock_timeout = (unsigned)equal_arg.Atoi();
     has_valid_args = 1;
   }
 
@@ -1008,6 +1041,7 @@ int ReadRekeyInput(FCRekeyInput &in)
   if(!rekey_input_file.is_null()) rv = FC_read_input_file(rekey_input_file.c_str(), data, err);
   else if(!rekey_input_fd.is_null()) rv = FC_read_input_fd(rekey_input_fd.c_str(), data, err);
   else if(FC_stdin_is_terminal()) rv = 0; // No input, the plan lists what is missing
+  // (with --non-interactive too: nothing is read from a terminal)
   else rv = FC_read_input_fd("0", data, err);
   gxList<FCNameValue> list;
   if(rv == 0) rv = FC_parse_name_values(data, list, err);
@@ -1107,7 +1141,10 @@ int RekeyFile(FCryptFile &nf, const char *fname, FCRekeyInput &in, const unsigne
   gxString old_id = nf.FileIDHex();
   gxString backup;
   if(ok) {
-    ok = nf.FinishRekey(pw_action == FC_REKEY_PW_NONE ? 0 : &new_secret, 1, backup);
+    if(dry_run && pw_action == FC_REKEY_PW_GENERATE && !rekey_new_password_file.is_null()) {
+      futils_remove(rekey_new_password_file.c_str());
+    }
+    ok = nf.FinishRekey(pw_action == FC_REKEY_PW_NONE ? 0 : &new_secret, 1, backup, dry_run);
     if(!ok) err = nf.err;
   }
   new_secret.Clear(1);
@@ -1123,7 +1160,13 @@ int RekeyFile(FCryptFile &nf, const char *fname, FCRekeyInput &in, const unsigne
     return 0;
   }
   generated.Clear(1);
-  cerr << "Rekeyed " << fname << ": new file key, every record encrypted again" << "\n" << flush;
+  if(dry_run) {
+    NOTE << "Dry run: the rekey of " << fname << " would work (the new file was written and checked, then removed), "
+	 << "the file was not changed" << "\n" << flush;
+    OPENSSL_cleanse(new_key, sizeof(new_key));
+    return 1;
+  }
+  NOTE << "Rekeyed " << fname << ": new file key, every record encrypted again" << "\n" << flush;
   for(gxListNode<FCRekeySlot> *p = keep.GetHead(); p; p = p->next) {
     cerr << "  kept " << (p->data.type == FC_SLOT_RSA ? "RSA key" : "smart card") << " user " << p->data.username.c_str() << "\n" << flush;
   }
@@ -1175,6 +1218,10 @@ int KeyManagement()
       return 1;
     }
     if(private_key_has_passphrase && rsa_key_passphrase.is_null()) {
+      if(non_interactive) {
+	cerr << "ERROR: The RSA key has a passphrase, give it with --rsa-key-passphrase-fd or --rsa-key-passphrase-file" << "\n" << flush;
+	return FC_EXIT_USAGE;
+      }
       cerr << "RSA key passphrase: " << flush;
       if(!consoleGetString(rsa_key_passphrase, 1)) {
 	rsa_key_passphrase.Clear(1);
@@ -1200,6 +1247,10 @@ int KeyManagement()
     }
     if(sc.pin[0] == 0) {
       gxString pin_buf;
+      if(non_interactive) {
+	cerr << "ERROR: Give the smart card PIN with --smartcard-pin-fd or --smartcard-pin-file, the PIN was not sent" << "\n" << flush;
+	return FC_EXIT_USAGE;
+      }
       cerr << "Smart card PIN: " << flush;
       if(!consoleGetString(pin_buf, 1) || pin_buf.is_null() || pin_buf.length() >= SC_max_pin_size) {
 	pin_buf.Clear(1);
@@ -1219,6 +1270,10 @@ int KeyManagement()
   }
   else {
     if(password.is_null()) {
+      if(non_interactive) {
+	cerr << "ERROR: Give the password with --password-fd or --password-file, or use --key" << "\n" << flush;
+	return FC_EXIT_USAGE;
+      }
       cerr << "Password: " << flush;
       if(!consoleGetString(password, 1)) {
 	password.Clear(1);
@@ -1241,6 +1296,7 @@ int KeyManagement()
     ptr = ptr->next;
     int fmt;
     if(!CheckLegacyFile(fname, fmt)) {
+      SetExit(fmt == FC_FORMAT_OPEN_ERROR ? FC_EXIT_NOT_FOUND : FC_EXIT_USAGE);
       errors++;
       continue;
     }
@@ -1253,9 +1309,21 @@ int KeyManagement()
       errors++;
       continue;
     }
+    FCLock lock; // Two writers of one file wait for each other
+    {
+      gxString lerr;
+      int lrv = FC_lock_file(fname, lock_timeout, lock, lerr);
+      if(lrv != 0) {
+	cerr << "ERROR: " << lerr.c_str() << "\n" << flush;
+	SetExit(lrv == 1 ? FC_EXIT_LOCKED : FC_EXIT_IO);
+	errors++;
+	continue;
+      }
+    }
     FCryptFile nf;
     gxString err;
     if(!UnlockForKeyManagement(nf, fname, err)) {
+      SetExit(err.Find("Error opening") != -1 ? FC_EXIT_IO : FC_EXIT_AUTH);
       LogEvent(fname, nf.FileIDHex(), "open", AuthSlotName(), 0, "credential did not open the file", 0);
       cerr << "ERROR: " << fname << ": " << err.c_str() << "\n" << flush;
       errors++;
@@ -1287,13 +1355,18 @@ int KeyManagement()
 	type = c ? FC_SLOT_SMARTCARD : FC_SLOT_RSA;
       }
       gxString backup;
-      if(!nf.RemoveSlot(type, remove_username.c_str(), 1, backup)) {
+      if(!nf.RemoveSlot(type, remove_username.c_str(), 1, backup, dry_run)) {
 	cerr << "ERROR: " << nf.err.c_str() << "\n" << flush;
+	SetExit(nf.err.Find("has no") != -1 ? FC_EXIT_NOT_FOUND : FC_EXIT_USAGE);
 	LogEvent(fname, id, "remove-user", remove_username, 0, "not changed", log_key);
 	errors++;
       }
+      else if(dry_run) {
+	NOTE << "Dry run: removing " << FC_slot_type_name(type) << " access for user " << remove_username.c_str()
+	     << " would work, " << fname << " was not changed" << "\n" << flush;
+      }
       else {
-	cerr << "Removed " << FC_slot_type_name(type) << " access for user " << remove_username.c_str() << " from " << fname << "\n" << flush;
+	NOTE << "Removed " << FC_slot_type_name(type) << " access for user " << remove_username.c_str() << " from " << fname << "\n" << flush;
 	cerr << "The original file was saved to " << backup.c_str() << ", delete it when you no longer need it" << "\n" << flush;
 	cerr << "NOTE: Removing a user does not revoke a file key the user may already have recovered, "
 	     << "or copies of the file made before. Run fcrypt --rekey on the file to give it a new key." << "\n" << flush;
@@ -1301,11 +1374,14 @@ int KeyManagement()
 	if(clientcfg->verbose_mode) ListNewFormatUsers(nf);
       }
     }
-    if(rekey && !RekeyFile(nf, fname, in, log_key)) errors++;
+    if(rekey && !RekeyFile(nf, fname, in, log_key)) {
+      SetExit(FC_EXIT_USAGE);
+      errors++;
+    }
     OPENSSL_cleanse(log_key, sizeof(log_key));
   }
   in.Wipe();
-  return errors ? 1 : 0;
+  return exit_code ? exit_code : (errors ? 1 : 0);
 }
 
 int main(int argc, char **argv)

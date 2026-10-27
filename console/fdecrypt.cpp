@@ -88,6 +88,9 @@ int access_log = 0;      // 10/27/2026: --access-log
 gxString access_log_file;
 int access_log_warned = 0;
 int verify_access_log = 0;
+int non_interactive = 0; // 10/27/2026: Automation
+int json_output = 0;
+int auth_failed = 0;
 #ifdef __ENABLE_SMART_CARD__
 SmartCardOB sc;
 gxString smartcard_cert_username;
@@ -159,7 +162,11 @@ void HelpMessage()
   cout << "          --no-access-log (Do not log, the default)" << "\n" << flush;
   cout << "          --verify-access-log (Check the access log entries of the files, needs the file credential)" << "\n" << flush;
   cout << "          --cache=size (Set the cache size)" << "\n" << flush;
-  cout << "          --check-version (Report the file format of each file without decrypting, exit 1 if any is v1)" << "\n" << flush;
+  cout << "          --check-version (Report the file format of each file without decrypting, exit 5 if any is v1)" << "\n" << flush;
+  cout << "          --json (JSON output for --check-version and --list-users)" << "\n" << flush;
+  cout << "          --non-interactive, --batch (Never prompt, a missing password, passphrase or PIN is an error)" << "\n" << flush;
+  cout << "          Exit codes: 0 ok, 1 usage or other error, 2 the credential did not open a file, 3 file not found," << "\n" << flush;
+  cout << "          5 --check-version found a v1 file, 7 a file cannot be read or is not an encrypted file" << "\n" << flush;
   cout << "          --debug (Turn on debugging and set optional level)" << "\n" << flush;
   cout << "          --fips (Use only the OpenSSL FIPS provider, see README.txt)" << "\n" << flush;
   cout << "          --help (Display this help message and exit." << "\n" << flush;
@@ -361,6 +368,14 @@ int ProcessDashDashArg(gxString &arg)
   }
   if(arg == "verify-access-log") {
     verify_access_log = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "non-interactive" || arg == "batch") {
+    non_interactive = 1;
+    has_valid_args = 1;
+  }
+  if(arg == "json") {
+    json_output = 1;
     has_valid_args = 1;
   }
 
@@ -698,6 +713,20 @@ int ListNewFormatUsers(const char *fname)
   }
   // The key slots are not authenticated until the file is unlocked
   int n = 0;
+  if(json_output) { // 10/27/2026
+    cout << "{\"file\": " << FC_json_string(gxString(fname)).c_str() << ", \"users\": [";
+    gxListNode<FCKeySlot> *jp = fc.slots.GetHead();
+    while(jp) {
+      if(jp->data.type != FC_SLOT_SECRET) {
+	if(n++) cout << ", ";
+	cout << "{\"username\": " << FC_json_string(jp->data.username).c_str() << ", \"access\": \""
+	     << FC_slot_type_name(jp->data.type) << "\"}";
+      }
+      jp = jp->next;
+    }
+    cout << "], \"password_slot\": " << (fc.FindSlot(FC_SLOT_SECRET, 0) ? "true" : "false") << "}" << "\n" << flush;
+    return 1;
+  }
   gxListNode<FCKeySlot> *list_ptr = fc.slots.GetHead();
   while(list_ptr) {
     if(list_ptr->data.type != FC_SLOT_SECRET) {
@@ -727,29 +756,30 @@ int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret)
 
 int CheckVersions()
 // Reports the format of each file without decrypting it and without a
-// smart card. Returns 1 if any file is v1, 2 if a file cannot be read
-// or is not an encrypted file, else 0.
+// smart card. Returns FC_EXIT_V1 if any file is v1, FC_EXIT_IO if a file
+// cannot be read or is not an encrypted file, else 0.
 {
-  int any_v1 = 0, any_error = 0;
+  int any_v1 = 0, any_error = 0, n = 0;
+  if(json_output) cout << "[";
   gxListNode<gxString> *ptr = file_list.GetHead();
   while(ptr) {
     FCVersionInfo vi;
-    gxString err;
+    gxString err, state, detail;
     int rv = FC_check_version(ptr->data.c_str(), vi, err);
-    if(rv != 0) {
-      cout << ptr->data.c_str() << ": unknown: " << err.c_str() << "\n" << flush;
-      any_error = 1;
+    if(rv != 0) { state = "unknown"; detail = err; any_error = 1; }
+    else if(vi.is_v1) { state = "v1"; detail << vi.version << ", upgrade with: " << vi.upgrade; any_v1 = 1; }
+    else { state = "v2"; detail = vi.version; }
+    if(json_output) {
+      if(n++) cout << ", ";
+      cout << "{\"file\": " << FC_json_string(ptr->data).c_str() << ", \"state\": \"" << state.c_str()
+	   << "\", \"detail\": " << FC_json_string(detail).c_str() << "}";
     }
-    else if(vi.is_v1) {
-      cout << ptr->data.c_str() << ": v1: " << vi.version.c_str() << ", upgrade with: " << vi.upgrade.c_str() << "\n" << flush;
-      any_v1 = 1;
-    }
-    else {
-      cout << ptr->data.c_str() << ": v2: " << vi.version.c_str() << "\n" << flush;
-    }
+    else cout << ptr->data.c_str() << ": " << state.c_str() << ": " << detail.c_str() << "\n";
     ptr = ptr->next;
   }
-  return any_v1 ? 1 : (any_error ? 2 : 0);
+  if(json_output) cout << "]" << "\n";
+  cout << flush;
+  return any_v1 ? FC_EXIT_V1 : (any_error ? FC_EXIT_IO : 0);
 }
 
 const char *AuthName()
@@ -870,6 +900,7 @@ int DecryptNewFormatFile(const char *fname)
   }
   if(!ok) {
     LogEvent(fname, fc.FileIDHex(), "open", 0, "credential did not open the file", 0);
+    auth_failed = 1;
     cerr << "ERROR: File decrypt failed " << fname << "\n" << flush;
     cerr << "ERROR: " << fc.err.c_str() << "\n" << flush;
     return 0;
@@ -1070,6 +1101,10 @@ int main(int argc, char **argv)
     }
     if(clientcfg->verbose_mode) cerr << "Using private RSA key file for decryption" << "\n" << flush;
     if(has_passphrase && rsa_key_passphrase.is_null()) {
+      if(non_interactive) {
+	cerr << "ERROR: --non-interactive: give the passphrase with a -fd or -file option" << "\n" << flush;
+	return ExitProgram(FC_EXIT_USAGE);
+      }
       cout << "RSA key passphrase: " << flush;
       if(!consoleGetString(rsa_key_passphrase, 1)) {
 	rsa_key_passphrase.Clear(1);
@@ -1109,6 +1144,10 @@ int main(int argc, char **argv)
     if(debug_mode) sc.verbose_mode = 1;
     gxString pin_buf;
     if(sc.pin[0] == 0) {
+      if(non_interactive) {
+	cerr << "ERROR: --non-interactive: give the PIN with a -fd or -file option" << "\n" << flush;
+	return ExitProgram(FC_EXIT_USAGE);
+      }
       cout << "Smart card PIN: " << flush;
       if(!consoleGetString(pin_buf, 1)) {
 	pin_buf.Clear(1);
@@ -1124,6 +1163,10 @@ int main(int argc, char **argv)
 #endif
   else if(use_password) {
     if(password.is_null()) {
+      if(non_interactive) {
+	cerr << "ERROR: --non-interactive: give the password with a -fd or -file option" << "\n" << flush;
+	return ExitProgram(FC_EXIT_USAGE);
+      }
       cout << "Password: " << flush;
       if(!consoleGetString(password, 1)) {
 	cout << "\n" << flush;
@@ -1141,6 +1184,10 @@ int main(int argc, char **argv)
   }
   else {
     if(clientcfg->verbose_mode) cout << "No decryption method specifed, defaulting to password" << "\n" << flush;
+    if(non_interactive) {
+      cerr << "ERROR: --non-interactive: give the password with --password-fd or --password-file" << "\n" << flush;
+      return ExitProgram(FC_EXIT_USAGE);
+    }
     cout << "Password: " << flush;
     if(!consoleGetString(password, 1)) {
       cout << "\n" << flush;
@@ -1158,7 +1205,7 @@ int main(int argc, char **argv)
 
   if(list_users) { // List user names found and exit program
     while(ptr) {
-      cout << "Listing usernames with RSA key access to encrypted file " << ptr->data.c_str() << "\n" << flush;
+      if(!json_output) cout << "Listing usernames with RSA key access to encrypted file " << ptr->data.c_str() << "\n" << flush;
       int fmt = FC_file_format(ptr->data.c_str());
       if(fmt == FC_FORMAT_2026102) {
 	if(!ListNewFormatUsers(ptr->data.c_str())) err = 1;
@@ -1197,12 +1244,13 @@ int main(int argc, char **argv)
 
     int fmt;
     if(!CheckFileFormat(ptr->data.c_str(), fmt)) {
-      err = 1;
+      if(!err) err = (fmt == FC_FORMAT_OPEN_ERROR) ? FC_EXIT_NOT_FOUND : 1;
       ptr = ptr->next;
       continue;
     }
     if(fmt == FC_FORMAT_2026102) {
-      if(!DecryptNewFormatFile(ptr->data.c_str())) err = 1;
+      auth_failed = 0;
+      if(!DecryptNewFormatFile(ptr->data.c_str()) && !err) err = auth_failed ? FC_EXIT_AUTH : 1;
       ptr = ptr->next;
       continue;
     }

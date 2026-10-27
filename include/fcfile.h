@@ -221,7 +221,7 @@ public: // 10/27/2026: Key management. The file is rewritten to a temp
   // Removes the RSA or smart card slot of a user. A backup copy of the
   // original is kept as backup_file unless keep_backup is 0. Refuses to
   // remove the last slot. Returns 1 if successful.
-  int RemoveSlot(unsigned type, const char *username, int keep_backup, gxString &backup_file);
+  int RemoveSlot(unsigned type, const char *username, int keep_backup, gxString &backup_file, int dry_run = 0);
   // Number of slots that can open the file
   unsigned NumSlots();
   // Rekey: BeginRekey() makes a new random file key, the caller wraps it
@@ -234,7 +234,8 @@ public: // 10/27/2026: Key management. The file is rewritten to a temp
   int BeginRekey();
   const unsigned char *NewFileKey() const { return rekey_started ? new_file_key : 0; }
   int AddRekeySlot(unsigned type, const char *username, const unsigned char *wrapped, unsigned wrapped_len);
-  int FinishRekey(const MemoryBuffer *new_secret, int keep_backup, gxString &backup_file);
+  int FinishRekey(const MemoryBuffer *new_secret, int keep_backup, gxString &backup_file, int dry_run = 0);
+  // With dry_run the new file is written and checked, then removed
   unsigned KeyGeneration() const; // 0 if the file was never rekeyed
   unsigned long long RekeyTime() const;
 

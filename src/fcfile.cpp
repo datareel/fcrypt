@@ -1476,7 +1476,7 @@ int FCryptFile::KeepBackup(gxString &backup_file)
   return 1;
 }
 
-int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup, gxString &backup_file)
+int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup, gxString &backup_file, int dry_run)
 {
   backup_file.Clear();
   if(!unlocked) {
@@ -1531,6 +1531,12 @@ int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup,
   tmp << filename << ".remove-user.tmp";
   if(ok) ok = WriteCopy(tmp.c_str(), e);
   if(ok) ok = VerifyCopy(tmp.c_str(), file_key, &digest, e);
+  if(ok && dry_run) {
+    futils_remove(tmp.c_str());
+    digest.Clear(1);
+    slots.Add(removed);
+    return 1;
+  }
   if(ok && keep_backup) {
     ok = KeepBackup(backup_file);
     if(!ok) e = err;
@@ -1582,7 +1588,7 @@ int FCryptFile::AddRekeySlot(unsigned type, const char *username, const unsigned
   return 1;
 }
 
-int FCryptFile::FinishRekey(const MemoryBuffer *new_secret, int keep_backup, gxString &backup_file)
+int FCryptFile::FinishRekey(const MemoryBuffer *new_secret, int keep_backup, gxString &backup_file, int dry_run)
 {
   backup_file.Clear();
   if(!unlocked || !rekey_started) {
@@ -1657,6 +1663,13 @@ int FCryptFile::FinishRekey(const MemoryBuffer *new_secret, int keep_backup, gxS
     FCryptFile chk;
     ok = chk.LoadHeader(tmp.c_str()) && chk.UnlockWithSecret(*new_secret);
     if(!ok) e << clear << "The password slot of the rewritten file does not open it: " << chk.err;
+  }
+  if(ok && dry_run) {
+    futils_remove(tmp.c_str());
+    digest.Clear(1);
+    rekey_started = 0;
+    OPENSSL_cleanse(new_file_key, sizeof(new_file_key));
+    return 1;
   }
   if(ok && keep_backup) {
     ok = KeepBackup(backup_file);

@@ -35,6 +35,7 @@ Key management helpers, see fckeymgmt.h.
 #include "aesdb.h"
 #include "futils.h"
 #include "gxheader.h"
+#include "gxdbase.h"
 
 #include <string.h>
 #include <ctype.h>
@@ -62,6 +63,9 @@ Key management helpers, see fckeymgmt.h.
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
 #endif
+
+// Vendored cJSON, compiled here so no build file needs it
+#include "../3plibs/cjson/cJSON.c"
 
 static const char *FC_LOG_MAGIC = "FCLOG1";
 
@@ -396,6 +400,200 @@ int FC_parse_name_values(const MemoryBuffer &data_in, gxList<FCNameValue> &list,
     OPENSSL_cleanse(v, vlen+1);
     delete[] v;
     list.Add(nv);
+  }
+  return 0;
+}
+
+// ----------------------------------------------------------- //
+// Advisory lock
+// ----------------------------------------------------------- //
+void FCLock::Release()
+{
+  if(fd < 0) return;
+#if defined (__WIN32__)
+  HANDLE h = (HANDLE)_get_osfhandle(fd);
+  OVERLAPPED ov;
+  memset(&ov, 0, sizeof(ov));
+  UnlockFileEx(h, 0, 1, 0, &ov);
+  _close(fd);
+#else
+  flock(fd, LOCK_UN);
+  close(fd);
+#endif
+  fd = -1;
+}
+
+int FC_lock_file(const char *target, unsigned timeout, FCLock &lock, gxString &err)
+{
+  lock.Release();
+  lock.name.Clear();
+  lock.name << target << ".lock";
+#if defined (__WIN32__)
+  int fd = _open(lock.name.c_str(), _O_RDWR|_O_CREAT|_O_BINARY, _S_IREAD|_S_IWRITE);
+#else
+  int fd = open(lock.name.c_str(), O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC, 0600);
+#endif
+  if(fd < 0) {
+    err << clear << "Cannot open the lock file " << lock.name;
+    return -1;
+  }
+  unsigned waited = 0; // Tenths of a second
+  for(;;) {
+#if defined (__WIN32__)
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof(ov));
+    int ok = LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ov) != 0;
+#else
+    int ok = flock(fd, LOCK_EX|LOCK_NB) == 0;
+#endif
+    if(ok) break;
+    if(waited >= timeout * 10) {
+      fc_close_fd(fd);
+      err << clear << "Another program is changing " << target << " (" << lock.name
+	  << " is locked), gave up after " << timeout << " seconds";
+      return 1;
+    }
+#if defined (__WIN32__)
+    Sleep(100);
+#else
+    usleep(100000);
+#endif
+    waited++;
+  }
+  lock.fd = fd;
+  return 0;
+}
+
+// ----------------------------------------------------------- //
+// JSON
+// ----------------------------------------------------------- //
+gxString FC_json_string(const char *s, unsigned len)
+{
+  gxString out;
+  out << "\"";
+  for(unsigned i = 0; i < len; i++) {
+    unsigned char c = (unsigned char)s[i];
+    switch(c) {
+      case '"': out << "\\\""; break;
+      case '\\': out << "\\\\"; break;
+      case '\n': out << "\\n"; break;
+      case '\r': out << "\\r"; break;
+      case '\t': out << "\\t"; break;
+      case '\b': out << "\\b"; break;
+      case '\f': out << "\\f"; break;
+      default:
+	if(c < 0x20) {
+	  char buf[8];
+	  sprintf(buf, "\\u%04x", c);
+	  out << buf;
+	}
+	else out << (char)c;
+    }
+  }
+  out << "\"";
+  return out;
+}
+
+gxString FC_json_string(const gxString &s)
+{
+  gxString &v = (gxString &)s;
+  return FC_json_string(v.c_str(), v.length());
+}
+
+// Allocations of the parser keep their size in front, so free() can
+// wipe them: parsed values are passwords and record fields.
+static void *fc_json_malloc(size_t n)
+{
+  size_t *p = (size_t *)malloc(n + sizeof(size_t) * 2);
+  if(!p) return 0;
+  p[0] = n;
+  return p + 2;
+}
+
+static void fc_json_free_mem(void *v)
+{
+  if(!v) return;
+  size_t *p = ((size_t *)v) - 2;
+  OPENSSL_cleanse(v, p[0]);
+  free(p);
+}
+
+static int fc_json_has_duplicates(cJSON *item, gxString &err)
+{
+  for(cJSON *c = item ? item->child : 0; c; c = c->next) {
+    if(cJSON_IsObject(item) && c->string) {
+      for(cJSON *d = c->next; d; d = d->next) {
+	if(d->string && strcmp(c->string, d->string) == 0) {
+	  err << clear << "Duplicate key \"" << c->string << "\" in the JSON input";
+	  return 1;
+	}
+      }
+    }
+    if(fc_json_has_duplicates(c, err)) return 1;
+  }
+  return 0;
+}
+
+cJSON *FC_json_parse(const MemoryBuffer &data_in, gxString &err)
+{
+  static int hooks_set = 0;
+  if(!hooks_set) {
+    cJSON_Hooks hooks;
+    hooks.malloc_fn = fc_json_malloc;
+    hooks.free_fn = fc_json_free_mem;
+    cJSON_InitHooks(&hooks);
+    hooks_set = 1;
+  }
+  MemoryBuffer &data = (MemoryBuffer &)data_in;
+  if(data.length() > FC_MAX_INPUT_LEN) {
+    err << clear << "The JSON input is longer than " << FC_MAX_INPUT_LEN << " bytes";
+    return 0;
+  }
+  const char *end = 0;
+  cJSON *root = cJSON_ParseWithLengthOpts((const char *)data.m_buf(), data.length(), &end, 0);
+  if(!root) {
+    unsigned pos = end ? (unsigned)(end - (const char *)data.m_buf()) : 0;
+    unsigned line = 1, col = 1;
+    const char *p = (const char *)data.m_buf();
+    for(unsigned i = 0; i < pos && i < data.length(); i++) {
+      if(p[i] == '\n') { line++; col = 1; }
+      else col++;
+    }
+    err << clear << "The JSON input is not valid at line " << line << ", column " << col << " (byte " << pos << ")";
+    return 0;
+  }
+  // Only spaces may follow the value
+  if(end) {
+    const char *p = (const char *)data.m_buf();
+    for(unsigned i = (unsigned)(end - p); i < data.length(); i++) {
+      if(p[i] != ' ' && p[i] != '\t' && p[i] != '\r' && p[i] != '\n') {
+	err << clear << "Extra data after the JSON value at byte " << i;
+	cJSON_Delete(root);
+	return 0;
+      }
+    }
+  }
+  if(fc_json_has_duplicates(root, err)) {
+    cJSON_Delete(root);
+    return 0;
+  }
+  return root;
+}
+
+void FC_json_free(cJSON *root)
+{
+  if(root) cJSON_Delete(root);
+}
+
+int FC_input_is_json(const MemoryBuffer &data_in)
+{
+  MemoryBuffer &data = (MemoryBuffer &)data_in;
+  const char *p = (const char *)data.m_buf();
+  for(unsigned i = 0; i < data.length(); i++) {
+    if(p[i] == ' ' || p[i] == '\t' || p[i] == '\r' || p[i] == '\n') continue;
+    if(i == 0 && data.length() >= 3 && (unsigned char)p[0] == 0xEF) { i += 2; continue; } // BOM
+    return p[i] == '{' || p[i] == '[';
   }
   return 0;
 }
@@ -790,11 +988,16 @@ int FC_check_version(const char *fname, FCVersionInfo &info, gxString &err)
   // config static area, see EPDB db_auth.h (EPDB_V2_HEADER_OFFSET 49152)
   const unsigned sig_off = (unsigned)((char *)&((gxFileHeader *)0)->gxd_sig - (char *)0);
   if(n >= sig_off + 7 && memcmp(hdr + sig_off, "GXDBASE", 7) == 0) {
+    fclose(fp);
+    // The DataReel file header size depends on the revision letter
     unsigned char v2[8];
     memset(v2, 0, sizeof(v2));
-    int got = (fseek(fp, (long)(sizeof(gxFileHeader) + 49152), SEEK_SET) == 0) &&
-      (fread(v2, 1, sizeof(v2), fp) == sizeof(v2));
-    fclose(fp);
+    int got = 0;
+    gxDatabase db;
+    if(db.Open(fname, gxDBASE_READONLY) == gxDBASE_NO_ERROR) {
+      got = db.Read(v2, sizeof(v2), (FAU_t)db.FileHeaderSize() + 49152) == gxDBASE_NO_ERROR;
+      db.Close();
+    }
     static const unsigned char epdb_magic[8] = { 'E', 'P', 'D', 'B', 'V', '2', 0x1A, 0x01 };
     gxString name(fname);
     int is_ehd = name.length() > 4 && CaseICmp(gxString(name.c_str() + name.length() - 4), ".ehd") == 0;
