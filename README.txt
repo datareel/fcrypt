@@ -39,6 +39,30 @@ FEATURES:
 	Remove users and rekey files (2026.106)
 	Tamper evident access log (2026.106)
 	
+SMART CARD LIST (DEVELOPMENT BRANCH gui-phase3, NOT YET RELEASED)
+------------------------------------------------------------------
+* fcrypt --smartcard-list lists the cards, cert IDs and PIN status with
+  no login and no PIN, and --smartcard-match=cert.pem shows which card
+  and cert ID hold a cert or public key. See FINDING THE SLOT AND CERT ID
+  WITHOUT A PIN below.
+* The same list is a C++ API in include/smart_card.h for programs such
+  as the Encrypted Password Database GUI: SC_list_tokens() fills a
+  std::vector<SC_TokenInfo> (slot, reader, label, manufacturer, model,
+  serial, CKF_ token flags and PIN lengths, and a SC_CertInfo for each
+  certificate or public key: ID, label, subject and issuer CN, expiry,
+  key type and size, public key SHA-256), SC_spki_sha256() gives the
+  SHA-256 of a cert's or key's SubjectPublicKeyInfo, and
+  SC_match_public_keys() finds the card objects holding given keys.
+  They only call C_GetSlotList, C_GetSlotInfo, C_GetTokenInfo and a
+  public session's C_FindObjects: no C_Login, and the PIN safeguards
+  are not used or changed. Every session is closed and the module
+  finalized. The OpenSSL 1.x engine build (RHEL 8) returns SC_ERROR,
+  listing is not supported there.
+* console/linux/run_smartcard_list_tests.sh tests the list with three
+  throwaway SoftHSM2 tokens (it refuses any other module) and counts
+  the C_Login calls with pkcs11-spy; p11_flag_shim.c sets the locked,
+  final try and low tries flags for the tests.
+
 KEY MANAGEMENT IN RELEASE 2026.106
 ----------------------------------
 * fcrypt --remove-user=name removes the RSA key or smart card access of
@@ -839,6 +863,16 @@ FINDING THE SLOT AND CERT ID WITHOUT A PIN
 ------------------------------------------
 List the readers, cards and certs without a PIN:
 
+  fcrypt --smartcard-list [--smartcard-provider=module]
+           lists every card (reader slot, token label, manufacturer,
+           model, serial, the PIN status and PIN length) and the
+           certificates and public keys the card shows before login
+           (cert ID, label, RSA or EC and the key size, subject, issuer
+           and expiry, and the SHA-256 of the public key). It never logs
+           in and never asks for a PIN. Add --smartcard-match=cert.pem
+           (PEM or DER cert or public key, more than once is allowed) to
+           show which card and cert ID hold that key, for example:
+             fcrypt --smartcard-list --smartcard-match=mycert.pem
   Linux:   console/scripts/smartcard_list.sh [module]
            (the default module is /usr/lib64/opensc-pkcs11.so)
   Windows: smartcard_list.bat (in the Windows package, or
