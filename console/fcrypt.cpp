@@ -126,6 +126,10 @@ int add_smart_card = 0;
 int use_smartcard_cert = 0;
 int use_smartcard_cert_file = 0;
 gxString smartcard_cert_file;
+int smartcard_list = 0; // 10/27/2026: List the cards, no login
+std::vector<std::string> smartcard_match_keys;
+gxList<gxString> smartcard_match_files;
+int ListSmartCards();
 #endif
 
 // Functions
@@ -218,6 +222,8 @@ void HelpMessage()
   if(SC_uses_engine()) cout << "          --smartcard-engine=" << SC_get_default_enginePath() << " (Set the smart card engine path)" << "\n" << flush;
   cout << "          --smartcard-provider=" << SC_get_default_modulePath() << " (Set the smart card provider)" << "\n" << flush;
   cout << "          --smartcard-slot=N (Use only the card in PKCS#11 slot N, decimal or 0x hex, see smartcard_list)" << "\n" << flush;
+  cout << "          --smartcard-list (List the cards, readers, cert IDs and PIN status, no login and no PIN)" << "\n" << flush;
+  cout << "          --smartcard-match=cert.pem (With --smartcard-list, show the card and cert ID holding this cert or public key)" << "\n" << flush;
   cout << "\n" << flush;
   cout << "          --add-smartcard-cert-file (Add access to an encrypted file for another users exported smart card cert)" << "\n" << flush;
   cout << "          --add-smartcard-cert-file input arg must be a file name" << "\n" << flush;
@@ -692,6 +698,38 @@ int ProcessDashDashArg(gxString &arg)
     has_valid_args = 1;
   }
 
+  // 10/27/2026: List the cards without a login
+  if(arg == "smartcard-list") {
+    smartcard_list = 1;
+    has_valid_args = 1;
+  }
+
+  if(arg == "smartcard-match") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --smartcard-match missing filename: --smartcard-match=${HOME}/certs/certfile.pem" << "\n" << flush;
+      return 0;
+    }
+    // A cert or public key is not secret, so it is read with any permissions
+    std::string kbuf;
+    FILE *kfp = futils_isfile(equal_arg.c_str()) ? fopen(equal_arg.c_str(), "rb") : 0;
+    if(kfp) {
+      char rbuf[4096];
+      size_t n;
+      while((n = fread(rbuf, 1, sizeof(rbuf), kfp)) > 0 && kbuf.size() < 65536) kbuf.append(rbuf, n);
+      fclose(kfp);
+    }
+    if(!kbuf.empty()) {
+      smartcard_match_keys.push_back(kbuf);
+      smartcard_match_files.Add(equal_arg);
+    }
+    else {
+      cerr << "ERROR: Smart card match file " << equal_arg.c_str() << " does not exist or cannot be read" <<  "\n" << flush;
+      return 0;
+    }
+    smartcard_list = 1;
+    has_valid_args = 1;
+  }
+
   // 10/26/2026: Use only the card in this PKCS#11 slot
   if(arg == "smartcard-slot") {
     unsigned long slot_id = 0;
@@ -731,6 +769,73 @@ int ProcessDashDashArg(gxString &arg)
   arg.Clear();
   return has_valid_args;
 }
+
+#ifdef __ENABLE_SMART_CARD__
+int ListSmartCards()
+// 10/27/2026: --smartcard-list. Reads the cards with no login, no PIN is
+// taken or sent.
+{
+  std::vector<SC_TokenInfo> tokens;
+  std::string err;
+  cout << "Smart card module: " << sc.modulePath << "\n";
+  if(SC_list_tokens(sc.modulePath, tokens, err) != 0) {
+    cerr << "ERROR: " << err.c_str() << "\n" << flush;
+    return FC_EXIT_USAGE;
+  }
+  if(tokens.empty()) cout << "No smart card found" << "\n";
+  for(size_t t = 0; t < tokens.size(); t++) {
+    const SC_TokenInfo &ti = tokens[t];
+    char slot_buf[64];
+    snprintf(slot_buf, sizeof(slot_buf), "%lu (0x%lx)", ti.slot_id, ti.slot_id);
+    cout << "Slot " << slot_buf << ": " << ti.slot_description.c_str() << "\n";
+    cout << "  Token label: " << ti.token_label.c_str() << "\n";
+    if(!ti.token_initialized) cout << "  Token: not initialized" << "\n";
+    cout << "  Manufacturer: " << ti.manufacturer.c_str() << "  Model: " << ti.model.c_str()
+	 << "  Serial: " << ti.serial.c_str() << "\n";
+    cout << "  PIN: " << (ti.user_pin_locked ? "LOCKED" : (ti.user_pin_final_try ? "ONE TRY LEFT" :
+							  (ti.user_pin_count_low ? "low on tries" : "ok")))
+	 << (ti.user_pin_to_be_changed ? ", must be changed" : "")
+	 << (ti.protected_auth_path ? ", PIN pad reader" : "")
+	 << (ti.login_required ? "" : ", no login required");
+    if(ti.max_pin_len) cout << ", " << ti.min_pin_len << " to " << ti.max_pin_len << " characters";
+    cout << "\n";
+    if(!ti.objects_listed) cout << "  Objects: cannot open a session to list them" << "\n";
+    for(size_t c = 0; c < ti.certs.size(); c++) {
+      const SC_CertInfo &ci = ti.certs[c];
+      cout << "  " << (ci.has_cert ? "Cert" : "Public key") << " ID " << ci.id_hex.c_str()
+	   << " label \"" << ci.label.c_str() << "\" ";
+      if(ci.key_bits) cout << (ci.is_rsa ? "RSA " : "non-RSA ") << ci.key_bits;
+      else cout << (ci.is_rsa ? "RSA" : "key type unknown");
+      if(!ci.is_rsa && ci.key_bits) cout << " (cannot be used, RSA keys only)";
+      cout << "\n";
+      if(ci.has_cert) {
+	cout << "    Subject CN: " << ci.subject_cn.c_str() << "  Issuer CN: " << ci.issuer_cn.c_str()
+	     << "  Expires: " << ci.not_after.c_str() << "\n";
+      }
+      if(!ci.spki_sha256.empty()) cout << "    Public key SHA-256: " << ci.spki_sha256.c_str() << "\n";
+    }
+  }
+  if(!smartcard_match_keys.empty()) {
+    std::vector<SC_CertMatch> matches;
+    SC_match_public_keys(tokens, smartcard_match_keys, matches);
+    unsigned k = 0;
+    for(gxListNode<gxString> *p = smartcard_match_files.GetHead(); p; p = p->next, k++) {
+      int found = 0;
+      for(size_t m = 0; m < matches.size(); m++) {
+	if(matches[m].key_index != k) continue;
+	char slot_buf[64];
+	snprintf(slot_buf, sizeof(slot_buf), "%lu (0x%lx)", matches[m].slot_id, matches[m].slot_id);
+	cout << "Match: " << p->data.c_str() << " is on slot " << slot_buf << " \"" << matches[m].token_label.c_str()
+	     << "\" cert ID " << matches[m].id_hex.c_str() << "\n";
+	found++;
+      }
+      if(!found) cout << "No match: " << p->data.c_str() << "\n";
+    }
+  }
+  cout << flush;
+  return FC_EXIT_OK;
+}
+#endif
 
 int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret)
 // 10/27/2026: Read a secret for a --xxx-file or --xxx-fd argument.
@@ -1502,6 +1607,10 @@ int main(int argc, char **argv)
       }
     }
   }
+
+#ifdef __ENABLE_SMART_CARD__
+  if(smartcard_list) return ExitProgram(ListSmartCards()); // 10/27/2026
+#endif
 
   if(num_files == 0) {
     cerr << "Encountered fatal fcrypt error" << "\n";

@@ -133,6 +133,11 @@ if [ -f ${SPY} ]; then
 	"printf 'password=Known-Pass#2026\nrsa:alice=alice.pub\nsmartcard:card=card\n' > rk.txt && spy ${FCRYPT} --smartcard-cert --smartcard-username=card ${SPYSC} ${PIN} --non-interactive --rekey --rekey-file=rk.txt k.enc && [ \$(logins) -eq 1 ] && rm -f k.bin && ${FDECRYPT} --password-file=pw.txt k.enc && cmp k.bin orig.bin"
     run_test "--check-version never touches the card" \
 	"spy ${FDECRYPT} --check-version k.enc ${SPYSC} && [ \$(logins) -eq 0 ]"
+    # 10/27/2026: The card list reads the token and its public objects only
+    run_test "--smartcard-list shows the card with no C_Login" \
+	"spy ${FCRYPT} --smartcard-list --smartcard-provider=${SPY} > sclist.txt && grep -q 'Token label:' sclist.txt && grep -qi 'ID ${SC_ID:-01} ' sclist.txt && [ \$(logins) -eq 0 ]"
+    run_test "--smartcard-match finds the exported cert on the card with no C_Login" \
+	"spy ${FCRYPT} --smartcard-list --smartcard-provider=${SPY} --smartcard-match=${SC_CERT} | grep -qi 'Match: .* cert ID ${SC_ID:-01}\$' && [ \$(logins) -eq 0 ]"
 else
     echo "Skipped: card login counts, ${SPY} (opensc) is not installed"
 fi
