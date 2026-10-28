@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Release 2026.106
+Release 2026.107
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
@@ -38,9 +38,18 @@ FEATURES:
 	Supports DOD CAC smart cards
 	Remove users and rekey files (2026.106)
 	Tamper evident access log (2026.106)
+	Smart card list with no PIN or login (2026.107)
 	
-SMART CARD LIST (DEVELOPMENT BRANCH gui-phase3, NOT YET RELEASED)
-------------------------------------------------------------------
+RELEASE 2026.107: SMART CARD LIST AND STRING ORDER
+--------------------------------------------------
+* String compares give the same order on Linux and Windows. The
+  DataReel string compares (StringANCompare and others in strutil.cpp)
+  passed signed char values to isdigit() and tolower(); for the bytes
+  above 127 the Windows runtime result is undefined, so a database
+  index (such as the Encrypted Password Database's) built on Linux was
+  walked in a different order on Windows. The compares now give the
+  glibc results on every platform, so Linux indexes keep their order.
+  Encrypted files are not affected.
 * fcrypt --smartcard-list lists the cards, cert IDs and PIN status with
   no login and no PIN, and --smartcard-match=cert.pem shows which card
   and cert ID hold a cert or public key. See FINDING THE SLOT AND CERT ID
