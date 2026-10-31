@@ -835,8 +835,11 @@ __ULWORD__ gxDatabase::CalcChecksum(__ULWORD__ bytes, FAU_t file_address,
     file_end = gxdFPTRSeek(fp, (FAU_t)0, gxDBASE_SEEK_END);
     gxdFPTRSeek(fp, pos, gxDBASE_SEEK_BEG);
   }
-  if((file_address < (FAU_t)0) || (file_end < (FAU_t)0) ||
-     ((FAU_t)bytes > file_end) || (file_address > file_end - (FAU_t)bytes)) {
+  // Compared unsigned: with native types on 64-bit systems a block
+  // length is 64 bits, and a damaged one cast to the signed address
+  // type became negative and passed (found by the 7.3 fuzz targets).
+  if((file_address < (FAU_t)0) || (file_end < (FAU_t)0) || (file_address > file_end) ||
+     ((unsigned long long)bytes > (unsigned long long)(file_end - file_address))) {
     gxd_error = gxDBASE_BADBLOCK_ERROR;
     return 0;
   }
@@ -1194,7 +1197,10 @@ FAU_t gxDatabase::TotalBlocks()
       block_address = FindFirstBlock(block_address + 1);
     }
     else {
-      block_address += blk_hdr.block_length;
+      // 10/31/2026: The next block must be past this one and in the file
+      FAU_t next_address = block_address + (FAU_t)blk_hdr.block_length;
+      if((next_address <= block_address) || (next_address > file_header.gxd_eof)) break;
+      block_address = next_address;
       SeekTo(block_address);
       i++;
     }
@@ -2209,7 +2215,10 @@ FAU_t gxDatabase::FindFirstObject(FAU_t offset)
       return (FAU_t)0;
     if((__SBYTE__(blk_hdr.block_status & 0xff)) == gxNormalBlock) 
       break;
-    file_address = FindFirstBlock(file_address+blk_hdr.block_length);
+    // 10/31/2026: The search must move forward in the file
+    FAU_t next_address = file_address + (FAU_t)blk_hdr.block_length;
+    if(next_address <= file_address) return (FAU_t)0;
+    file_address = FindFirstBlock(next_address);
     if(!file_address) return (FAU_t)0;
   }
 
@@ -2260,8 +2269,12 @@ FAU_t gxDatabase::FindNextObject(FAU_t offset)
       return (FAU_t)0;
     if((__SBYTE__(blk_hdr.block_status & 0xff)) == gxNormalBlock) 
       break;
-    file_address = FindNextBlock(file_address+blk_hdr.block_length);
-    if(!file_address) return (FAU_t)0;
+    // 10/31/2026: The search must move forward in the file
+    FAU_t next_address = file_address + (FAU_t)blk_hdr.block_length;
+    if(next_address <= file_address) return (FAU_t)0;
+    FAU_t found = FindNextBlock(next_address);
+    if(found <= file_address) return (FAU_t)0;
+    file_address = found;
   }
 
   return file_address + BlockHeaderSize();
