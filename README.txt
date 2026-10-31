@@ -6,7 +6,7 @@ Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
 Linux build). RHEL 6 and 7 are no longer supported.
 
-Built with the DataReel C++ library version 6.1, included under the
+Built with the DataReel C++ library version 6.3, included under the
 3plibs/datareel directory.
 
 This source code is used to build the fcrypt and fdecrypt utilities
