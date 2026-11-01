@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Release 2026.107
+Release 2026.108
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
@@ -39,7 +39,23 @@ FEATURES:
 	Remove users and rekey files (2026.106)
 	Tamper evident access log (2026.106)
 	Smart card list with no PIN or login (2026.107)
+	DataReel 6.3 security fixes (2026.108)
 	
+RELEASE 2026.108: DATAREEL 6.3
+------------------------------
+* Built with the bundled DataReel 6.3 (datareel branch
+  6.3-oodb-backport): the DataReel 7.2/7.3/7.3.1 database and security
+  fixes ported to 6.x (damaged-file checks, bounded checksums and block
+  lengths, journal recovery bounds, owner-only journal files) and a
+  sweep of the 6.x string, buffer, file, config and log code. The
+  encrypted file format is unchanged: 2026.107 and 2026.108 read each
+  other's files.
+* FC_parse_name_values() refuses a line with no name before "=". Such
+  a line read past the end of the input (found by fuzzing). It affects
+  --rekey input and record input from the Encrypted Password Database.
+* Tests: run_keymgmt_tests.sh has 41 checks; the build, security,
+  compatibility and migrate suites pass.
+
 RELEASE 2026.107: SMART CARD LIST AND STRING ORDER
 --------------------------------------------------
 * String compares give the same order on Linux and Windows. The
