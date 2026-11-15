@@ -107,6 +107,9 @@ gxDatabase::gxDatabase()
 
   write_hook = 0;
   write_hook_data = 0;
+  pcache = 0;
+  sync_on_flush = 0;
+  write_count = 0;
 }
 
 gxDatabase::~gxDatabase()
@@ -126,6 +129,7 @@ void gxDatabase::Release()
 // threads accessing this file pointer have exited or released it.
 {
   strcpy(file_name, gxDefaultFileName); // Reset the open file name
+  DisablePageCache(); // 10/31/2026: The cache belongs to this object
   fp = 0; 
 
   // Reset the last reported error and the file status members
@@ -321,13 +325,21 @@ gxDatabaseError gxDatabase::Open(const char *fname,
     strcpy(file_name, fname);
     last_operation = gxDBASE_WRITE;
     
-    if(ReadFileHdr()!= gxDBASE_NO_ERROR) return gxd_error;
+    // 10/31/2026: A file that is not a database file, or whose header
+    // cannot be read, is closed again. The file used to stay open (a
+    // file handle leaked for each failed open), and Close() then wrote a
+    // database header into the other program's file.
+    if(ReadFileHdr()!= gxDBASE_NO_ERROR) {
+      gxDatabaseError e = gxd_error;
+      AbandonOpen();
+      return gxd_error = e;
+    }
 
     // Test the file type without checking the revision letter
     if(memcmp(file_header.gxd_sig, gxDatabase::gxSignature,
 	      (gxSignatureSize-1))) { 
+      AbandonOpen();
       gxd_error = gxDBASE_WRONG_FILE_TYPE;
-      is_ok = 0;
 #ifdef __CPP_EXCEPTIONS__
        throw gxCDatabaseException();
 #else
@@ -348,6 +360,17 @@ gxDatabaseError gxDatabase::Open(const char *fname,
   return gxd_error = gxDBASE_NO_ERROR;
 }
 
+void gxDatabase::AbandonOpen()
+// 10/31/2026: Closes a file that Open() opened but cannot use, without
+// writing to it
+{
+  if(fp) gxdFPTRClose(fp);
+  fp = 0;
+  is_open = is_ok = 0;
+  ready_for_reading = ready_for_writing = 0;
+  strcpy(file_name, gxDefaultFileName);
+}
+
 gxDatabaseError gxDatabase::Close()
 // Close the open database file. Returns a non-zero value
 // to indicate an error condition or zero if successful.
@@ -356,6 +379,11 @@ gxDatabaseError gxDatabase::Close()
 
     // Write the header if this file was opened with write access
     if(ReadyForWriting()) WriteFileHdr();
+
+    // 10/31/2026: Writes still held by an unfinished transaction are
+    // dropped here. A journal that was spilled restores the file when it
+    // is recovered.
+    DisablePageCache();
 
     if(gxdFPTRClose(fp) != 0) {
       gxd_error = gxDBASE_FILE_CLOSE_ERROR;
@@ -393,9 +421,56 @@ gxDatabaseError gxDatabase::Flush()
       return gxd_error;
 #endif
     }
+    // 10/31/2026: Flush() used to stop at the operating system's buffers.
+    // With SetSyncOnFlush(1) it also forces the file to disk.
+    if(sync_on_flush) {
+      if(Sync() != gxDBASE_NO_ERROR) return gxd_error;
+    }
     Seek((FAU_t)0, gxDBASE_SEEK_CUR);
   }
   return gxd_error = gxDBASE_NO_ERROR;
+}
+
+gxDatabaseError gxDatabase::Sync(int full)
+// 10/31/2026: Force the file's data to stable storage (fdatasync() on
+// Linux, FlushFileBuffers() on Windows). With "full" set the file's
+// metadata is written too (fsync()). Writes held by an open journal
+// transaction are not in the file yet; gxdJournal::Commit() writes and
+// syncs them. Returns a non-zero value to indicate an error condition
+// or zero if successful.
+{
+  if(!IsOK()) return gxd_error = gxDBASE_FILE_NOT_READY;
+  if(!ReadyForWriting()) return gxd_error = gxDBASE_NO_ERROR;
+  if(gxdFPTRSync(fp, full) != 0) {
+    return gxd_error = gxDBASE_FILE_WRITE_ERROR;
+  }
+  return gxd_error = gxDBASE_NO_ERROR;
+}
+
+gxDatabaseError gxDatabase::EnablePageCache(size_t bytes, int use_map)
+// 10/31/2026: Keep up to "bytes" of this file in memory in 4 KB pages
+// (see gxdpcache.h). Use only while this object is the only one using
+// the file: the cache does not see other writers. Returns a non-zero
+// value to indicate an error condition or zero if successful.
+{
+  if(!IsOK()) return gxd_error = gxDBASE_FILE_NOT_READY;
+  if(pcache) {
+    if(pcache->InTxn()) return gxd_error = gxDBASE_FILE_NOT_READY;
+    DisablePageCache();
+  }
+  FAU_t size = gxdFPTRSeek(fp, (FAU_t)0, gxDBASE_SEEK_END);
+  if(size == (FAU_t)-1) return gxd_error = gxDBASE_FILE_SEEK_ERROR;
+  Seek((FAU_t)0, gxDBASE_SEEK_BEG);
+  pcache = new gxdPageCache(fp, size, bytes, use_map);
+  return gxd_error = gxDBASE_NO_ERROR;
+}
+
+void gxDatabase::DisablePageCache()
+{
+  if(pcache) {
+    delete pcache;
+    pcache = 0;
+  }
 }
 
 gxDatabaseError gxDatabase::Seek(FAU_t offset, gxDatabaseSeekMode mode)
@@ -470,7 +545,15 @@ gxDatabaseError gxDatabase::Read(void *buf, __ULWORD__ bytes,
 	return gxd_error;
     }
 
-    __ULWORD__ bytes_read = gxdFPTRRead(fp, buf, bytes);
+    __ULWORD__ bytes_read;
+    if(pcache) { // 10/31/2026: Read through the page cache
+      FAU_t address = gxdFPTRTell(fp);
+      bytes_read = pcache->Read(buf, bytes, address);
+      gxdFPTRSeek(fp, address + bytes_read, gxDBASE_SEEK_BEG);
+    }
+    else {
+      bytes_read = gxdFPTRRead(fp, buf, bytes);
+    }
     // 10/14/2026: A read that returns no bytes is no longer treated as a
     // complete read. Reading past the end of the file used to succeed and
     // leave the caller's buffer unchanged.
@@ -528,7 +611,16 @@ gxDatabaseError gxDatabase::Write(const void *buf, __ULWORD__ bytes,
       if(gxd_error != gxDBASE_NO_ERROR) return gxd_error;
     }
     
-    if(gxdFPTRWrite(fp, buf, bytes) != bytes) {
+    if(pcache) { // 10/31/2026: Write through the page cache
+      FAU_t address = gxdFPTRTell(fp);
+      __ULWORD__ written = pcache->Write(buf, bytes, address);
+      gxdFPTRSeek(fp, address + written, gxDBASE_SEEK_BEG);
+      if(written != bytes) {
+	gxd_error = gxDBASE_FILE_WRITE_ERROR;
+	return gxd_error;
+      }
+    }
+    else if(gxdFPTRWrite(fp, buf, bytes) != bytes) {
       gxd_error = gxDBASE_FILE_WRITE_ERROR;
 #ifdef __CPP_EXCEPTIONS__
       throw gxCDatabaseException();
@@ -537,6 +629,7 @@ gxDatabaseError gxDatabase::Write(const void *buf, __ULWORD__ bytes,
 #endif
     }
     last_operation = gxDBASE_WRITE;
+    write_count++;
     if(write_hook) (*write_hook)(write_hook_data); // 10/25/2026
   }
   else {
@@ -601,7 +694,7 @@ gxUINT32 gxDatabase::WriteObjectChecksum(FAU_t object_address)
       break;
   }
 
-  gxUINT32 CRC;
+  gxUINT32 CRC = 0; // 10/31/2026: Was returned unset when the file was not open
   __ULWORD__ bytes;
   gxBlockHeader blk_hdr;
 
@@ -614,7 +707,13 @@ gxUINT32 gxDatabase::WriteObjectChecksum(FAU_t object_address)
       return (gxUINT32)0;
     }
 
-    // Calculate a checksum based on the block data
+    // Calculate a checksum based on the block data. 10/31/2026: A block
+    // too short to hold a checksum is damaged (the length used to wrap
+    // around to about 4 GB).
+    if((__ULWORD__)blk_hdr.block_length < (__ULWORD__)(BlockHeaderSize() + sizeof(gxChecksum))) {
+      gxd_error = gxDBASE_BADBLOCK_ERROR;
+      return 0;
+    }
     bytes = (blk_hdr.block_length - BlockHeaderSize()) - sizeof(gxChecksum);
     CRC = CalcChecksum(bytes, object_address);
 
@@ -675,7 +774,13 @@ int gxDatabase::ReadObjectChecksum(FAU_t object_address,
       return (gxUINT32)0;
     }
 
-    // Calculate a checksum based on the block data
+    // Calculate a checksum based on the block data. 10/31/2026: A block
+    // too short to hold a checksum is damaged (the length used to wrap
+    // around to about 4 GB).
+    if((__ULWORD__)blk_hdr.block_length < (__ULWORD__)(BlockHeaderSize() + sizeof(gxChecksum))) {
+      gxd_error = gxDBASE_BADBLOCK_ERROR;
+      return 0;
+    }
     bytes = (blk_hdr.block_length - BlockHeaderSize()) - sizeof(gxChecksum);
     CRC = CalcChecksum(bytes, object_address);
 
@@ -719,6 +824,25 @@ __ULWORD__ gxDatabase::CalcChecksum(__ULWORD__ bytes, FAU_t file_address,
   __ULWORD__ len = bytes;
   unsigned char data;
   char *buf = 0;  
+
+  // 10/31/2026: A damaged block length must not allocate a buffer, or
+  // read, past the end of the file
+  if(!IsOK()) return 0;
+  FAU_t file_end;
+  if(pcache) file_end = pcache->FileSize();
+  else { // The current file position is kept for sequential reads and writes
+    FAU_t pos = gxdFPTRTell(fp);
+    file_end = gxdFPTRSeek(fp, (FAU_t)0, gxDBASE_SEEK_END);
+    gxdFPTRSeek(fp, pos, gxDBASE_SEEK_BEG);
+  }
+  // Compared unsigned: with native types on 64-bit systems a block
+  // length is 64 bits, and a damaged one cast to the signed address
+  // type became negative and passed (found by the 7.3 fuzz targets).
+  if((file_address < (FAU_t)0) || (file_end < (FAU_t)0) || (file_address > file_end) ||
+     ((unsigned long long)bytes > (unsigned long long)(file_end - file_address))) {
+    gxd_error = gxDBASE_BADBLOCK_ERROR;
+    return 0;
+  }
 
   // Create a buffer equal to the object length
   if(mem_alloc) buf = new char[bytes]; 
@@ -1062,12 +1186,21 @@ FAU_t gxDatabase::TotalBlocks()
 
     if(!IsOK()) break;
 
-    // If this is not a valid block, find the next one
-    if(!TestBlockHeader(blk_hdr)) {
-      block_address = FindFirstBlock(block_address);
+    // If this is not a valid block, find the next one. 10/31/2026 (from
+    // the 7.3 security scan): a length past the end of the file is
+    // damage too (in the 64-bit engine a huge length wrapped the address
+    // back to an earlier block, an endless count). TestBlockHeader()
+    // rejects lengths shorter than a block header.
+    if(!TestBlockHeader(blk_hdr) ||
+       ((unsigned long long)blk_hdr.block_length >
+	(unsigned long long)(file_header.gxd_eof - block_address))) {
+      block_address = FindFirstBlock(block_address + 1);
     }
     else {
-      block_address += blk_hdr.block_length;
+      // 10/31/2026: The next block must be past this one and in the file
+      FAU_t next_address = block_address + (FAU_t)blk_hdr.block_length;
+      if((next_address <= block_address) || (next_address > file_header.gxd_eof)) break;
+      block_address = next_address;
       SeekTo(block_address);
       i++;
     }
@@ -1518,6 +1651,12 @@ int gxDatabase::TestBlockHeader(const gxBlockHeader &hdr)
   }
   else { // This is not a device block
     if(control != 0) return 0;
+    // 10/31/2026: A block is never shorter than its header. A damaged
+    // length of zero made the block walks (TotalBlocks() and others)
+    // loop forever, and lengths shorter than a header made them read
+    // the same bytes again and again. The library never writes such a
+    // block, so every block it created still passes.
+    if((__ULWORD__)hdr.block_length < (__ULWORD__)BlockHeaderSize()) return 0;
   }
 
   return 1; // This is a valid block
@@ -2076,7 +2215,10 @@ FAU_t gxDatabase::FindFirstObject(FAU_t offset)
       return (FAU_t)0;
     if((__SBYTE__(blk_hdr.block_status & 0xff)) == gxNormalBlock) 
       break;
-    file_address = FindFirstBlock(file_address+blk_hdr.block_length);
+    // 10/31/2026: The search must move forward in the file
+    FAU_t next_address = file_address + (FAU_t)blk_hdr.block_length;
+    if(next_address <= file_address) return (FAU_t)0;
+    file_address = FindFirstBlock(next_address);
     if(!file_address) return (FAU_t)0;
   }
 
@@ -2127,8 +2269,12 @@ FAU_t gxDatabase::FindNextObject(FAU_t offset)
       return (FAU_t)0;
     if((__SBYTE__(blk_hdr.block_status & 0xff)) == gxNormalBlock) 
       break;
-    file_address = FindNextBlock(file_address+blk_hdr.block_length);
-    if(!file_address) return (FAU_t)0;
+    // 10/31/2026: The search must move forward in the file
+    FAU_t next_address = file_address + (FAU_t)blk_hdr.block_length;
+    if(next_address <= file_address) return (FAU_t)0;
+    FAU_t found = FindNextBlock(next_address);
+    if(found <= file_address) return (FAU_t)0;
+    file_address = found;
   }
 
   return file_address + BlockHeaderSize();

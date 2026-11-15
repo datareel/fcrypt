@@ -121,6 +121,11 @@ check $? "rekey without public keys lists the missing slots and changes nothing"
 printf 'rsa:alice=alice.pub\nrsa:bob=bob.pub\n' | ${FC} ${A} --rekey --dry-run k1.enc >>${logFILE} 2>&1
 [ $? -eq 0 ] && [ "$(sum k1.enc)" = "${before}" ]
 check $? "--rekey --dry-run changes nothing"
+# 10/31/2026: A line with no name before = is refused (it read past the
+# end of the input buffer, found by fuzzing)
+printf '=value\nrsa:alice=alice.pub\n' | ${FC} ${A} --rekey --dry-run k1.enc > out.txt 2>&1
+[ $? -ne 0 ] && grep -q "no name before" out.txt && [ "$(sum k1.enc)" = "${before}" ]
+check $? "rekey input with no name before = is refused"
 cp k1.enc k1_before.enc
 ${FC} ${A} --remove-user=bob k1.enc >>${logFILE} 2>&1
 printf 'rsa:alice=alice.pub\n' | ${FC} ${A} --rekey k1.enc >>${logFILE} 2>&1

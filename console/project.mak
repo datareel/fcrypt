@@ -81,7 +81,9 @@ GLIB_DATABASE_CORE_OBJECTS =  gxint32$(OBJ_EXT) \
 	gxdbase$(OBJ_EXT) \
 	gxderror$(OBJ_EXT) \
 	gxdfp64$(OBJ_EXT) \
-	gxdfptr$(OBJ_EXT)
+	gxdfptr$(OBJ_EXT) \
+	gxdjrnl$(OBJ_EXT) \
+	gxdpcache$(OBJ_EXT)
 
 # RDBMS library components
 GLIB_RDBMS_OBJECTS =  gxrdbdef$(OBJ_EXT) \

@@ -1,0 +1,202 @@
+DataReel 6.3 Release Notes, 10/31/2026
+DataReel version 6.3 (was 6.2)
+DataReel Copyright (c) 2001-2026 DataReel Software Development
+
+DataReel 6.3 brings the object database speed and crash safety work
+of DataReel 7.2 and 7.3 to the 6.x library: positional file I/O, a
+faster B-tree cache, and an optional page cache and write-ahead
+journal. The database and index file formats are unchanged: 6.3 opens
+files written by 6.2 and earlier, and writes byte-identical files for
+the same operations. Every change in the source is marked with a
+"10/31/2026" comment (the strutil.cpp fix with "10/27/2026").
+
+The library version in version.txt is 6.3 and the shared library
+version (SHAREDLIB_VERSION in env/linux.env) is 6.3, so the Linux
+shared library is built as libdatareel.so.6.3. The public interface
+only gains functions, but gxDatabase, gxBtree, BtreeCache and the file
+pointer types have new members, so programs must be recompiled against
+the 6.3 headers and relinked. Programs that compile the library
+sources directly must add the two new source files, gxdjrnl.cpp and
+gxdpcache.cpp, to their builds.
+
+ALWAYS ON
+---------
+- Positional file I/O: reads and writes use pread()/pwrite() on Linux
+  and ReadFile()/WriteFile() with an offset on Windows, so a seek costs
+  no system call. The 32-bit database engine now also uses the 64-bit
+  file pointer type (gxdfp64.h) on Linux and with MSVC; gxdtypes.h
+  always includes gxdtyp64.h.
+- The padding bytes in gxFileHeader, gxBlockHeader and gxBtreeHeader
+  copies are zeroed, so the same operations always write the same
+  bytes.
+- BtreeCache finds cached nodes through a hash table instead of a
+  linear search, and Flush() writes the dirty nodes but keeps them in
+  the cache.
+- gxBtree::FindNext() given the key it returned last, with the index
+  unchanged, takes the next key from the same leaf with one compare
+  instead of a search from the root.
+- gxdFPTR64Allocate() writes zeros on Linux instead of calling
+  posix_fallocate(), whose unwritten extents made each sync write
+  file system metadata.
+
+NEW, OPT-IN
+-----------
+A program that does not call these reads and writes its files as 6.2
+did.
+- gxDatabase::Sync(), SetSyncOnFlush() and WriteCount(): flush the
+  file to disk (fdatasync()/fsync() or FlushFileBuffers()).
+- gxDatabase::EnablePageCache(bytes, use_map = 0), gxdPageCache
+  (gxdpcache.h): a cache of 4 KB file pages. With use_map = 1 pages not
+  in the cache are read from a read-only memory map of the file
+  (mmap() or MapViewOfFile()). Memory-mapped reads are on by default
+  in DataReel 7.3 and off by default in 6.3.
+- gxdJournal (gxdjrnl.h): a write-ahead journal for one or more
+  gxDatabase and gxBtree files (and BtreeCache). Changes between
+  Begin() and Commit() reach the files all or none, after a program
+  crash or a power loss; Open() recovers committed transactions left
+  in the journal. Write-through (the default) or write-back mode,
+  gxdJournalReadLock for readers in other processes.
+- gxdFPTR ReadAt(), WriteAt(), Sync(), Truncate(), Allocate(), Lock(),
+  Unlock(), Map() and Unmap() functions.
+
+JOURNAL FILE ACCESS (6.3)
+-------------------------
+The journal holds copies of database pages until a checkpoint. In 6.3:
+- A new journal file is created owner-only: mode 0600 on Linux, a
+  protected DACL that gives only the current user access on Windows.
+  An existing journal is made owner-only before it is used, and Open()
+  fails if its access cannot be changed.
+- A clean Close() removes the journal file. If it cannot be removed (on
+  Windows while another process has it open for a gxdJournalReadLock)
+  it is left empty.
+- New functions gxdFPTRCreatePrivate()/gxdFPTRMakePrivate() and
+  gxdFPTR64CreatePrivate()/gxdFPTR64MakePrivate().
+
+SECURITY FIXES (FROM THE DATAREEL 7.3 SECURITY SCAN)
+---------------------------------------------------
+Found in 7.3 by fuzzing, sanitizers and static analysis, and present in
+6.2:
+- Damaged block lengths: a length of zero made the block walks
+  (TotalBlocks(), FindFirstObject(), FindNextObject()) loop forever,
+  lengths shorter than a block header made them read the same bytes
+  again and again, and a length past the end of the file could wrap
+  the address back to an earlier block. A block shorter than its
+  header or past the end of the file is now bad, and the walks only
+  move forward.
+- CalcChecksum() and the object checksum functions allocated and read
+  up to the damaged length (with native types on 64-bit systems a block
+  length is 64 bits). They are bounded by the real file size.
+- Open() of a file that is not a database file left it open (a leaked
+  file handle per failed open) and closing the object then wrote a
+  database header into it. It is closed again without writing.
+- WriteObjectChecksum() returned an uninitialised value when the file
+  was not open.
+- Journal recovery: page numbers and file sizes the file address type
+  cannot hold end the replay, and pages past a file's committed size
+  are not written.
+- gxSSL::MakeRSAPrivateKey() and new LogFile files are owner-only (they
+  got the umask permissions).
+- gxConfig::ChangeConfigValue() only changes the line that starts with
+  the setting name (it could rewrite another setting, a comment or a
+  value holding the name), and names, values and comments with a line
+  break are refused.
+- db_debug no longer loops on damaged block lengths.
+The 7.3 libFuzzer targets are in examples_database/fuzz (clang).
+
+6.x SECURITY SWEEP (SUPPORT CODE AND 6.x-ONLY CODE)
+---------------------------------------------------
+The DataReel 7.3.1 sweep fixes for the support code, and fixes found by
+a sweep of the 6.x-only code DataReel 7 removed (gcc -fanalyzer,
+ASan/UBSan runs of the examples, fcrypt and the Encrypted Password
+Database, and libFuzzer targets in examples_general/fuzz). Each fix
+has a test in examples_general/security_sweep,
+examples_general/support_security or examples_socket/comm_security.
+- gxsBase64Encode(): bytes of 0x80 or more were a negative table
+  index (non-ASCII text was encoded wrong), and the last group read up
+  to 2 bytes past the input. ASCII input encodes as before.
+- gxString: FindLast() with an empty pattern read far out of bounds;
+  substrings (Mid/Left/Right), InsertAt(), DeleteAt(), SetLength(),
+  ReplaceChar(), ConvertEscapeSeq() and operator<<(double) stay in
+  their buffers. InsertAt() past the end now appends.
+- strutil: bounded pattern searches, StringANCompare() digit buffers,
+  64-bit number conversions (LLWORDToString() of -5 printed
+  -18446744073709551611).
+- MemoryBuffer/MemoryBlock: no copies from null pointers, searches and
+  inserts stay in bounds.
+- DiskFileB::df_Read() returns df_EOF_ERROR with df_gcount() 0 when a
+  read gets no bytes at the end of the file (it returned df_NO_ERROR
+  and the full requested count). Reads that return data are unchanged.
+  df_GetLine(), long names and text output of large numbers stay in
+  their buffers; futils path, output name, chmod and mkdir fixes.
+- gxConfig: whole-line name matches, numbers read with strtol (a value
+  that does not fit reads as 0), lines longer than 1023 bytes read
+  whole, the file rewritten through a temporary file and rename (mode
+  and owner kept), names that are empty or hold the parameter ID
+  refused.
+- LogFile (UNIX): a symbolic link, FIFO or socket at the log name is
+  refused (O_NOFOLLOW); new logs are owner-only.
+- db_debug / gxDatabaseDebugManager: buffered block search, block
+  lengths compared unsigned, Rebuild() refuses to write onto its input.
+- Serial port: no O_ASYNC (the first incoming byte could stop the
+  program with SIGIO), Recv()/Send() return -1 with
+  scomm_TIMEOUT_ERROR instead of looping on 0-byte transfers,
+  ReadBlock(buf, buf_size, gx) for blocks over 64 KB, error table and
+  handle fixes.
+- Telnet: RecvString() stored a whole 4096-byte read with no room check
+  (remote overflow); it now stores at most bytes-1 characters.
+  Sub-negotiation, option loops and TERM handling fixed; optional
+  SetMaxTotalTime(). gxsTelnetClient has new members: recompile
+  classes derived from it.
+- Ping: replies are checked (length, type, id, sequence, source).
+- Threads: a thread that could not be created is not joined or
+  cancelled. Device cache of 0 buckets, null error messages.
+
+6.3.1 (RELEASE_NOTES_6.3.1.txt) adds this work. NOT IN THE 6.3 BUILD: the networking part of the 7.3.1 sweep (sockets,
+TLS, gxStream with client certificates required by default, HTTP,
+URL, SMTP, POP3, FTP) and the rest of the 6.x-only module sweep
+(gxRDBMS, HTML/XML/RSS parsers, gxDatagram, printing). That work is
+on the WIP branches 6.3-wip-net-tls, 6.3-wip-net-http and
+6.3-wip-legacy and is not finished. fcrypt and the Encrypted Password
+Database do not use that code.
+
+OTHER CHANGES
+-------------
+- strutil.cpp: StringANCompare() and the other string compares passed
+  signed char values to isdigit() and tolower(), which is undefined for
+  bytes above 127 on Windows. They now give the glibc order on every
+  platform, so an index built on Linux is walked in the same order on
+  Windows. The order of existing Linux indexes does not change. (From
+  the DataReel copy bundled with fcrypt.)
+
+TESTS
+-----
+- examples_database/journal: the DataReel 7 journal tests (same bytes
+  with and without the cache and journal, commit, rollback, crash
+  copies, torn journals, torn checkpoints, readers) and a 6.3 test of
+  the journal file access and removal. "testprog 20 7 1" runs them with
+  memory-mapped reads.
+- examples_database/journal/crash_test.sh: kills a writer with kill -9
+  at random moments and checks that every commit it reported is in the
+  files and no batch is half written.
+- examples_database/infohog: an InfoHog/POD example.
+- examples_database/damaged, examples_general/security_sweep,
+  examples_general/support_security and examples_socket/comm_security:
+  the security fixes above, each with a damaged or crafted input.
+- examples_database/run_db_tests.sh and run_db_tests.bat build and run
+  every database example and the journal tests.
+
+HOW THE CHANGES WERE TESTED
+---------------------------
+On RHEL 10.2, 32-bit and 64-bit database engines:
+- The library builds with no warnings, and all 64 example and utility
+  programs build against it.
+- The nine database examples, run against 6.2 and 6.3 builds (create,
+  then reopen), write byte-identical files, and 6.3 reopening files
+  created by 6.2 leaves the same bytes as 6.2 does.
+- The journal tests pass with memory-mapped reads off and on, in both
+  journal modes.
+- crash_test.sh: 60 kill -9 rounds per engine, write-through and
+  write-back, with and without a BtreeCache: no committed record lost,
+  no partial batch.
+
+DataReel Copyright (c) 2001-2026 DataReel Software Development

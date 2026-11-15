@@ -365,6 +365,14 @@ int FC_parse_name_values(const MemoryBuffer &data_in, gxList<FCNameValue> &list,
       FC_wipe_name_values(list);
       return 1;
     }
+    // 10/31/2026: SetString() takes a length of 0 as "up to the null", and
+    // the input has no null: a line starting with = read past the end of
+    // the buffer (found by fuzzing the EPDB record import)
+    if(eq == s) {
+      err << clear << "Line " << line << " has no name before =";
+      FC_wipe_name_values(list);
+      return 1;
+    }
     FCNameValue nv;
     nv.line = line;
     nv.name.SetString(p+s, eq-s);

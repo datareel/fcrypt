@@ -1,12 +1,12 @@
 File encryption and decryption utility
 
-Release 2026.107
+Release 2026.108
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
 Linux build). RHEL 6 and 7 are no longer supported.
 
-Built with the DataReel C++ library version 6.1, included under the
+Built with the DataReel C++ library version 6.3, included under the
 3plibs/datareel directory.
 
 This source code is used to build the fcrypt and fdecrypt utilities
@@ -39,7 +39,38 @@ FEATURES:
 	Remove users and rekey files (2026.106)
 	Tamper evident access log (2026.106)
 	Smart card list with no PIN or login (2026.107)
+	DataReel 6.3 security fixes (2026.108)
+	DataReel 6.4 (next release)
 	
+NEXT RELEASE (NOT RELEASED YET): DATAREEL 6.4
+--------------------------------------------
+* Built with the bundled DataReel 6.4 beta 1 (datareel tag 6.4-beta1):
+  the 6.3.1 library (the rest of the 6.x security sweep: sockets, TLS,
+  the parsers and the 6.x-only modules). The 6.x library and its file
+  formats are the same as 6.3; fcrypt uses none of the optional 7.x
+  features. The encrypted file format is unchanged: files made by
+  2026.108 and by this build open with either.
+* Tests (11/15/2026, RHEL 10.2, gcc 14.4.1): keymgmt 44, security 77,
+  compat 43 and migrate 50 checks pass, the same as the 2026.108 build;
+  the same suites under ASan + UBSan report no errors; 24 of 24 cross
+  checks between the 2026.108 build and this build pass (password, key
+  file and RSA access, both directions).
+
+RELEASE 2026.108: DATAREEL 6.3
+------------------------------
+* Built with the bundled DataReel 6.3 (datareel branch
+  6.3-oodb-backport): the DataReel 7.2/7.3/7.3.1 database and security
+  fixes ported to 6.x (damaged-file checks, bounded checksums and block
+  lengths, journal recovery bounds, owner-only journal files) and a
+  sweep of the 6.x string, buffer, file, config and log code. The
+  encrypted file format is unchanged: 2026.107 and 2026.108 read each
+  other's files.
+* FC_parse_name_values() refuses a line with no name before "=". Such
+  a line read past the end of the input (found by fuzzing). It affects
+  --rekey input and record input from the Encrypted Password Database.
+* Tests: run_keymgmt_tests.sh has 41 checks; the build, security,
+  compatibility and migrate suites pass.
+
 RELEASE 2026.107: SMART CARD LIST AND STRING ORDER
 --------------------------------------------------
 * String compares give the same order on Linux and Windows. The
