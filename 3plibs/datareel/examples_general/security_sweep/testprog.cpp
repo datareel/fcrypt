@@ -62,6 +62,11 @@ USA
               path simplify, output file names and chmod strings.
   devcache    gxDeviceBucketCache::ConstructCache(0); EHandler::Message()
               with null messages.
+  parsers     gxIP32, gxMAC48 and CDate strings that are too long or
+              have extra groups, gxsHTML pages with "&#" at the start and
+              a closing script tag without an opening one.
+  rdbms       gxrdDatabaseRecord::LoadDiskRecord() of a record shorter
+              than its header, negative array lengths in definitions.
 */
 // ----------------------------------------------------------- //
 #include "gxdlcode.h"
@@ -78,6 +83,11 @@ USA
 #include "futils.h"
 #include "devcache.h"
 #include "ehandler.h"
+#include "gxip32.h"
+#include "gxmac48.h"
+#include "cdate.h"
+#include "gxshtml.h"
+#include "gxrdbhdr.h"
 #include "memblock.h"
 #if defined (__USE_GX_SSL_EXTENSIONS__)
 #include "gxssl.h"
@@ -216,7 +226,7 @@ int main()
     MemoryBuffer e(8);
     check(e.MemSet('z', 4, 0xFFFFFFFE) == 0 && e.MemSet('z', 4, 4) == 1, "membuf: MemSet() with a size that wraps is refused");
     MemoryBuffer g("ab", 2);
-    check(g[100] == 0 && g[1] == 'b', "membuf: operator[] past the end of a full buffer");
+    check(g[(__MEMBUF_INT__)100] == 0 && g[(__MEMBUF_INT__)1] == 'b', "membuf: operator[] past the end of a full buffer");
   }
 
   // gxstring
@@ -333,6 +343,53 @@ int main()
     eh.Message("security sweep: ", 0, 0);
     eh.DisplayException(0);
     check(1, "ehandler: null messages");
+  }
+
+  // parsers
+  {
+    char sbuf[300];
+    memset(sbuf, '1', 299); sbuf[299] = 0;
+    gxIP32 ip(sbuf);
+    gxIP32 ip2("192.168.1.20");
+    check(ip2.c_str(sbuf) && strcmp(sbuf, "192.168.1.20") == 0, "parsers: gxIP32 of a long digit string and as before");
+    memset(sbuf, 'a', 299); sbuf[299] = 0;
+    gxMAC48 mac(sbuf);
+    gxMAC48 mac4("0060.B0F9.B895.1234.5678", '.', 4); // Extra groups
+    gxMAC48 mac2("00:60:B0:F9:B8:95");
+    check(strcmp(mac2.c_str(sbuf), "00:60:B0:F9:B8:95") == 0, "parsers: gxMAC48 with extra groups and as before");
+    gxMAC48 mac5("0060.B0F9.B895", '.', 4);
+    check(mac5 == mac2, "parsers: gxMAC48 four digit groups as before");
+    memset(sbuf, '1', 299); sbuf[299] = 0;
+    CDate d1(sbuf);
+    CDate d2("12/31/2026");
+    CDate d3("//");
+    check(d2.GetMonth() == 12 && d2.GetDay() == 31 && d2.GetYear() == 2026 && d3.GetYear() == 0,
+	  "parsers: CDate of a long string, empty groups, and as before");
+    const char *pages[] = { "&#12;", "</SCRIPT>", "</STYLE><b>", "<a href=x>&#", 0 };
+    int ok = 1;
+    for(int i = 0; pages[i]; i++) {
+      MemoryBuffer mb(pages[i], (unsigned)strlen(pages[i]));
+      gxsHTML html;
+      html.LoadMemoryBuffer(mb);
+      gxListNode<gxsScriptInfo> *sp = html.GetScriptList()->GetHead();
+      for(; sp; sp = sp->next) if(sp->data.script_length > 100) ok = 0;
+    }
+    check(ok, "parsers: gxsHTML tags at the start and closing tags without opening tags");
+  }
+
+  // rdbms
+  {
+    gxrdDatabaseRecord r;
+    check(r.CreateRecord("T,CHAR[8],INT32") == gxDBASE_NO_ERROR, "rdbms: record created");
+    MemoryBuffer shortrec("abc", 3);
+    check(r.LoadDiskRecord(shortrec) == gxDBASE_BAD_RECORD, "rdbms: a disk record shorter than its header is refused");
+    MemoryBuffer disk;
+    r.CreateDiskRecord(disk);
+    check(r.LoadDiskRecord(disk) == gxDBASE_NO_ERROR, "rdbms: a disk record loads as before");
+    gxrdDatabaseRecord r2;
+    check(r2.CreateRecord("T,CHAR[-1],INT32[-2],CHAR[4]") == gxDBASE_NO_ERROR &&
+	  r2.FieldLength(0) == 1 && r2.FieldLength(1) == sizeof(gxINT32) && r2.FieldLength(2) == 4,
+	  "rdbms: negative array lengths get one element");
   }
 
   // base64
