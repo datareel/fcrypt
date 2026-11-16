@@ -47,3 +47,8 @@ a.out
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Build outputs (11/15/2026)
+console/linux/fcrypt
+console/linux/fdecrypt
+console/linux/fmigrate
