@@ -47,7 +47,12 @@ RELEASE 2026.109: DATAREEL 6.4.1
 * The bundled DataReel library is updated to version 6.4.1 (the 6.4
   release of 11/17/2026 and the fixes on the DataReel 6.4.1 branch),
   from 6.3. DataReel 6.4.1 sets FD_CLOEXEC on gxSocket sockets, so
-  programs that run child processes do not pass them open sockets. The
+  programs that run child processes do not pass them open sockets, and
+  fixes the 6.x thread code: a new thread is in the running state
+  before it starts (a cancel made before it ran was lost), Linux timed
+  waits use the monotonic clock (a system time change no longer
+  shortens or stretches them), and the sleep calls no longer leave a
+  mutex locked on every call. The
   6.x API is unchanged and fcrypt needed no code changes. The database
   core now has two more source files, gxdjrnl.cpp and gxdpcache.cpp,
   which console/project.mak builds for the Linux and Windows
