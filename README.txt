@@ -1,12 +1,12 @@
 File encryption and decryption utility
 
-Release 2026.107
+Release 2026.108
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
 Linux build). RHEL 6 and 7 are no longer supported.
 
-Built with the DataReel C++ library version 6.1, included under the
+Built with the DataReel C++ library version 6.4, included under the
 3plibs/datareel directory.
 
 This source code is used to build the fcrypt and fdecrypt utilities
@@ -40,6 +40,26 @@ FEATURES:
 	Tamper evident access log (2026.106)
 	Smart card list with no PIN or login (2026.107)
 	
+RELEASE 2026.108: DATAREEL 6.4
+------------------------------
+* The bundled DataReel library is updated to version 6.4 (released
+  11/17/2026), from 6.1. The 6.x API is unchanged and fcrypt needed no
+  code changes. The database core now has two more source files,
+  gxdjrnl.cpp and gxdpcache.cpp, which console/project.mak builds for
+  the Linux and Windows makefiles. See
+  3plibs/datareel/RELEASE_NOTES_6.2.txt through RELEASE_NOTES_6.4.txt.
+* Fixes from DataReel 6.2 through 6.4 in the classes fcrypt uses:
+  DiskFileB reads that get no bytes are reported as EOF or a read
+  error instead of a full read, and file names of the maximum length
+  no longer write past the name buffer; futils works on a copy of the
+  path and uses memmove() for overlapping copies; the MemoryBuffer and
+  gxString searches and inserts stay inside the buffer; the string
+  compares keep the 2026.107 Linux and Windows order.
+* The encrypted file format does not change. Files encrypted by every
+  earlier release (2023.105 through 2026.107) decrypt with this
+  release, and files from this release decrypt with 2026.102 and
+  later.
+
 RELEASE 2026.107: SMART CARD LIST AND STRING ORDER
 --------------------------------------------------
 * String compares give the same order on Linux and Windows. The
