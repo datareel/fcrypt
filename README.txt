@@ -57,7 +57,7 @@ RELEASE 2026.109: DATAREEL 6.4.1
   core now has two more source files, gxdjrnl.cpp and gxdpcache.cpp,
   which console/project.mak builds for the Linux and Windows
   makefiles. See 3plibs/datareel/RELEASE_NOTES_6.2.txt through
-  RELEASE_NOTES_6.4.txt.
+  RELEASE_NOTES_6.4.1.txt.
 * Fixes from DataReel 6.4 in the classes fcrypt uses: the rest of the
   6.x security sweep (sockets, TLS, the parsers and the 6.x-only
   modules); DiskFileB reads that get no bytes are reported as EOF or a
