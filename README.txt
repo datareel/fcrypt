@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Release 2026.108
+Release 2026.109
 
 Supports Window 10, Windows 11, and Windows 2025 server
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
@@ -40,7 +40,7 @@ FEATURES:
 	Tamper evident access log (2026.106)
 	Smart card list with no PIN or login (2026.107)
 	
-RELEASE 2026.108: DATAREEL 6.4.1
+RELEASE 2026.109: DATAREEL 6.4.1
 --------------------------------
 * The bundled DataReel library is updated to version 6.4.1 (the 6.4
   release of 11/17/2026 and the fixes on the DataReel 6.4.1 branch),
