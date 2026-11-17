@@ -191,6 +191,14 @@ $(OUTDIR)\gxdfptr$(OBJ_EXT):    $(GLIB_SRC_PATH)gxdfptr.cpp $(GXDFPTR_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
 	$(GLIB_SRC_PATH)gxdfptr.cpp
 
+$(OUTDIR)\gxdjrnl$(OBJ_EXT):    $(GLIB_SRC_PATH)gxdjrnl.cpp $(GXDJRNL_DEP)
+	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
+	$(GLIB_SRC_PATH)gxdjrnl.cpp
+
+$(OUTDIR)\gxdpcache$(OBJ_EXT):    $(GLIB_SRC_PATH)gxdpcache.cpp $(GXDPCACHE_DEP)
+	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
+	$(GLIB_SRC_PATH)gxdpcache.cpp
+
 $(OUTDIR)\gxdstats$(OBJ_EXT):	$(GLIB_SRC_PATH)gxdstats.cpp $(GXDSTATS_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
 	$(GLIB_SRC_PATH)gxdstats.cpp
@@ -290,6 +298,10 @@ $(OUTDIR)\gxsping$(OBJ_EXT):	$(GLIB_SRC_PATH)gxsping.cpp $(GXSPING_DEP)
 $(OUTDIR)\gxspop3$(OBJ_EXT):	$(GLIB_SRC_PATH)gxspop3.cpp $(GXSPOP3_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
 	$(GLIB_SRC_PATH)gxspop3.cpp
+
+$(OUTDIR)\gxsimap$(OBJ_EXT):	$(GLIB_SRC_PATH)gxsimap.cpp $(GXSIMAP_DEP)
+	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
+	$(GLIB_SRC_PATH)gxsimap.cpp
 
 $(OUTDIR)\gxstream$(OBJ_EXT):	$(GLIB_SRC_PATH)gxstream.cpp $(GXSTREAM_DEP)
 	$(CPP) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
@@ -416,7 +428,9 @@ GLIB_DATABASE_CORE_OBJECTS =  $(OUTDIR)\gxint32$(OBJ_EXT) \
 	$(OUTDIR)\gxdbase$(OBJ_EXT) \
 	$(OUTDIR)\gxderror$(OBJ_EXT) \
 	$(OUTDIR)\gxdfp64$(OBJ_EXT) \
-	$(OUTDIR)\gxdfptr$(OBJ_EXT)
+	$(OUTDIR)\gxdfptr$(OBJ_EXT) \
+	$(OUTDIR)\gxdjrnl$(OBJ_EXT) \
+	$(OUTDIR)\gxdpcache$(OBJ_EXT)
 
 # Extra database library components
 GLIB_DATABASE_EX_OBJECTS = $(OUTDIR)\btstack$(OBJ_EXT) \
@@ -447,6 +461,7 @@ GLIB_SOCKET_EX_OBJECTS = $(OUTDIR)\gxshttp$(OBJ_EXT) \
 	$(OUTDIR)\gxsmtp$(OBJ_EXT) \
 	$(OUTDIR)\gxsping$(OBJ_EXT) \
 	$(OUTDIR)\gxspop3$(OBJ_EXT) \
+	$(OUTDIR)\gxsimap$(OBJ_EXT) \
 	$(OUTDIR)\gxsftp$(OBJ_EXT) \
 	$(OUTDIR)\gxshtml$(OBJ_EXT) \
 	$(OUTDIR)\gxsurl$(OBJ_EXT) \

@@ -6,7 +6,7 @@
 // C++ Compiler Used: MSVC, GCC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 10/17/2001
-// Date Last Modified: 10/24/2026
+// Date Last Modified: 10/31/2026
 // Copyright (c) 2001-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ---------- Include File Description and Details  ---------- // 
@@ -166,16 +166,17 @@ typedef SSL gxSSL_t;
 // Enumerations
 // --------------------------------------------------------------
 enum gxSSLMethod {
-  gxSSL_SSLv23,  // Supported protocols are SSLv2, SSLv3, TLSv1, TLSv1.1 and TLSv1.2
+  gxSSL_SSLv23,  // OpenSSL 1.1 and later: TLS 1.2 and TLS 1.3 (same as gxSSL_TLS)
   gxSSL_SSLv2,   // Only understand SSLv2
   gxSSL_SSLv3,   // Only understand SSLv3
   gxSSL_TLSv1,   // Only understand TLSv1
-  gxSSL_TLS,     // Supported protocols SSLv3, TLSv1, TLSv1.1 and TLSv1.2
+  gxSSL_TLS,     // OpenSSL 1.1 and later: TLS 1.2 and TLS 1.3
   gxSSL_TLSv1_1, // Only understand TLSv1.1
   gxSSL_TLSv1_2, // Only understand TLSv1.2
   gxSSL_DTLS,  
   gxSSL_DTLSv1,  
-  gxSSL_DTLSv1_2
+  gxSSL_DTLSv1_2,
+  gxSSL_TLSv1_3  // 11/16/2026: Only understand TLSv1.3
 };
 
 enum gxSSLCertType {
@@ -272,6 +273,10 @@ enum gxSSLError { // Open SSL exception codes
 typedef void ((*KeyGenCallbackFunc)(int,int,void *));
 // --------------------------------------------------------------
 
+// 10/31/2026: Default limit, in seconds, for each socket send and
+// receive during a TLS handshake. See gxSSL::SetHandshakeTimeout().
+const int gxSSL_DEF_HANDSHAKE_TIMEOUT = 60;
+
 // --------------------------------------------------------------
 // Data Structures
 // --------------------------------------------------------------
@@ -355,6 +360,11 @@ public: // Socket functions
   int RecvSSLSocket(void *buf, int bytes, int seconds, int useconds);
   int RecvSSLSocket(void *buf, int bytes, int useTimeout, int seconds,
 		    int useconds);
+  // 11/16/2026: Returns the decrypted bytes available, up to bytes,
+  // waiting up to the timeout for the first one. Returns the number of
+  // bytes read, 0 if the connection has closed, or -1 for an error or a
+  // timeout (gxSSL_REQUEST_TIMEOUT).
+  int RecvSomeSSLSocket(void *buf, int bytes, int seconds, int useconds);
   int CloseSSLSocket(int destroy_ssl = 1);
   int IsServer() { return is_server == 1; }
   int IsClient() { return is_client == 1; }
@@ -366,6 +376,14 @@ public: // Socket functions
   // calling ConnectSSLSocket().
   void SetHostName(const char *s) { host_name = s; }
   const char *HostName() { return host_name.c_str(); }
+
+  // 10/31/2026: ConnectSSLSocket() and AcceptSSLSocket() set the socket
+  // send and receive timeouts to this many seconds for the handshake
+  // and then put the old ones back, so a peer that connects and says
+  // nothing cannot block them for ever. 0 or less turns this off (the
+  // behaviour before 6.3). The default is gxSSL_DEF_HANDSHAKE_TIMEOUT.
+  void SetHandshakeTimeout(int seconds) { handshake_timeout = seconds; }
+  int HandshakeTimeout() { return handshake_timeout; }
 
 public: // OpenSSL library init functions
   static int InitSSLibrary();
@@ -409,6 +427,35 @@ public:  // Key, cert, and passwd functions
   // certificate and return a string for a VerifyCert() return code
   int GetPeerCertInfo(gxString &subject, gxString &issuer);
   static const char *CertVerifyErrorString(long X509_return_code);
+
+  // 10/31/2026: Client certificates (mutual TLS) for servers. Set the
+  // CA file used to check client certificates before InitCTX() on a
+  // server. A server context made with one asks every client for a
+  // certificate and fails the handshake if none is sent or its chain
+  // does not lead to a CA in this file. Only the CAs in this file are
+  // trusted for client certificates (not the system store).
+  void SetClientCAList(const char *s) { client_ca_list = s ? s : ""; }
+  const char *ClientCAList() { return client_ca_list.c_str(); }
+  // 10/31/2026: Server side, after AcceptSSLSocket(). Checks that the
+  // client sent a certificate and that its chain leads to a CA in the
+  // client CA list. Passes back the X509_V_* code (Windows CERT_E_*
+  // code with Schannel) in X509_return_code. Returns 0 if the
+  // certificate is valid, gxSSL_PEERCERT_ERROR if there is none,
+  // gxSSL_CALIST_ERROR if no client CA list is loaded, or
+  // gxSSL_CERT_VER_ERROR.
+  int VerifyClientCert(long *X509_return_code = 0);
+  // 10/31/2026: Passes back the SHA-256 fingerprint of the peer's
+  // certificate (upper case hex bytes separated by colons, the same as
+  // "openssl x509 -fingerprint -sha256") and its subject common name
+  // in UTF-8. cn is empty if the subject has no CN, more than one CN,
+  // or a CN with a NUL character in it. Does not check the chain.
+  // Returns 0 if successful or gxSSL_PEERCERT_ERROR if the peer did
+  // not send a certificate.
+  int GetPeerCertIdentity(gxString &sha256_fingerprint, gxString &cn);
+  // 10/31/2026: Clients: trust the system certificate store for
+  // VerifyCert() when no CA list is set. Call after InitCTX(). With
+  // Schannel the Windows store is always used without a CA list.
+  int SetDefaultCAPaths();
   int HasVerifyCert() { return verify_cert == 1; } 
   int RequireVerifyCert() { return verify_cert = 1; }
   int NoVerifyCert() { return verify_cert = 0; }
@@ -479,6 +526,7 @@ protected: // OpenSSL passwords, keys, and certs
   gxString cert_file;    // Certificate file
   gxString ca_list;      // Certificate authority list
   gxString passwd;       // Cert or key passphrase
+  gxString client_ca_list; // 10/31/2026: CAs for client certificates
   int verify_cert;
 
 protected: // SSL library objects 
@@ -487,6 +535,7 @@ protected: // SSL library objects
   gxSSLMethod ssl_proto;
   gxSSLCertType cert_type;
   gxString host_name; // Server name sent by clients (SNI)
+  int handshake_timeout; // 10/31/2026: Seconds, see SetHandshakeTimeout()
 
 protected: // SSL I/O objects
 #if !defined (__USE_GX_SCHANNEL__)

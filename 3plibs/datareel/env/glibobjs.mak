@@ -131,6 +131,14 @@ gxdfptr$(OBJ_EXT):    $(GLIB_SRC_PATH)gxdfptr.cpp $(GXDFPTR_DEP)
 	$(CXX) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
 	$(GLIB_SRC_PATH)gxdfptr.cpp
 
+gxdjrnl$(OBJ_EXT):    $(GLIB_SRC_PATH)gxdjrnl.cpp $(GXDJRNL_DEP)
+	$(CXX) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
+	$(GLIB_SRC_PATH)gxdjrnl.cpp
+
+gxdpcache$(OBJ_EXT):    $(GLIB_SRC_PATH)gxdpcache.cpp $(GXDPCACHE_DEP)
+	$(CXX) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
+	$(GLIB_SRC_PATH)gxdpcache.cpp
+
 gxdlcode$(OBJ_EXT):	$(GLIB_SRC_PATH)gxdlcode.cpp $(GXDLCODE_DEP)
 	$(CXX) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
 	$(GLIB_SRC_PATH)gxdlcode.cpp
@@ -234,6 +242,10 @@ gxsping$(OBJ_EXT):	$(GLIB_SRC_PATH)gxsping.cpp $(GXSPING_DEP)
 gxspop3$(OBJ_EXT):	$(GLIB_SRC_PATH)gxspop3.cpp $(GXSPOP3_DEP)
 	$(CXX) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
 	$(GLIB_SRC_PATH)gxspop3.cpp
+
+gxsimap$(OBJ_EXT):	$(GLIB_SRC_PATH)gxsimap.cpp $(GXSIMAP_DEP)
+	$(CXX) $(COMPILE_ONLY) $(COMPILE_FLAGS) \
+	$(GLIB_SRC_PATH)gxsimap.cpp
 
 gxssl$(OBJ_EXT):	$(GLIB_SRC_PATH)gxssl.cpp $(GLIB_SRC_PATH)gxsschan.cpp $(GXSSL_DEP)
 	$(CXX) $(COMPILE_ONLY) $(COMPILE_FLAGS) \

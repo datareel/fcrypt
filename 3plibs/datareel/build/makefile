@@ -40,7 +40,9 @@ GLIB_DATABASE_CORE_OBJECTS =  gxint32$(OBJ_EXT) \
 	gxdbase$(OBJ_EXT) \
 	gxderror$(OBJ_EXT) \
 	gxdfp64$(OBJ_EXT) \
-	gxdfptr$(OBJ_EXT)
+	gxdfptr$(OBJ_EXT) \
+	gxdjrnl$(OBJ_EXT) \
+	gxdpcache$(OBJ_EXT)
 
 # Extra database library components
 GLIB_DATABASE_EX_OBJECTS = btstack$(OBJ_EXT) \
@@ -71,6 +73,7 @@ GLIB_SOCKET_EX_OBJECTS = gxshttp$(OBJ_EXT) \
 	gxsmtp$(OBJ_EXT) \
 	gxsping$(OBJ_EXT) \
 	gxspop3$(OBJ_EXT) \
+	gxsimap$(OBJ_EXT) \
 	gxsftp$(OBJ_EXT) \
 	gxshtml$(OBJ_EXT) \
 	gxsurl$(OBJ_EXT) \

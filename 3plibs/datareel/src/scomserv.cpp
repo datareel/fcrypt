@@ -6,7 +6,7 @@
 // C++ Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 09/20/1999
-// Date Last Modified: 10/24/2026
+// Date Last Modified: 10/31/2026
 // Copyright (c) 2001-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -38,6 +38,10 @@ blocks over a serial port.
 
 #ifdef __BCC32__
 #pragma warn -8080
+#endif
+
+#if defined (__USE_ANSI_CPP__)
+#include <new> // 10/31/2026: std::nothrow
 #endif
 
 int gxSerialCommServer::InitCommServer(char *dev, int sp, char pr, int cs,
@@ -112,13 +116,16 @@ int gxSerialCommServer::WriteBlock(const void *buf, gxBlockHeader &gx)
 int gxSerialCommServer::WriteHeader(gxBlockHeader &gx)
 // Write a database block header. Returns zero if no errors occur.
 {
-  // Write the block header
-  if(Send((char *)&gx, sizeof(gxBlockHeader)) < 0)
+  // Write the block header. 11/16/2026: the canonical wire form
+  // (gxheader.h), the same bytes as DataReel 7.4
+  unsigned char wb[gxWireBlockHeaderSize];
+  gxWirePackBlockHeader(gx, wb);
+  if(Send((char *)wb, gxWireBlockHeaderSize) < 0)
     return scomm_error;
 
   // If the bytes sent do not equal the bytes moved then
   // the transmitter and receiver are no longer synchronized.
-  if(bytes_moved != sizeof(gxBlockHeader)) 
+  if(bytes_moved != (int)gxWireBlockHeaderSize) 
     return scomm_error = gxSerialComm::scomm_BLOCKHEADER_ERROR;
 
   return scomm_error = gxSerialComm::scomm_NO_ERROR;
@@ -126,8 +133,31 @@ int gxSerialCommServer::WriteHeader(gxBlockHeader &gx)
 
 int gxSerialCommServer::ReadBlock(void *buf, gxBlockHeader &gx)
 // Read database block. Returns zero if no errors occur.
+// 10/31/2026: This wrote gx.block_length bytes, a value the other end
+// of the line sends, into a caller buffer of unknown size. Blocks over
+// gxsSCOMM_MAX_UNSIZED_BLOCK bytes are now refused; call the overload
+// that takes the buffer size for larger blocks (DataReel 7.3.1).
 {
-  if(Recv(buf, gx.block_length) < 0)
+  return ReadBlock(buf, gxsSCOMM_MAX_UNSIZED_BLOCK, gx);
+}
+
+int gxSerialCommServer::ReadBlock(void *buf, __ULWORD__ buf_size,
+				  gxBlockHeader &gx)
+// 10/31/2026: Read a database block into a buffer of buf_size bytes.
+// Returns zero if no errors occur or scomm_BUFFER_OVERFLOW if the block
+// does not fit. A refused block is left unread, so the caller should
+// treat the connection as out of sync.
+{
+  if(!buf) return scomm_error = gxSerialComm::scomm_BUFFER_OVERFLOW;
+  if(((__ULWORD__)gx.block_length > buf_size) || 
+     ((__ULWORD__)gx.block_length > (__ULWORD__)0x7fffffff)) {
+    return scomm_error = gxSerialComm::scomm_BUFFER_OVERFLOW;
+  }
+  if(gx.block_length == 0) { // Nothing to read
+    bytes_read = 0;
+    return scomm_error = gxSerialComm::scomm_NO_ERROR;
+  }
+  if(Recv(buf, (int)gx.block_length) < 0)
     return scomm_error;
 
   // If the bytes read do not equal the bytes received then
@@ -143,13 +173,17 @@ int gxSerialCommServer::ReadHeader(gxBlockHeader &gx)
 // an error number corresponding to a value defined in the serial
 // comm internal error code enumeration.
 {
-  if(Recv((char *)&gx, sizeof(gxBlockHeader)) < 0)
+  unsigned char wb[gxWireBlockHeaderSize]; // 11/16/2026: canonical
+  if(Recv((char *)wb, gxWireBlockHeaderSize) < 0)
     return scomm_error;
 
   // If the bytes read do not equal the bytes received then
   // the transmitter and receiver are no longer synchronized.
-  if(bytes_read != sizeof(gxBlockHeader)) 
+  if(bytes_read != (int)gxWireBlockHeaderSize) 
     return scomm_error = gxSerialComm::scomm_BLOCKHEADER_ERROR;
+  if(!gxWireBlockHeaderIsCanonical(wb))
+    return scomm_error = gxSerialComm::scomm_BLOCKHEADER_ERROR;
+  gxWireUnpackBlockHeader(wb, gx);
       
   if(gx.block_check_word != gxCheckWord) 
     return scomm_error = gxSerialComm::scomm_BLOCKSYNC_ERROR;
@@ -174,10 +208,27 @@ void *gxSerialCommServer::RequestBlock(const void *request,
     return 0;
 
   // Read the returned requested block
-  char *buf = new char[(__ULWORD__)requested_block_header.block_length];
-  if(!buf) return 0;
-  
-  if(Recv(buf, requested_block_header.block_length) < 0) {
+  // 10/31/2026: The length comes from the other end of the line. A
+  // length over 2 GB became a negative int count, and a failed
+  // allocation threw instead of returning a null value.
+  if((__ULWORD__)requested_block_header.block_length > 
+     (__ULWORD__)0x7fffffff) {
+    scomm_error = gxSerialComm::scomm_BUFFER_OVERFLOW;
+    return 0;
+  }
+#if defined (__USE_ANSI_CPP__)
+  char *buf = new(std::nothrow) 
+    char[(__ULWORD__)requested_block_header.block_length + 1];
+#else
+  char *buf = new char[(__ULWORD__)requested_block_header.block_length + 1];
+#endif
+  if(!buf) {
+    scomm_error = gxSerialComm::scomm_BUFFER_OVERFLOW;
+    return 0;
+  }
+  bytes_read = 0;
+  if((requested_block_header.block_length > 0) &&
+     (Recv(buf, (int)requested_block_header.block_length) < 0)) {
     delete[] buf;
     return 0;
   }

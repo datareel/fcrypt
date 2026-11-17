@@ -6,7 +6,7 @@
 // C++ Compiler Used: MSVC, GCC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 10/17/2001
-// Date Last Modified: 10/24/2026
+// Date Last Modified: 11/16/2026
 // Copyright (c) 2001-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -40,11 +40,47 @@ library in accordance with the documentation supplied with the
 distribution. NOTE: Any third party libraries used to build DataReel 
 applications are also subject to the licensing agreement stated within 
 the source code and documentation supplied with the third party library.
+
+10/31/2026: ConnectSSLSocket() and AcceptSSLSocket() run with a socket
+send/receive timeout (SetHandshakeTimeout(), 60 seconds by default),
+so a peer that connects and says nothing cannot block them for ever.
+CloseSSLSocket() sends close_notify once and does not wait for the
+peer's. RecvSSLSocket() with a timeout returns data already decrypted
+and buffered by OpenSSL instead of waiting on the socket for more.
+VerifyCert() checks the subject alternative names (and IP addresses)
+as well as the common name. SIGPIPE is ignored, if the program left it
+at the default action, when the first TLS socket is opened.
+
+10/31/2026: Client certificates (mutual TLS) for servers, used by the
+gxStream TLS mode: SetClientCAList(), VerifyClientCert() and
+GetPeerCertIdentity() (SHA-256 fingerprint and subject CN), and
+SetDefaultCAPaths() for clients that check a server against the system
+certificate store.
+
+11/16/2026: TLS settings from the DataReel 7.x and ssl-bridge versions.
+With OpenSSL 1.1 and later the TLS and DTLS methods are used with a
+minimum protocol version: gxSSL_SSLv23 and gxSSL_TLS negotiate TLS 1.2
+or TLS 1.3, gxSSL_TLSv1_2 is TLS 1.2 only and the new gxSSL_TLSv1_3 is
+TLS 1.3 only. SSLv2, SSLv3, TLS 1.0, TLS 1.1 and DTLS 1.0 are refused
+with gxSSL_PROTOCOL_ERROR. The server name (SNI) is not sent for IP
+addresses. With RequireVerifyCert() the handshake checks the chain and
+the host name, and the system store is trusted when no CA list is set.
+The handshake timeout keeps a shorter socket timeout set by the caller.
 */
 // ----------------------------------------------------------- // 
 #include "gxdlcode.h"
 
 #include "gxssl.h"
+#include "gxdfptr.h" // 10/31/2026: gxdFPTRMakePrivate()
+#if defined (__UNIX__)
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <signal.h> // 10/31/2026: gxssl_ignore_sigpipe()
+#endif
+#if !defined (__WIN32__)
+#include <arpa/inet.h> // 10/25/2026: inet_pton() for the SNI host name check
+#endif
 
 // 08/06/2009: Moved gxRandom class outside of __USE_GX_SSL_EXTENSIONS__
 // 08/06/2009: conditional directive. This allows the random class to 
@@ -323,6 +359,79 @@ unsigned *gxRandom::PRNGTable(unsigned table_size, unsigned long r_seed)
 // Initialize all static variables and data members
 int gxSSL::lib_init = 0;
 
+// --------------------------------------------------------------
+// 10/31/2026: Socket timeout helpers shared by the OpenSSL and the
+// Schannel versions
+// --------------------------------------------------------------
+struct gxsslSockTimeouts {
+#if defined (__WIN32__)
+  DWORD rcv, snd;
+#else
+  struct timeval rcv, snd;
+#endif
+  int saved;
+};
+
+static void gxssl_set_handshake_timeout(gxsSocket_t s, int seconds,
+					gxsslSockTimeouts &old)
+// 10/31/2026: Save the socket's send and receive timeouts and set both
+// to seconds for a TLS handshake. Does nothing if seconds <= 0.
+// 11/16/2026: A shorter timeout already set on the socket is kept, so
+// the handshake limit never lengthens a limit the caller chose (the
+// ssl-bridge's handshake timeout was lengthened to 60 seconds).
+{
+  old.saved = 0;
+  if(seconds <= 0 || s == (gxsSocket_t)-1) return;
+#if defined (__WIN32__)
+  int len = (int)sizeof(DWORD);
+  if(getsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (char *)&old.rcv, &len) != 0) return;
+  len = (int)sizeof(DWORD);
+  if(getsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (char *)&old.snd, &len) != 0) return;
+  DWORD ms = (DWORD)seconds * 1000;
+  // 0 means no timeout
+  DWORD rcv_ms = (old.rcv != 0 && old.rcv < ms) ? old.rcv : ms;
+  DWORD snd_ms = (old.snd != 0 && old.snd < ms) ? old.snd : ms;
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&rcv_ms, sizeof(rcv_ms));
+  setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&snd_ms, sizeof(snd_ms));
+#else
+  socklen_t len = (socklen_t)sizeof(old.rcv);
+  if(getsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &old.rcv, &len) != 0) return;
+  len = (socklen_t)sizeof(old.snd);
+  if(getsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &old.snd, &len) != 0) return;
+  struct timeval tv;
+  tv.tv_sec = seconds;
+  tv.tv_usec = 0;
+  // A zero timeval means no timeout
+  struct timeval rcv = tv, snd = tv;
+  if((old.rcv.tv_sec || old.rcv.tv_usec) && 
+     ((old.rcv.tv_sec < tv.tv_sec) || 
+      ((old.rcv.tv_sec == tv.tv_sec) && (old.rcv.tv_usec < tv.tv_usec)))) {
+    rcv = old.rcv;
+  }
+  if((old.snd.tv_sec || old.snd.tv_usec) && 
+     ((old.snd.tv_sec < tv.tv_sec) || 
+      ((old.snd.tv_sec == tv.tv_sec) && (old.snd.tv_usec < tv.tv_usec)))) {
+    snd = old.snd;
+  }
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &rcv, sizeof(rcv));
+  setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &snd, sizeof(snd));
+#endif
+  old.saved = 1;
+}
+
+static void gxssl_restore_timeout(gxsSocket_t s, const gxsslSockTimeouts &old)
+// 10/31/2026: Put back the timeouts saved by gxssl_set_handshake_timeout()
+{
+  if(!old.saved) return;
+#if defined (__WIN32__)
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&old.rcv, sizeof(old.rcv));
+  setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&old.snd, sizeof(old.snd));
+#else
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &old.rcv, sizeof(old.rcv));
+  setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &old.snd, sizeof(old.snd));
+#endif
+}
+
 // NOTE: This array must contain the same number of exceptions as the
 // gxSSLError enumeration. 
 const int gxsMaxOpenSSLExceptionMessages = 71;
@@ -449,6 +558,41 @@ void gxCertIssuerInfo::CopyCert(gxCertIssuerInfo &ob) {
 // --------------------------------------------------------------
 // OpenSSL version of the gxSSL class
 // --------------------------------------------------------------
+static void gxssl_ignore_sigpipe()
+// 10/31/2026: OpenSSL writes to the socket with write(), so a peer that
+// closes or resets the connection raised SIGPIPE and killed the
+// program. Ignore SIGPIPE, but only if the program left it at the
+// default action; the write then fails with EPIPE. Done once.
+{
+#if defined (__UNIX__)
+  static int done = 0;
+  if(done) return;
+  done = 1;
+  struct sigaction old_sa;
+  if(sigaction(SIGPIPE, 0, &old_sa) == 0 && 
+     !(old_sa.sa_flags & SA_SIGINFO) && old_sa.sa_handler == SIG_DFL) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGPIPE, &sa, 0);
+  }
+#endif
+}
+
+static gxsSocket_t gxssl_get_fd(SSL *ssl)
+// 10/31/2026: The socket under an SSL object, or -1
+{
+  int fd = -1;
+  if(!ssl) return (gxsSocket_t)-1;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+  BIO_get_fd(ssl->rbio, &fd);
+#else
+  if(SSL_get_rbio(ssl)) BIO_get_fd(SSL_get_rbio(ssl), &fd);
+#endif
+  return (gxsSocket_t)fd;
+}
+
 int password_cb2(char *buf,int num, int /* rwflag */, void *userdata)
 // Password callback function.
 {
@@ -465,7 +609,10 @@ int password_cb2(char *buf,int num, int /* rwflag */, void *userdata)
 gxSSL::~gxSSL()
 {
   if(ssl) {
-    SSL_shutdown(ssl);
+    // 10/31/2026: Send close_notify only if CloseSSLSocket(0) has not
+    // sent it. A second SSL_shutdown() waits for the peer's
+    // close_notify and hung the destructor on a silent peer.
+    if(!(SSL_get_shutdown(ssl) & SSL_SENT_SHUTDOWN)) SSL_shutdown(ssl);
     DestroySSL();    
   }
   DestroyCTX();
@@ -497,6 +644,8 @@ int gxSSL::OpenSSLSocket(gxsSocket_t s)
     if(!InitCTX()) return ssl_error; 
   }
 
+  gxssl_ignore_sigpipe(); // 10/31/2026
+
   ssl = SSL_new(ctx);
   if(is_ssl_null()) return ssl_error;
 
@@ -518,9 +667,36 @@ int gxSSL::ConnectSSLSocket()
   if(is_ssl_null()) return ssl_error;
   // 10/24/2026: Send the server name (SNI) if the caller set one
   if(!host_name.is_null()) {
-    SSL_set_tlsext_host_name(ssl, host_name.c_str());
+    // 10/25/2026: SNI is only sent for DNS names, never for IP addresses
+    unsigned char addr[16];
+    if(inet_pton(AF_INET, host_name.c_str(), addr) != 1 && inet_pton(AF_INET6, host_name.c_str(), addr) != 1) {
+      SSL_set_tlsext_host_name(ssl, host_name.c_str());
+    }
   }
-  if(check_ssl_error(SSL_connect(ssl)) != SSL_ERROR_NONE) {
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+  // 10/25/2026: With RequireVerifyCert() the handshake itself fails when
+  // the certificate chain or the host name does not verify. Names are
+  // checked against subjectAltName with RFC 6125 wildcard rules, and IP
+  // addresses against IP subjectAltName entries.
+  if(verify_cert) {
+    if(!host_name.is_null()) {
+      X509_VERIFY_PARAM *param = SSL_get0_param(ssl);
+      X509_VERIFY_PARAM_set_hostflags(param, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+      if(X509_VERIFY_PARAM_set1_ip_asc(param, host_name.c_str()) != 1) {
+	if(SSL_set1_host(ssl, host_name.c_str()) != 1) return ssl_error = gxSSL_HOSTNAME_ERROR;
+      }
+    }
+    SSL_set_verify(ssl, SSL_VERIFY_PEER, 0);
+  }
+#endif
+  // 10/31/2026: A server that accepts TCP and then says nothing must
+  // not block the handshake for ever
+  gxsSocket_t fd = gxssl_get_fd(ssl);
+  gxsslSockTimeouts old;
+  gxssl_set_handshake_timeout(fd, handshake_timeout, old);
+  int rv = check_ssl_error(SSL_connect(ssl));
+  gxssl_restore_timeout(fd, old);
+  if(rv != SSL_ERROR_NONE) {
     return ssl_error;
   }
   return ssl_error = gxSSL_NO_ERROR;
@@ -532,7 +708,14 @@ int gxSSL::AcceptSSLSocket()
 // Returns a non-zero value if the function fails.
 {
   if(is_ssl_null()) return ssl_error;
-  if(SSL_accept(ssl) <= 0) {
+  // 10/31/2026: A client that connects and then says nothing must not
+  // block the server for ever
+  gxsSocket_t fd = gxssl_get_fd(ssl);
+  gxsslSockTimeouts old;
+  gxssl_set_handshake_timeout(fd, handshake_timeout, old);
+  int rv = SSL_accept(ssl);
+  gxssl_restore_timeout(fd, old);
+  if(rv <= 0) {
     return ssl_error = gxSSL_ACCEPT_ERROR;
   }
   return ssl_error = gxSSL_NO_ERROR;
@@ -545,18 +728,14 @@ int gxSSL::CloseSSLSocket(int destroy_ssl)
 // Returns a non-zero value if the function fails.
 {
   if(!ssl) return ssl_error;
+  // 10/31/2026: Send our close_notify once and do not wait for the
+  // peer's. The second SSL_shutdown() blocked reading from a peer that
+  // never answers, which hung CloseSSLSocket() and the programs that
+  // call it. 0 means our close_notify went out and the peer's has not
+  // arrived yet, which is fine: the caller closes the socket next.
   int rv = SSL_shutdown(ssl);
-  if(!rv) {
-    int open_socket;
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    BIO_get_fd(ssl->rbio, &open_socket);
-#else
-    BIO_get_fd(SSL_get_rbio(ssl), &open_socket);
-#endif
-    shutdown(open_socket, 1);
-    rv = SSL_shutdown(ssl);
-  }
-  if(rv != 1) {
+  if(rv != 0 && rv != 1) {
+    if(destroy_ssl) DestroySSL();
     return ssl_error = gxSSL_SHUTDOWN_ERROR;
   }
   if(destroy_ssl) DestroySSL();
@@ -663,6 +842,44 @@ int gxSSL::RecvSSLSocket(void *buf, int bytes, int seconds, int useconds)
 }
 
 // 07/31/2021: Include support for openssl 1.0.1
+int gxSSL::RecvSomeSSLSocket(void *buf, int bytes, int seconds, int useconds)
+// 11/16/2026: Returns the decrypted bytes available, up to bytes,
+// waiting up to the timeout for the first one. Used by line based
+// protocols (gxsIMAPClient) that cannot ask for an exact byte count.
+// Returns the number of bytes read, 0 if the connection has closed,
+// or -1 if an error occurs or the timeout is exceeded.
+{
+  bytes_read = 0;
+  if(is_ssl_null()) return -1;
+  if(bytes <= 0) return 0;
+  gxSocket gxsocket_object;
+  int open_socket = (int)gxssl_get_fd(ssl);
+  for(;;) {
+    // OpenSSL may already hold decrypted bytes the socket does not show
+    if((SSL_pending(ssl) <= 0) &&
+       (!gxsocket_object.ReadSelect(open_socket, seconds, useconds))) {
+      ssl_error = gxSSL_REQUEST_TIMEOUT;
+      return -1;
+    }
+    int rv = SSL_read(ssl, buf, bytes);
+    if(rv > 0) {
+      bytes_read = rv;
+      ssl_error = gxSSL_NO_ERROR;
+      return rv;
+    }
+    int err = check_ssl_error(rv);
+    if(err == SSL_ERROR_ZERO_RETURN) return 0;
+    // A record that held no application data, such as a TLS 1.3
+    // session ticket: wait for more
+    if(err == SSL_ERROR_WANT_READ) continue;
+    if(err == SSL_ERROR_SYSCALL && rv == 0) {
+      ssl_error = gxSSL_DISCONNECTED_ERROR;
+      return 0;
+    }
+    return -1;
+  }
+}
+
 int gxSSL::RecvSSLSocket(void *buf, int bytes, int useTimeout, int seconds,
 			 int useconds)
 // Receive a block of data from a specified socket and do not return
@@ -679,17 +896,17 @@ int gxSSL::RecvSSLSocket(void *buf, int bytes, int useTimeout, int seconds,
   int num_req = bytes;   // Number of bytes requested 
   char *p = (char *)buf; // Pointer to the buffer
 
-  int open_socket;
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    BIO_get_fd(ssl->rbio, &open_socket);
-#else
-    BIO_get_fd(SSL_get_rbio(ssl), &open_socket);
-#endif
+  int open_socket = (int)gxssl_get_fd(ssl);
   
   gxSocket gxsocket_object;
   
   while(bytes_read < bytes) { // Loop until the buffer is full
-    if(useTimeout && (!gxsocket_object.ReadSelect(open_socket, seconds, useconds))) {
+    // 10/31/2026: Wait on the socket only if OpenSSL has no decrypted
+    // bytes left. SSL_read() decrypts a whole record, so the rest of a
+    // record was already read from the socket and select() timed out
+    // although the data was there.
+    if(useTimeout && (SSL_pending(ssl) <= 0) &&
+       (!gxsocket_object.ReadSelect(open_socket, seconds, useconds))) {
       ssl_error = gxSSL_REQUEST_TIMEOUT;
       if(bytes_read > 0) {
 	return bytes_read; 
@@ -750,6 +967,63 @@ SSL_CTX *gxSSL::InitCTX()
 {
   InitSSLibrary();
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+  // 10/25/2026: OpenSSL 1.1 and 3.x. The version specific methods are
+  // deprecated, so the TLS and DTLS methods are used with minimum and
+  // maximum protocol versions. SSLv2, SSLv3, TLS 1.0 and TLS 1.1 are no
+  // longer allowed. gxSSL_SSLv23 and gxSSL_TLS negotiate TLS 1.2 or 1.3.
+  const SSL_METHOD *meth = 0;
+  int min_version = 0, max_version = 0;
+  int is_dtls = 0;
+  switch(ssl_proto) {
+    case gxSSL_SSLv23:
+    case gxSSL_TLS:
+      min_version = TLS1_2_VERSION;
+      break;
+    case gxSSL_TLSv1_2:
+      min_version = max_version = TLS1_2_VERSION;
+      break;
+#if defined (TLS1_3_VERSION)
+    case gxSSL_TLSv1_3:
+      min_version = max_version = TLS1_3_VERSION;
+      break;
+#endif
+    case gxSSL_DTLS:
+      is_dtls = 1;
+      min_version = DTLS1_2_VERSION;
+      break;
+    case gxSSL_DTLSv1_2:
+      is_dtls = 1;
+      min_version = max_version = DTLS1_2_VERSION;
+      break;
+    default: // SSLv2, SSLv3, TLSv1, TLSv1.1 and DTLSv1
+      ssl_error = gxSSL_PROTOCOL_ERROR;
+      return 0;
+  }
+  if(is_dtls) {
+    meth = is_client ? DTLS_client_method() : (is_server ? DTLS_server_method() : DTLS_method());
+  }
+  else {
+    meth = is_client ? TLS_client_method() : (is_server ? TLS_server_method() : TLS_method());
+  }
+  if(!meth) {
+    ssl_error = gxSSL_PROTOCOL_ERROR;
+    return 0;
+  }
+  ctx = SSL_CTX_new(meth);
+  if(!ctx) {
+    ssl_error = gxSSL_CTX_INIT_ERROR;
+    return 0;
+  }
+  if(SSL_CTX_set_min_proto_version(ctx, min_version) != 1 ||
+     (max_version && SSL_CTX_set_max_proto_version(ctx, max_version) != 1)) {
+    DestroyCTX();
+    ssl_error = gxSSL_PROTOCOL_ERROR;
+    return 0;
+  }
+  // Partial writes are not used; SSL_write() sends all bytes or fails
+  SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
+#else
   const SSL_METHOD *meth = 0;
   
   // Set the SSL protocol
@@ -988,6 +1262,7 @@ SSL_CTX *gxSSL::InitCTX()
     ssl_error = gxSSL_CTX_INIT_ERROR;
     return 0;
   }
+#endif // OPENSSL_VERSION_NUMBER >= 0x10100000L
 
   int ssl_cert_type;
   switch(cert_type) {
@@ -1021,12 +1296,41 @@ SSL_CTX *gxSSL::InitCTX()
       return 0;
     }
   }
-  if(!ca_list.is_null()) {
+  // 10/31/2026: A server with a client CA list requires a client
+  // certificate whose chain leads to one of those CAs. They are the
+  // only trusted CAs in this context, so a certificate from a public
+  // CA in the system store cannot pass.
+  if(!client_ca_list.is_null() && !is_client) {
+    if(!SSL_CTX_load_verify_locations(ctx, client_ca_list.c_str(), 0)) {
+      ssl_error = gxSSL_CALIST_ERROR;
+      DestroyCTX();
+      return 0;
+    }
+    // CA names sent in the certificate request, so clients that hold
+    // several certificates pick the right one
+    STACK_OF(X509_NAME) *names = SSL_load_client_CA_file(client_ca_list.c_str());
+    if(!names) {
+      ssl_error = gxSSL_CALIST_ERROR;
+      DestroyCTX();
+      return 0;
+    }
+    SSL_CTX_set_client_CA_list(ctx, names); // ctx owns names now
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, 0);
+    // Session resumption with peer verification needs a session ID
+    // context; without one OpenSSL refuses resumed sessions
+    static const unsigned char sid_ctx[] = "datareel-mtls";
+    SSL_CTX_set_session_id_context(ctx, sid_ctx, sizeof(sid_ctx) - 1);
+  }
+  else if(!ca_list.is_null()) {
     if(!(SSL_CTX_load_verify_locations(ctx, ca_list.c_str(), 0))) {
       ssl_error = gxSSL_CALIST_ERROR;
       DestroyCTX();
       return 0;
     }
+  }
+  else if(verify_cert) {
+    // 10/25/2026: Use the system trust store when no CA list is set
+    SSL_CTX_set_default_verify_paths(ctx);
   }
 
 #if (OPENSSL_VERSION_NUMBER < 0x00905100L)
@@ -1059,15 +1363,18 @@ int gxSSL::InitSSLibrary()
 {
   // Global SSL library init
   if(!gxSSL::lib_init) {
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    // 10/25/2026: OpenSSL 1.1 and 3.x initialize themselves. This call
+    // loads the error strings and the system configuration (on RHEL the
+    // crypto policy) up front, and is thread safe.
+    OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS |
+		     OPENSSL_INIT_LOAD_CONFIG, 0);
+#else
     SSL_library_init();       // Initialize SSL library
     SSL_load_error_strings(); // Map SSL error numbers to strings
-
-    // This is no longer needed as OpenSSL 1.1.0 as this is done automatically.
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSLeay_add_all_algorithms ();
-#endif
-    
     SSLeay_add_ssl_algorithms ();
+#endif
     gxSSL::lib_init = 1;
   }
   return 1;
@@ -1089,6 +1396,7 @@ void gxSSL::init_data_members()
   ssl = 0;
   socket_bio = file_bio = memory_bio = 0;
   bytes_moved = bytes_read = 0;
+  handshake_timeout = gxSSL_DEF_HANDSHAKE_TIMEOUT; // 10/31/2026
   ssl_proto = gxSSL_TLS;
   cert_type = gxSSL_PEM;
   ssl_error = gxSSL_NO_ERROR;
@@ -1106,6 +1414,7 @@ void gxSSL::clear_strings()
   ca_list.Clear();
   passwd.Clear();
   cert_file.Clear();
+  client_ca_list.Clear(); // 10/31/2026
 }
 
 int gxSSL::is_ssl_null()
@@ -1217,7 +1526,9 @@ const char *gxSSL::SSLExceptionMessage()
     return app_err_str.c_str();
   }
 
-  if((int)ssl_error > (gxsMaxOpenSSLExceptionMessages-1)) {
+  // 10/31/2026: Negative codes read before the start of the array
+  if(((int)ssl_error > (gxsMaxOpenSSLExceptionMessages-1)) ||
+     ((int)ssl_error < 0)) {
     ssl_error = gxSSL_INVALID_ERROR_CODE;
   }
 
@@ -1232,12 +1543,17 @@ int gxSSL::VerifyCert(const char *hostname, long *X509_return_code)
 // Returns a non-zero value if the function fails.
 {
   if(!hostname) return ssl_error = gxSSL_NULL_PTR_ERROR;
+  if(is_ssl_null()) return ssl_error; // 10/31/2026: Crashed with no SSL
 
   int is_valid = 0;
   X509 *cert;
   long rv;
   
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  cert = SSL_get1_peer_certificate(ssl);
+#else
   cert = SSL_get_peer_certificate(ssl);
+#endif
   if(cert) {
     rv = SSL_get_verify_result(ssl);
     // The caller requested the X509 return code
@@ -1253,6 +1569,33 @@ int gxSSL::VerifyCert(const char *hostname, long *X509_return_code)
     return ssl_error = gxSSL_CERT_VER_ERROR;
   }
 
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
+  // 10/31/2026: Check the subject alternative names, with wildcards, as
+  // well as the common name (as DataReel 7). A numeric host is checked
+  // as an IP address. Only the common name was compared, so a
+  // certificate with the host name in its alternative names (all public
+  // CA certificates) failed, and an IP address was compared as text.
+  int host_ok;
+  ASN1_OCTET_STRING *ip = a2i_IPADDRESS(hostname);
+  if(ip) {
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    host_ok = X509_check_ip(cert, ASN1_STRING_data(ip), 
+			    ASN1_STRING_length(ip), 0) == 1;
+#else
+    host_ok = X509_check_ip(cert, ASN1_STRING_get0_data(ip), 
+			    ASN1_STRING_length(ip), 0) == 1;
+#endif
+    ASN1_OCTET_STRING_free(ip);
+  }
+  else {
+    host_ok = X509_check_host(cert, hostname, 0, 
+			      X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS, 0) == 1;
+  }
+  X509_free(cert);
+  if(!host_ok) {
+    return ssl_error = gxSSL_PEERCN_ERROR;
+  }
+#else
   char peer_common_name[256];
   memset(peer_common_name, 0, 256);
   X509_NAME_get_text_by_NID(X509_get_subject_name(cert), 
@@ -1262,6 +1605,7 @@ int gxSSL::VerifyCert(const char *hostname, long *X509_return_code)
   if(CaseICmp(peer_common_name, hostname) != 0) {
     return ssl_error = gxSSL_PEERCN_ERROR;
   }
+#endif
 
   return ssl_error = gxSSL_NO_ERROR;
 }
@@ -1273,7 +1617,11 @@ int gxSSL::GetPeerCertInfo(gxString &subject, gxString &issuer)
 {
   subject.Clear(); issuer.Clear();
   if(is_ssl_null()) return ssl_error;
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  X509 *cert = SSL_get1_peer_certificate(ssl);
+#else
   X509 *cert = SSL_get_peer_certificate(ssl);
+#endif
   if(!cert) return ssl_error = gxSSL_PEERCERT_ERROR;
   char buf[4096];
   memset(buf, 0, sizeof(buf));
@@ -1290,6 +1638,87 @@ const char *gxSSL::CertVerifyErrorString(long X509_return_code)
 // 10/24/2026: Returns a string for a VerifyCert() return code
 {
   return X509_verify_cert_error_string(X509_return_code);
+}
+
+int gxSSL::SetDefaultCAPaths()
+// 10/31/2026: Trust the system certificate store in this context, for
+// clients that check a server with VerifyCert() and have no CA list.
+// Call after InitCTX(). Returns 0 if successful.
+{
+  if(is_ctx_null()) return ssl_error;
+  if(SSL_CTX_set_default_verify_paths(ctx) != 1) {
+    return ssl_error = gxSSL_CALIST_ERROR;
+  }
+  return ssl_error = gxSSL_NO_ERROR;
+}
+
+int gxSSL::VerifyClientCert(long *X509_return_code)
+// 10/31/2026: Server side check of the client certificate. The chain
+// was checked during the handshake against the client CA list (see
+// InitCTX()); this makes sure a certificate was sent and that the
+// check passed. SSL_get_verify_result() alone returns X509_V_OK when
+// no certificate was sent, so the certificate is checked first.
+// Returns 0 if successful.
+{
+  if(X509_return_code) *X509_return_code = 0;
+  if(is_ssl_null()) return ssl_error;
+  // The context may belong to another gxSSL object (a listening
+  // gxStream), so look at the verify mode instead of this object's
+  // client CA list
+  if(!(SSL_get_verify_mode(ssl) & SSL_VERIFY_PEER)) {
+    return ssl_error = gxSSL_CALIST_ERROR;
+  }
+  X509 *cert = SSL_get_peer_certificate(ssl);
+  if(!cert) return ssl_error = gxSSL_PEERCERT_ERROR;
+  X509_free(cert);
+  long rv = SSL_get_verify_result(ssl);
+  if(X509_return_code) *X509_return_code = rv;
+  if(rv != X509_V_OK) return ssl_error = gxSSL_CERT_VER_ERROR;
+  return ssl_error = gxSSL_NO_ERROR;
+}
+
+int gxSSL::GetPeerCertIdentity(gxString &sha256_fingerprint, gxString &cn)
+// 10/31/2026: Passes back the SHA-256 fingerprint and the subject CN
+// of the peer's certificate. Returns 0 if successful.
+{
+  sha256_fingerprint.Clear(); cn.Clear();
+  if(is_ssl_null()) return ssl_error;
+  X509 *cert = SSL_get_peer_certificate(ssl);
+  if(!cert) return ssl_error = gxSSL_PEERCERT_ERROR;
+
+  unsigned char md[EVP_MAX_MD_SIZE];
+  unsigned int md_len = 0;
+  if(!X509_digest(cert, EVP_sha256(), md, &md_len) || md_len == 0) {
+    X509_free(cert);
+    return ssl_error = gxSSL_SHA_ERROR;
+  }
+  static const char hex[] = "0123456789ABCDEF";
+  char hbuf[EVP_MAX_MD_SIZE * 3 + 1];
+  unsigned int pos = 0;
+  for(unsigned int i = 0; i < md_len; i++) {
+    if(i > 0) hbuf[pos++] = ':';
+    hbuf[pos++] = hex[(md[i] >> 4) & 0x0F];
+    hbuf[pos++] = hex[md[i] & 0x0F];
+  }
+  hbuf[pos] = 0;
+  sha256_fingerprint = hbuf;
+
+  // Exactly one CN, with no NUL in it, or none at all
+  X509_NAME *name = X509_get_subject_name(cert);
+  int idx = name ? X509_NAME_get_index_by_NID(name, NID_commonName, -1) : -1;
+  if(idx >= 0 && X509_NAME_get_index_by_NID(name, NID_commonName, idx) < 0) {
+    ASN1_STRING *data = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(name, idx));
+    unsigned char *utf8 = 0;
+    int len = data ? ASN1_STRING_to_UTF8(&utf8, data) : -1;
+    if(len > 0 && utf8) {
+      if(memchr(utf8, 0, (size_t)len) == 0) {
+	cn.InsertAt(0, (const char *)utf8, (unsigned)len);
+      }
+    }
+    if(utf8) OPENSSL_free(utf8);
+  }
+  X509_free(cert);
+  return ssl_error = gxSSL_NO_ERROR;
 }
 
 // 07/31/2021: Include support for openssl 1.0.1
@@ -1657,7 +2086,25 @@ int gxSSL::MakeRSAPrivateKey(const char *key_fname, int key_len,
 
   if(!private_key) return ssl_error = gxSSL_RSAGEN_ERROR;
 
+  // 10/31/2026: The private key file is owner-only (mode 0600 on UNIX,
+  // a protected DACL for the current user on Windows) before the key is
+  // written. It used to get the umask permissions, usually readable by
+  // every user (found by the DataReel 7.3 security sweep).
+#if defined (__UNIX__)
+  FILE *fp = 0;
+  int fd = open(key_fname, O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC, S_IRUSR|S_IWUSR);
+  if(fd >= 0) {
+    if(fchmod(fd, S_IRUSR|S_IWUSR) == 0) fp = fdopen(fd, "wb");
+    if(!fp) close(fd);
+  }
+#else
   FILE *fp = fopen(key_fname, "w+b");
+  if(fp && (gxdFPTRMakePrivate(key_fname) != 0)) {
+    fclose(fp);
+    remove(key_fname);
+    fp = 0;
+  }
+#endif
   if(!fp) {
     app_err_str << clear << "SSL exception: Can't write RSA private key file " 
 		<< key_fname;
@@ -1714,10 +2161,10 @@ int gxSSL::MakeCertReq(const char *key_fname, gxCertIssuerInfo &ci,
   }
 
   EVP_PKEY *private_key = PEM_read_PrivateKey(fp, 0, 0, 0);
+  fclose(fp); // 10/31/2026: Was left open when the key could not be read
   if(!private_key) {
     return ssl_error = gxSSL_KEY_ERROR;
   }
-  fclose(fp);
 
   X509 *x = X509_new(); // 10/14/2026: Was "x = x=X509_new()" (undefined order)
   if(!x) {
@@ -1730,7 +2177,10 @@ int gxSSL::MakeCertReq(const char *key_fname, gxCertIssuerInfo &ci,
   X509_set_version(x,2);
   ASN1_INTEGER_set(X509_get_serialNumber(x), ci.sn);
   X509_gmtime_adj(X509_get_notBefore(x), 0);
-  X509_gmtime_adj(X509_get_notAfter(x), (long)(60*60*24*ci.days));
+  // 10/31/2026: Multiply in long; the int product overflowed for more
+  // than 24855 days. 100 years at most.
+  if(ci.days > 36525) ci.days = 36525;
+  X509_gmtime_adj(X509_get_notAfter(x), 60L*60L*24L*(long)ci.days);
   X509_set_pubkey(x, private_key);
 
   X509_NAME *name = X509_get_subject_name(x);
@@ -1889,6 +2339,7 @@ int gxSSL::MakeCertReq(const char *key_fname, gxCertIssuerInfo &ci,
     return ssl_error = gxSSL_APPDEF_ERROR;
   }
   if(!PEM_write_X509(fp, x)) {
+    fclose(fp); // 10/31/2026: Was left open on a write error
     X509_free(x);
     EVP_PKEY_free(private_key);
     CRYPTO_cleanup_all_ex_data();

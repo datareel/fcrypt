@@ -1,4 +1,4 @@
-DataReel 6.1 Readme File
+DataReel 6.4 Readme File
 DataReel Copyright (c) 2001-2026 DataReel Software Development
 
 https://datareel.com
@@ -254,14 +254,72 @@ DOCUMENTATION
 All documentation is included in the docs sub directory in an HTML
 format, viewable in any Web browser. 
 
+VERSION 6.4
+-----------
+DataReel 6.4, 11/17/2026, is the 6.3.1 library with the
+single-node crash safety and damaged-file fixes of DataReel 7.0-7.4
+(folder sync after a file is created, cached B-tree and length checks,
+the read-only B-tree cache, the next/previous block navigation fix,
+layout detection), the TLS settings and the IMAP client (beta 2), best
+fit block reuse, unique journal salts and the canonical 32-byte gxStream
+wire header (beta 3), and an optional CMake build of the DataReel 7.x
+vector database and object replication features for 6.x programs
+(DATAREEL7_FEATURES_DIR, a DataReel 7.4 or later source tree). The API
+and the database file format are the same as 6.3.1; 6.4 holds no copy
+of the 7.x vector or replication code. Note: 6.4 gxStream, gxDatagram
+and gxSerialCommServer peers do not talk to 6.3 or older peers built on
+Windows or for 32 bits; upgrade both ends together.
+gxv7VectorIndex and gxv7VectorSet use the 7.x .vix/.vixset vector
+index, gxv7ObjectClient searches a 7.x object server's vectors, and
+gxv7ObjRepl (DataReel 7.4 or later) replicates
+a 6.x program's objects with the 7.x gxObjRepl, to and from DataReel
+7.4 programs, on Linux and Windows. See RELEASE_NOTES_6.4.txt and
+examples_database/vector_index, examples_database/replication_6x and
+examples_socket/vector_client. The shared library is built as
+libdatareel.so.6.4.
+
+VERSION 6.3.1
+-------------
+DataReel 6.3.1, 11/14/2026, finishes the 6.x security sweep: the
+networking part of the DataReel 7.3.1 sweep (sockets, TLS, gxStream,
+HTTP, URL, SMTP, POP3, FTP) and the rest of the 6.x-only modules
+(gxDatagram, gxRDBMS, the HTML/XML/RSS parsers, the print drivers,
+SysTime, Terminal). gxStream servers now need client certificates, or
+an explicit AllowAnonymousClients(true). The file formats are
+unchanged. The shared library is built as libdatareel.so.6.3.1;
+recompile and relink. Tested on RHEL 10.2 and on Windows 11 with
+Visual Studio 2026 (Schannel and OpenSSL). See RELEASE_NOTES_6.3.1.txt.
+
+VERSION 6.3
+-----------
+DataReel 6.3, 10/31/2026, brings the object database speed and crash
+safety work of DataReel 7.2 and 7.3 to 6.x: positional file I/O, a
+hashed B-tree cache, and an optional page cache and write-ahead
+journal (gxdjrnl.h) whose journal file is owner-only and removed after
+a clean close. The file formats are unchanged and 6.3 writes the same
+bytes as 6.2. The shared library is built as libdatareel.so.6.3. Classes
+have new members, so recompile and relink; programs that compile the
+library sources must add gxdjrnl.cpp and gxdpcache.cpp. See
+RELEASE_NOTES_6.3.txt and examples_database/run_db_tests.sh. Every
+change in the source is marked with a "10/31/2026" comment.
+
+VERSION 6.2
+-----------
+DataReel 6.2, 10/25/2026, stops gxBtree walks and InfoHog data file
+scans from looping forever on damaged or crafted files, adds
+gxDatabase::SetWriteHook(), fixes the wxWidgets 3 headers, adds the
+__wxWIN3__ macro and adds a CMake build (see BUILDING WITH CMAKE). The
+shared library is built as libdatareel.so.6.2. gxDatabase has two new
+members, so recompile and relink. See RELEASE_NOTES_6.2.txt. Every
+change in the source is marked with a "10/25/2026" comment.
+
 VERSION 6.1
 -----------
 DataReel 6.1, 10/25/2026, is a security fix release. gxBtree and
 InfoHog now check the lengths and counts they read from database and
 index files, so a damaged or crafted file is rejected instead of
 overflowing memory. The shared library is built as libdatareel.so.6.1.
-The only interface change from 6.0 is the new
-gxDatabase::SetWriteHook(); recompile and relink. See
+There are no interface changes from 6.0; recompile and relink. See
 RELEASE_NOTES_6.1.txt. Every change in the source is marked with a
 "10/25/2026" comment.
 Supported platforms are now RHEL 10 (default), 9 and 8, Windows 11,
@@ -387,6 +445,16 @@ DATAREEL_64BIT_DATABASE ON for the 64-bit database engine with large
                         file support (default OFF)
 DATAREEL_NATIVE_TYPES   ON (default) to use native integer and float
                         types
+DATAREEL7_FEATURES_DIR  6.4: a DataReel 7.4 or later source tree; also
+                        builds the 7.x vector database features for
+                        6.x programs (target DataReel::dr7features,
+                        dr7features/include/dr7features.h). Empty
+                        (default): off, the 6.3.1 library only
+DATAREEL7_TOOLS         6.4: with DATAREEL7_FEATURES_DIR, ON (default)
+                        to also build the 7.x objrepl, objrepl_sim,
+                        test_gxobjrepl_api and vix_rebuild, and on
+                        POSIX object_server, object_client and the
+                        6.4 vector_server into <build>/dr7inner/tools
 
 Other CMake projects can build and link the library directly:
 

@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 02/14/1996  
-// Date Last Modified: 10/24/2026
+// Date Last Modified: 11/14/2026
 // Copyright (c) 2001-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -52,7 +52,7 @@ the gxdExceptionMessages array.
 
 // NOTE: This array must contain the same number of exceptions as the
 // gxDatabaseError enumeration. 
-const int gxdMaxExceptionMessages = 90;
+const int gxdMaxExceptionMessages = 92;
 const char *gxdExceptionMessages[gxdMaxExceptionMessages] = {
   "Database exception: No exception reported",               // None
   "Database exception: Invalid error code reported",         // Invalid
@@ -151,7 +151,13 @@ const char *gxdExceptionMessages[gxdMaxExceptionMessages] = {
   "Database exception: Bad index file number", // BAD_INDEX_NUMBER
   "Database exception: Bad index file name",   // BAD_INDEX_NAME
   "Database exception: Error renaming file",   // FILE_RENAME_ERROR
-  "Database exception: Error deleting file"    // FILE_DELETE_ERROR 
+  "Database exception: Error deleting file",   // FILE_DELETE_ERROR 
+
+  // 11/16/2026: 6.4
+  "Database exception: File made by a build with a different file layout \
+(64-bit Linux files differ from Windows and 32-bit files)", // FILE_LAYOUT_ERROR
+  "Database exception: File made by the other database engine \
+(32-bit and 64-bit file address engines)" // FILE_ENGINE_ERROR
 };
 
 // NOTE: This array must contain the same number of status messages
@@ -179,7 +185,8 @@ GXDLCODE_API const char *gxDatabaseExceptionMessage(gxDatabaseError err)
 // be use to log or print a database exception message.
 {
   int error = (int)err;
-  if(error > (gxdMaxExceptionMessages-1)) error = gxDBASE_INVALID_CODE;
+  // 11/14/2026: Negative codes read before the start of the array
+  if(error < 0 || error > (gxdMaxExceptionMessages-1)) error = gxDBASE_INVALID_CODE;
 
   // Find the corresponding message in the exception array
   return gxdExceptionMessages[error];
@@ -190,7 +197,7 @@ GXDLCODE_API const char *gxDatabaseStatusMessage(gxDatabaseStatus status)
 // be use to log or print a database status message.
 {
   int s = (int)status;
-  if(s > (gxdMaxStatusMessages-1)) s = gxDBASE_INVALID_STATUS;
+  if(s < 0 || s > (gxdMaxStatusMessages-1)) s = gxDBASE_INVALID_STATUS; // 11/14/2026
 
   // Find the corresponding message in the exception array
   return gxdStatusMessages[s];

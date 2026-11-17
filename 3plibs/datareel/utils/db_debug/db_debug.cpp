@@ -6,7 +6,7 @@
 // Compiler Used: MSVC, BCC32, GCC, HPUX aCC, SOLARIS CC
 // Produced By: DataReel Software Development Team
 // File Creation Date: 02/04/1997  
-// Date Last Modified: 10/24/2026
+// Date Last Modified: 10/31/2026
 // Copyright (c) 2001-2026 DataReel Software Development
 // ----------------------------------------------------------- // 
 // ------------- Program Description and Details ------------- // 
@@ -167,7 +167,21 @@ void FindBlock(gxDatabaseDebugManager *f, int verbose, int walk)
     f->Read(&blk, sizeof(gxBlockHeader), addr);
     if(CheckError((gxDatabase *)f) != 0) return;
     
-    if(f->TestBlockHeader(blk)) { 
+    // 10/31/2026: A block whose next address is not past this one and
+    // inside the file is bad. With native types on 64-bit systems a
+    // damaged length wrapped the address back to an earlier block and
+    // the search never ended (found by the DataReel 7.3 security sweep).
+    // 10/31/2026: Compare the length unsigned with the room left in the
+    // file before adding it (DataReel 7.3.1: addr plus a huge length
+    // overflowed where FAU_t is 32 bits), and a length shorter than a
+    // block header is bad, as in gxDatabaseDebugManager::Rebuild().
+    FAU_t next_addr = (FAU_t)0;
+    int good = f->TestBlockHeader(blk) &&
+      ((gxUINT32)blk.block_length >= (gxUINT32)f->BlockHeaderSize()) &&
+      ((unsigned long long)blk.block_length <= 
+       (unsigned long long)(StaticEOF - addr));
+    if(good) next_addr = addr + (FAU_t)blk.block_length;
+    if(good && (next_addr > addr)) { 
       count++; // Increment the database block count
       if(verbose) {
 	BlockStats((gxDatabase *)f, (addr+f->BlockHeaderSize()));
@@ -186,7 +200,7 @@ void FindBlock(gxDatabaseDebugManager *f, int verbose, int walk)
 	  }
 	}
       }
-      addr = addr + blk.block_length; // Go to the next database block
+      addr = next_addr; // Go to the next database block
     }
     else {
       badgx++;
@@ -195,7 +209,8 @@ void FindBlock(gxDatabaseDebugManager *f, int verbose, int walk)
       GXSTD::cout << "Found bad database block at address " << intbuf.c_str() 
 		  << "\n";
       GXSTD::cout << "Searching for next good database block..." << "\n";
-      addr = f->BlockSearch(addr); // Search for the next good block
+      // 10/31/2026: From the next byte, so the search always moves on
+      addr = f->BlockSearch(addr + 1); // Search for the next good block
       if(!addr) {
 	GXSTD::cout << "None found!" << "\n";
 	GXSTD::cout << "\n";
