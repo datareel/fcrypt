@@ -7,7 +7,7 @@
 HERE=$(cd "$(dirname "$0")" && pwd)
 W=${1:-$HERE/test_runs}
 ROUNDS=${CRASH_ROUNDS:-50}
-EX="btree btree_cached btree_node damaged database database_cache defrag infohog pod simple"
+EX="btree btree_cached btree_node damaged database database_cache defrag infohog layout pod simple"
 mkdir -p "$W"
 pass=0; fail=0
 result() { if [ $1 -eq 0 ]; then pass=$((pass+1)); echo "PASS $2"; else fail=$((fail+1)); echo "FAIL $2"; fi; }
@@ -42,6 +42,14 @@ for t in examples_general/support_security examples_socket/comm_security \
   (cd "$HERE/../$t" && make >/dev/null 2>&1)
   (cd "$d" && "$HERE/../$t/testprog" > $n.log 2>&1); result $? "$n"
 done
+# 11/16/2026: block reuse, best fit and first fit (ReclaimBestFit() reused only exact fits)
+(cd "$HERE/reclaim" && make >/dev/null 2>&1); result $? "build reclaim"
+d="$W/reclaim"; mkdir -p "$d"
+(cd "$d" && "$HERE/reclaim/testprog" "$d" > reclaim.log 2>&1); result $? "reclaim (best fit and first fit reuse freed blocks)"
+# 11/16/2026: journal salts distinct across processes forked in the same second
+(cd "$HERE/journal_salt" && make >/dev/null 2>&1); result $? "build journal_salt"
+d="$W/journal_salt"; mkdir -p "$d"
+(cd "$d" && "$HERE/journal_salt/testprog" "$d" > salt.log 2>&1); result $? "journal salts distinct across forked processes"
 for m in 0 1; do
   d="$W/journal_map$m"; mkdir -p "$d"
   (cd "$d" && "$HERE/journal/testprog" 20 7 $m > journal.log 2>&1); result $? "journal tests (memory-mapped reads $m)"

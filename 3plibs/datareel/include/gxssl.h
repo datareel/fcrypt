@@ -166,16 +166,17 @@ typedef SSL gxSSL_t;
 // Enumerations
 // --------------------------------------------------------------
 enum gxSSLMethod {
-  gxSSL_SSLv23,  // Supported protocols are SSLv2, SSLv3, TLSv1, TLSv1.1 and TLSv1.2
+  gxSSL_SSLv23,  // OpenSSL 1.1 and later: TLS 1.2 and TLS 1.3 (same as gxSSL_TLS)
   gxSSL_SSLv2,   // Only understand SSLv2
   gxSSL_SSLv3,   // Only understand SSLv3
   gxSSL_TLSv1,   // Only understand TLSv1
-  gxSSL_TLS,     // Supported protocols SSLv3, TLSv1, TLSv1.1 and TLSv1.2
+  gxSSL_TLS,     // OpenSSL 1.1 and later: TLS 1.2 and TLS 1.3
   gxSSL_TLSv1_1, // Only understand TLSv1.1
   gxSSL_TLSv1_2, // Only understand TLSv1.2
   gxSSL_DTLS,  
   gxSSL_DTLSv1,  
-  gxSSL_DTLSv1_2
+  gxSSL_DTLSv1_2,
+  gxSSL_TLSv1_3  // 11/16/2026: Only understand TLSv1.3
 };
 
 enum gxSSLCertType {
@@ -359,6 +360,11 @@ public: // Socket functions
   int RecvSSLSocket(void *buf, int bytes, int seconds, int useconds);
   int RecvSSLSocket(void *buf, int bytes, int useTimeout, int seconds,
 		    int useconds);
+  // 11/16/2026: Returns the decrypted bytes available, up to bytes,
+  // waiting up to the timeout for the first one. Returns the number of
+  // bytes read, 0 if the connection has closed, or -1 for an error or a
+  // timeout (gxSSL_REQUEST_TIMEOUT).
+  int RecvSomeSSLSocket(void *buf, int bytes, int seconds, int useconds);
   int CloseSSLSocket(int destroy_ssl = 1);
   int IsServer() { return is_server == 1; }
   int IsClient() { return is_client == 1; }

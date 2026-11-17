@@ -1,21 +1,166 @@
-DataReel 6.4 Release Notes, 11/15/2026 (beta)
+DataReel 6.4 Release Notes, 11/17/2026
 DataReel version 6.4 (was 6.3.1)
 DataReel Copyright (c) 2001-2026 DataReel Software Development
 
-DataReel 6.4 is the DataReel 6.3.1 library with an optional build of
-the DataReel 7.x vector database and replication features for 6.x
-programs. The 6.x library itself is the 6.3.1 library: the same
-source, the same API, and database files byte-identical to 6.2 and
-6.3.1. DataReel 6.4 has no copy of the 7.x vector or replication code.
-A 6.x build uses the 7.x code, from a DataReel 7.4 or later source
-tree, only when it is asked to:
+DataReel 6.4 is the DataReel 6.3.1 library, with the single-node crash
+safety and damaged-file fixes of DataReel 7.0-7.4 ported to the 6.x
+classes (beta 2 and beta 3, below), and an optional build of the
+DataReel 7.x vector database and object replication features for 6.x
+programs. The 6.x API is the same, and database files keep the 6.2 and
+6.3.1 format: 6.2 and 6.3.1 read every file 6.4 writes. (A file whose
+freed blocks are reused with best fit can hold different bytes than
+6.3.1 would write; see BETA 3.) The gxStream wire header changed in
+6.4: 6.4 network peers do not talk to 6.3 or older peers built on
+Windows or for 32 bits (see BETA 3).
+DataReel 6.4 has no copy of the 7.x vector or replication code. A 6.x
+build uses the 7.x code, from a DataReel 7.4 or later source tree, only
+when it is asked to:
 
   cmake -S datareel-6.4 -B build -DDATAREEL7_FEATURES_DIR=/path/to/datareel-7.4
 
-A program that does not use the 7.x features builds and runs exactly
-as with 6.3.1, with the makefiles or with CMake. Everything in
-RELEASE_NOTES_6.3.1.txt and RELEASE_NOTES_6.3.txt is included.
-The shared library (Linux makefiles) is built as libdatareel.so.6.4.
+A program that does not use the 7.x features builds with the makefiles
+or with CMake as with 6.3.1. Everything in RELEASE_NOTES_6.3.1.txt and
+RELEASE_NOTES_6.3.txt is included. The shared library (Linux makefiles)
+is built as libdatareel.so.6.4.
+
+BETA 2 (11/16/2026): FIXES FROM DATAREEL 7.x
+---------------------------------------------
+- Power loss: gxdFPTRCreate() and gxdFPTRCreatePrivate() sync the folder
+  after they create a file (POSIX), so a new database or journal file,
+  and the commits made to it, survive a power cut (DataReel 7.4).
+- Damaged files (DataReel 7.0):
+  - BtreeBucket::ReadNode() rejects a key count larger than the node
+    order (a heap overflow in the cached B-tree; the uncached B-tree was
+    fixed in 6.1).
+  - The cached B-tree walks stop after gxBtreeMaxNodeReads nodes, as the
+    uncached ones do.
+  - InfoHog::Read() and gxPersistent::ReadString() check lengths read
+    from the file unsigned against the end of the file.
+  - gxDatabase copies file names with a bound (strcpy() overflowed on
+    long path names).
+- The B-tree cache works with index files opened read only (clean
+  buckets are reused); before, a cached find or walk on a read-only
+  index found nothing.
+- Block navigation (DataReel 7.0 and 7.3.1): FindNextBlock(),
+  FindNextObject(), FindPrevBlock() and FindPrevObject() take an object
+  or a block address and return 0 at the ends of the file. Before,
+  FindNextBlock() skipped a block when given an object address and
+  returned the last block again at the end, so a FindFirstObject()/
+  FindNextObject() walk missed records and never ended. FindPrevBlock()
+  no longer skips deleted blocks (FindPrevObject() does). A damaged
+  block length is compared unsigned, with no signed overflow.
+  FindFirstBlock() is unchanged, and FindFirstObject() returns the same
+  object as before in an undamaged file. Programs that walk with
+  FindFirstBlock() and the block length (as EPDB does) are not affected.
+- Warnings: the gxstream.cpp TLS helpers are built only with
+  __USE_GX_SSL_EXTENSIONS__; gxSocket::InitSIN() unused parameter.
+- Files from another platform's layout (new error code): with native
+  integer types (__USE_NATIVE_INT_TYPES__, the default) gxUINT32 and
+  gxINT32 are 8 bytes on 64-bit Linux and 4 bytes on Windows and in
+  32-bit builds, so the database file headers differ. Such a file used
+  to open and read as empty, or as damaged. gxDatabase::Open() (and so
+  gxBtree, InfoHog and the other classes on it) now refuses it with
+  gxDBASE_FILE_LAYOUT_ERROR. A file from the other database engine
+  (32-bit or 64-bit file addresses) gets gxDBASE_FILE_ENGINE_ERROR: a
+  32-bit engine build used to open a 64-bit engine file, because the
+  signature "GXDBASE" is the start of "GXDBASE64". The new codes are
+  added at the end of gxDatabaseError, so the other codes keep their
+  numbers. A file with no objects, or with a damaged first block, is
+  opened as before. Builds with the portable types (fcrypt, EPDB) write
+  the same files everywhere and are not affected.
+
+BETA 2 (11/16/2026): TLS SETTINGS FROM DATAREEL 7.x
+---------------------------------------------------
+- TLS 1.2 is the minimum. With OpenSSL 1.1 and later, gxSSL_SSLv23 and
+  gxSSL_TLS negotiate TLS 1.2 or TLS 1.3 and gxSSL_TLSv1_2 is TLS 1.2
+  only. SSLv2, SSLv3, TLS 1.0, TLS 1.1 and DTLS 1.0 (gxSSL_SSLv2,
+  gxSSL_SSLv3, gxSSL_TLSv1, gxSSL_TLSv1_1, gxSSL_DTLSv1) make InitCTX()
+  fail with gxSSL_PROTOCOL_ERROR. The Windows Schannel build has the
+  same minimum.
+- New gxSSL_TLSv1_3: TLS 1.3 only (Windows 10 1809 and later with
+  Schannel).
+- With RequireVerifyCert() set before InitCTX(), a client handshake
+  fails when the server's certificate chain or host name (SetHostName(),
+  checked against the subject alternative names and IP entries) does
+  not verify, and the system certificate store is trusted when no CA
+  list is set. Before, the check was left to VerifyCert() after the
+  handshake.
+- The server name (SNI) is not sent when SetHostName() is an IP address.
+- The handshake timeout (SetHandshakeTimeout(), 60 seconds by default)
+  keeps a shorter send or receive timeout that the program set on the
+  socket. Before, the handshake ran with the 60 second limit and a
+  program's shorter limit (the ssl-bridge's) did not apply.
+- OpenSSL 3: SSL_get1_peer_certificate(); OPENSSL_init_ssl() loads the
+  system configuration (on RHEL, the crypto policy).
+
+BETA 2 (11/16/2026): IMAP CLIENT (gxsimap.h, gxsimap.cpp)
+---------------------------------------------------------
+- New gxsIMAPClient class, the IMAP counterpart of gxsPOP3Client, based
+  on the 2007 IMAP client by Douglas Gaer (RFC 3501, RFC 2595):
+  - ConnectClient() with TLS from the start (port 993) or plain text
+    (port 143) and StartTLS();
+  - Login(), Logout(), SelectMailbox() (SELECT or EXAMINE),
+    ListMailboxes(), Search(), Noop(), Capability();
+  - FetchHeader(), FetchBody(), FetchMessage(), FetchDates(); the
+    fetches do not set \Seen;
+  - StoreFlags(), MarkSeen(), MarkDeleted(), Expunge();
+  - SendCommand() for any other command.
+- A reply ends only at the line that starts with the command's tag,
+  and only an OK status is success; NO and BAD replies are errors with
+  the server's text. Literals are read by count. Arguments are quoted,
+  or sent as literals when they have 8-bit characters.
+- Login() refuses to send a password without TLS unless
+  AllowPlainLogin() is set. Data sent before a STARTTLS handshake is
+  refused. Replies are limited to SetMaxReply() bytes (64 MB). The
+  session log (RecordSession()) leaves out passwords.
+- New gxSSL::RecvSomeSSLSocket(): the bytes available, waiting up to a
+  timeout for the first one (OpenSSL and Schannel).
+- The DataReel 7.4 gxsIMAPClient interface, with the 2007 work client's
+  calls, is in 6.4 too, so a program builds against either version:
+  Connect() (gxsMAIL_IMPLICIT_TLS or gxsMAIL_STARTTLS), ConnectPlain(),
+  Login(), Logout(), Capability()/HasCapability() (LOGIN is refused on
+  LOGINDISABLED), SelectMailbox(), Examine(), ListMailboxes(), Search(),
+  FetchHeader() (also the 2007 form with the dates), FetchBody(),
+  FetchMessage(), FetchInternalDate(), Delete(), Expunge(), Command()
+  with Untagged() and LastReply(), the 2007 SendCommand(cmd, tag),
+  RecvBuffer() and ParseResponse(), FetchItem(), Quote(), Error() and
+  the settings SetTimeout(), SetCAFile(), SetVerifyPeer(), SetMaxSize()
+  and SetRecordProto()/ProtoString(). These use std::string and
+  std::vector and return 0 or -1, as in 7.4.
+- examples_socket/imap_client: one IMAP command from the command line,
+  written with the 7.4 calls. proto_security: 47 IMAP checks with a
+  fake server.
+
+BETA 3 (11/17/2026): FIXES AND THE WIRE HEADER FROM DATAREEL 7.4
+----------------------------------------------------------------
+- Best-fit block reuse (gxDatabase::ReclaimBestFit(),
+  gxDBASE_RECLAIM_BESTFIT): only exact fits were reused, so every other
+  allocation grew the file. Now a free block whose unused bytes are
+  within the reuse limit (2.5 times the bytes requested) is a
+  candidate, and the one leaving the fewest unused bytes is taken; the
+  rest of the split stays free. The deleted-block count follows the
+  chosen block. First fit (the default) is unchanged, and so is the
+  file format. Because blocks are now reused, a file built with best
+  fit (for example the defrag example's) can differ byte for byte from
+  6.3.1's; 6.2 and 6.3.1 read it. Test: examples_database/reclaim.
+- Journal salts (gxdJournal): processes forked from one parent that
+  wrote a journal header in the same second got the same salt, and a
+  recovery could replay the previous session's records. The salt now
+  mixes the OS random source (/dev/urandom; on Windows the performance
+  counter, the process id and the tick count), a fine clock, the
+  process id, a counter and the object's address. The journal format
+  is unchanged. Test: examples_database/journal_salt.
+- The gxStream block header on the wire (gxStream, gxDatagram,
+  gxSerialCommServer): DataReel 7.4's canonical 32-byte form,
+  the bytes 64-bit Linux always sent, on every platform. A sender with
+  4-byte words (a Windows or 32-bit build before this change) is
+  refused (gxStream::PeerOldHeader()).
+  COMPATIBILITY: a 6.4 gxStream, gxDatagram or gxSerialCommServer peer
+  does not talk to a 6.3 or older peer built on Windows or for 32 bits.
+  Upgrade both ends together. 6.4 talks to DataReel 7.4 and
+  later.
+- Object replication for 6.x programs (gxv7ObjRepl, the 7.x features
+  build): see OBJECT REPLICATION below.
 
 THE 7.x FEATURES BUILD (CMake only)
 -----------------------------------
@@ -33,8 +178,13 @@ THE 7.x FEATURES BUILD (CMake only)
   a C++17 compiler, the same one for both libraries.
 - DATAREEL7_TOOLS (default ON with DATAREEL7_FEATURES_DIR): also build
   the 7.x programs from the 7.x tree into <build>/dr7inner/tools:
-  gxrepl (database replication), object_server and object_client
-  (POSIX), vix_rebuild.
+  objrepl, objrepl_sim and test_gxobjrepl_api (object replication),
+  vix_rebuild, and on POSIX object_server, object_client and the 6.4
+  vector_server (the object server with a vector set).
+- 11/17/2026: the 7.x tree must be DataReel 7.4 or later
+  (gxObjRepl, the canonical gxStream block header, no gxrepl). The
+  build checks for these features, not a version or commit, and stops
+  with a message for an older tree.
 - The 7.x library is built with the same database engine as the 6.x
   library (DATAREEL_64BIT_DATABASE).
 - Do not include DataReel 7.x headers in a 6.x source file. The two
@@ -67,64 +217,85 @@ Example: examples_database/vector_index.
 VECTOR SEARCHES ON A 7.x OBJECT SERVER: gxv7ObjectClient
 --------------------------------------------------------
 A 6.x program sends op 7 VECTOR_SEARCH and op 8 VECTOR_INFO to a
-DataReel 7.x database object server (for example "gxrepl serve" with a
-[db NAME] section that names "vectors"). The connection uses mutual
+DataReel 7.x database object server (for example the 6.4 vector_server
+tool, which serves a database with "vectors"). The connection uses mutual
 TLS: the client's certificate, the CA, and the server name checked.
 The client uses the 7.x client classes, so the messages are the 7.x
 ones. POSIX only, as the DataReel 7.4 object client (its multiplex
 session is built on POSIX systems only): on Windows Connect() returns
 -1. Example: examples_socket/vector_client.
 
-REPLICATION OF 6.x DATABASES WITH THE 7.x gxrepl
-------------------------------------------------
-A 6.x program's database folder is replicated by the 7.x gxrepl,
-running next to it as a separate process. The 6.x program is not
-changed and links no 7.x code.
-- gxrepl copies a folder without a ship log by a scan of changed
-  64 KB pieces. It reads a live folder under the shared lock of the
-  folder's journal file.
-- The DataReel 6.3/6.4 gxdJournal and gxdJournalReadLock use the same
-  lock as 7.x: flock() on the journal file (LockFileEx on Windows).
-- A 6.x writer that uses gxdJournal with SetWriteLock(1), with the
-  journal in the database folder, can be copied while it writes: every
-  copy is a whole commit.
-- A writer without a journal can be copied while it is quiet.
-- A 6.x reader of a live copy takes gxdJournalReadLock on
-  <copy>/.gxrepl/apply.jnl.
-- The ship log (commit-by-commit replication of a writer that calls
-  gxdJournal::EnableShipLog()) needs the 7.x journal. A 6.x program's
-  folders always go by the scan.
-- gxrepl is POSIX only, as in DataReel 7.4.
+OBJECT REPLICATION: gxv7ObjRepl (11/17/2026)
+---------------------------------------------
+The 7.x gxObjRepl for 6.x programs: object replication between two
+independent object databases (node folders). Only objects travel
+(gxStream blocks over TLS with certificates on both sides), never file
+pages; each node keeps its own file addresses, free space and indexes.
+- A primary commits objects (bytes under a 64-bit id both nodes share)
+  with Begin(), Put(), Remove(), Purge(), Commit(); each commit is
+  durable with its outbox entry, and Pump() or Drain() sends it.
+- A copy serves with Serve() until Stop() and refuses application
+  writes. Takeover(), Rejoin(), Status(), Check(), Digest() and
+  ClearAlarm() work on a node folder.
+- The configuration is the objrepl.conf keys (SetConfig(),
+  LoadConfig()), as for the 7.4 objrepl tool.
+- A 6.x program and a DataReel 7.4 program (or the 7.4 objrepl tool)
+  replicate to each other, on Linux and Windows: 7.4 sends
+  gxStream's block header in one canonical 32-byte form, and so does
+  6.4 (gxstream-wire-6x).
+- The node files are the 7.x files of the build's database engine; a
+  32-bit engine node and a 64-bit engine node never share a folder.
+- The 7.x gxrepl (page-shipping replication) is gone: DataReel 7.4
+  removed it. The replication_6x example is rewritten on
+  gxv7ObjRepl: repl6_writer is a primary, repl6_check a copy, and
+  either replicates with the 7.4 objrepl tool.
 Example and how-to: examples_database/replication_6x (README.txt). See
-also the DataReel 7 replication administrator's guide.
+also the DataReel 7.4 gxObjRepl reference and administrator's guide.
 
 TESTED PLATFORMS
 ----------------
-On RHEL 10.2 with DataReel 7.4 beta3 (tag 7.4-beta3), 32-bit and
-64-bit database engines:
-- vector_index: all checks pass. A 6.x program reading the DataReel
-  7.4 phase C .vix files gets the 7.4 results: 28 of 28 result lines
-  equal, on both engines.
-- replication_6x: 12 of 12, in three rounds on the 64-bit engine and
-  one on the 32-bit engine. The copy is byte-identical, every live
-  copy is a whole commit and never goes back.
-- vector_client: 7 of 7. The server's answers equal local searches,
-  and bad requests and certificates are refused.
-- The 6.x library with DATAREEL7_FEATURES_DIR off: the same objects
-  as 6.3.1 (only a build folder name in gxssl differs); run_db_tests
-  33 of 33 and the 6.2 file compare (21 files the same) on both
-  engines.
+DataReel 6.4, 11/17/2026. The 7.x features build used DataReel 7.4.
 
-On Windows 11 with Visual Studio 2026 (MSVC 19.52), x64 (64-bit
-engine) and Win32 (32-bit engine), the CMake build with
-DATAREEL7_FEATURES_DIR:
-- builds with no errors (the 7.x library, dr7features, vector_index,
-  the replication example programs and vix_rebuild);
-- vector_index: 27 of 27 checks. The 7.x vix_rebuild reads every .vix
-  file it wrote, and the vectors are the same as the Linux build's
-  (the same logical digests; the demo file's ids are record addresses,
-  which differ by the header size).
-- gxrepl and gxv7ObjectClient are POSIX only, as in DataReel 7.4.
-  The phase C files are Linux files (see VECTOR DATABASE above).
+On RHEL 10.2 (GCC), 32-bit and 64-bit database engines:
+- examples_database/run_db_tests.sh: 39 of 39 on both engines (the
+  examples, the damaged-file and security sweeps, the networking and
+  TLS checks, reclaim, journal_salt, the journal tests and 50 kill -9
+  crash rounds). Also under AddressSanitizer and UBSan: 39 of 39, no
+  reports.
+- The 6.2 file compare: of 21 files, only defrag.gxd differs (best-fit
+  reuse, see BETA 3); 6.2 reads it.
+- The CMake build with the 7.x features off builds as before.
+- The 7.x features build:
+  - vector_index: all checks; the DataReel 7.4 phase C .vix files give
+    the 7.4 results (fau64 and fau32).
+  - vector_client: 7 of 7 (against vector_server).
+  - replication_6x (gxv7ObjRepl): 23 of 23 on both engines: a 6.4
+    primary to a 7.4 copy and a 7.4 primary to a 6.4 copy with equal
+    digests, 6.4 to 6.4 with every record's CRC and index checked, a
+    copy that starts late, a refused certificate and a 7.4 takeover.
+  - The DataReel 7.4 wire tests against 6.4 (run_repl6_xver.sh): the
+    same 32-byte header from both, 6.4 and 7.4 as server and client,
+    6.4 speaking the gxObjRepl handshake both ways: 5 of 5.
+  - The DataReel 7.4 objrepl test scripts on the tools of a 6.4 build:
+    all pass (the API test 73 of 73; the lag test at 2,000 commits).
+- Programs built on 6.4: fcrypt (key management 44, security
+  77, compatibility 43, migration 50), the encrypted password database
+  (162 CLI checks, journal 25 of 25), the DataReel cluster manager
+  (standby test 89 of 89), the load balancers (21, 18 and 15 checks)
+  and the work programs.
+
+On Windows 11 with Visual Studio 2026, x64 (64-bit engine) and Win32
+(32-bit engine):
+- run_db_tests.bat: 29 of 29; the networking checks 160 of 160;
+  reclaim 9 of 9; layout detection refuses the other platform's and
+  the other engine's files.
+- The 7.x features build: no errors or warnings; replication_6x 23 of
+  23; the 7.4 objrepl API test 73 of 73; vector_index; vix_rebuild.
+- gxv7ObjectClient is POSIX only, as in DataReel 7.4. The phase C
+  files are Linux files (see VECTOR DATABASE above).
+
+Linux and Windows (x64): a Linux 6.4 primary to a Windows 6.4 copy, a
+Windows 6.4 primary to a Linux 7.4 copy and a Linux 7.4 primary to a
+Windows 6.4 copy, each with equal digests.
 
 DataReel Copyright (c) 2001-2026 DataReel Software Development

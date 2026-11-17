@@ -1,2 +1,2 @@
-PROJECT = repl6_check
+PROJECT = testprog
 include ../../env/linux.mak

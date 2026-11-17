@@ -124,6 +124,7 @@ struct gxStreamTLS
   int tls_mode() { return use_tls || accepted_tls || server_tls(); }
 };
 
+#if defined (__USE_GX_SSL_EXTENSIONS__) // 11/16/2026 (6.4 beta 2): used only with TLS
 static void gxs_linger_close(gxsSocket_t s)
 // 10/31/2026: Used after the TLS close_notify, before the socket is
 // closed. Closing a socket with unread data in it (TLS 1.3 session
@@ -159,6 +160,7 @@ static void gxs_linger_close(gxsSocket_t s)
     total += n;
   }
 }
+#endif // __USE_GX_SSL_EXTENSIONS__
 
 #if defined (__USE_GX_SSL_EXTENSIONS__)
 static void gxs_free_conn(gxSSL *&c, int owns_ctx, gxsSocket_t s, 
@@ -219,6 +221,7 @@ static gxString gxs_normalize_fingerprint(const char *s)
   return out;
 }
 
+#if defined (__USE_GX_SSL_EXTENSIONS__) // 11/16/2026 (6.4 beta 2): used only with TLS
 static gxString gxs_printable(const gxString &s, unsigned max_len = 256)
 // 10/31/2026: Copy of a string from a certificate that is safe to put
 // in an error message or log: control characters, DEL and backslash
@@ -243,6 +246,7 @@ static gxString gxs_printable(const gxString &s, unsigned max_len = 256)
   if(len > max_len) out << "...";
   return out;
 }
+#endif // __USE_GX_SSL_EXTENSIONS__
 
 static int gxs_in_list(const std::vector<gxString> &v, const gxString &s)
 {
@@ -422,13 +426,16 @@ int gxStream::WriteHeader(gxsSocket_t s, gxBlockHeader &gx)
 // Write a database block header to the specified socket.
 // returns zero if no errors occur.
 {
-  // Write the block header
-  if(stream_send(s, (char *)&gx, sizeof(gxBlockHeader)) < 0)
+  // 11/16/2026: Write the block header in the canonical wire form
+  // (gxheader.h), the same bytes as DataReel 7.4
+  unsigned char wb[gxWireBlockHeaderSize];
+  gxWirePackBlockHeader(gx, wb);
+  if(stream_send(s, (char *)wb, (int)gxWireBlockHeaderSize) < 0)
     return socket_error;
 
   // If the bytes sent do not equal the bytes moved then
   // the transmitter and receiver are no longer synchronized.
-  if(bytes_moved != sizeof(gxBlockHeader)) 
+  if(bytes_moved != (int)gxWireBlockHeaderSize) 
     return socket_error = gxSOCKET_BLOCKHEADER_ERROR;
 
   return socket_error = gxSOCKET_NO_ERROR;
@@ -472,13 +479,23 @@ int gxStream::ReadHeader(gxsSocket_t s, gxBlockHeader &gx,
 // corresponding to a value defined in the gxSocketError
 // enumeration.
 {
-  if(stream_recv(s, (char *)&gx, sizeof(gxBlockHeader), seconds, useconds) < 0)
+  // 11/16/2026: the canonical wire form (gxheader.h). A peer that sends
+  // 4-byte words (a 64-bit Windows or 32-bit build before this change)
+  // is refused as such (PeerOldHeader()), not misread
+  unsigned char wb[gxWireBlockHeaderSize];
+  peer_old_header = 0;
+  if(stream_recv(s, (char *)wb, (int)gxWireBlockHeaderSize, seconds, useconds) < 0)
     return socket_error;
 
   // If the bytes read do not equal the bytes received then
   // the transmitter and receiver are no longer synchronized.
-  if(bytes_read != sizeof(gxBlockHeader)) 
+  if(bytes_read != (int)gxWireBlockHeaderSize) 
     return socket_error = gxSOCKET_BLOCKHEADER_ERROR;
+  if(!gxWireBlockHeaderIsCanonical(wb)) {
+    peer_old_header = 1;
+    return socket_error = gxSOCKET_BLOCKHEADER_ERROR;
+  }
+  gxWireUnpackBlockHeader(wb, gx);
       
   if(gx.block_check_word != gxCheckWord) 
     return socket_error = gxSOCKET_BLOCKSYNC_ERROR;
