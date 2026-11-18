@@ -42,6 +42,7 @@ FEATURES:
 	Smart card list with no PIN or login (2026.107)
 	DataReel 6.3 security fixes (2026.108)
 	DataReel 6.4.1 (2026.109)
+	Quantum-resistant users, RSA or smart card + ML-KEM-1024 (2026.110)
 	
 NEXT RELEASE 2026.110 (NOT RELEASED YET)
 ---------------------------------------
@@ -54,13 +55,52 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
   format, the key slots, FIPS 140-3 mode, smart cards, key management, the
   access log and the limits), published at
   https://datareel.com/fcrypt/security_design.php.
-* Required for this release: quantum-resistant user access. Hybrid key
-  slots wrap the file key with both RSA-OAEP and ML-KEM-1024 (NIST FIPS
-  203, OpenSSL 3.5), so RSA and smart card users are protected against a
-  future quantum computer. Files keep the 2026102 format and still open
-  with a password or key file in 2026.102 and later; --rekey moves users
-  to hybrid slots. Design: claude_code_docs FCRYPT_2026_110_QUANTUM_DESIGN.md.
-  Not implemented yet.
+* Quantum-resistant (hybrid) users. An RSA key or smart card user can
+  also get an ML-KEM-1024 key (NIST FIPS 203, OpenSSL 3.5): the file key
+  is then wrapped so that both the RSA key or card and the ML-KEM key
+  are needed, and a future quantum computer that breaks RSA alone cannot
+  recover it ("harvest now, decrypt later"). See QUANTUM-RESISTANT USERS
+  below.
+  - fcrypt --generate-pq-key=file makes a user's ML-KEM-1024 key: file
+    (PKCS#8 PEM encrypted with a passphrase, mode 600) and file.pub.pem
+    (the public key, for the file owner).
+  - fcrypt --add-rsa-key=pub.pem --rsa-key-username=user
+    --add-pq-public-key=user_pq.pub.pem (or --add-smartcard-cert or
+    --add-smartcard-cert-file with --add-pq-public-key) adds a hybrid user.
+  - fdecrypt --rsa-key=key.pem --rsa-key-username=user --pq-key=file
+    (or --smartcard-cert ... --pq-key=file) opens the file as that user;
+    the passphrase comes from --pq-key-passphrase-file,
+    --pq-key-passphrase-fd or the prompt. --remove-user and --rekey
+    accept the same options to authenticate as a hybrid user.
+  - --rekey input "rsa:user=pub.pem,pq=user_pq.pub.pem" and
+    "smartcard:user=cert.pem,pq=user_pq.pub.pem" move users to hybrid
+    slots. A hybrid user must be given its pq= in a rekey: it is never
+    silently made RSA-only.
+  - --require-pq refuses to add, or keep in a rekey, an RSA-only or
+    card-only user.
+  - fdecrypt --list-users shows "RSA key + ML-KEM-1024" and "Smart Card +
+    ML-KEM-1024" users; --json adds "quantum_resistant".
+  - The file format is still 2026102. Releases 2026.102 to 2026.109 still
+    decrypt these files with the password, the key file or an RSA-only
+    user, list the users (the hybrid slots show as Unknown) and refuse to
+    open as a hybrid user; their --add-rsa-key and --remove-user keep
+    the hybrid users working, and their --rekey refuses such a file and
+    leaves it unchanged. Upgrade every copy that opens the file as a
+    hybrid user, or rekeys it, to 2026.110 first.
+  - FIPS mode: a hybrid user needs a FIPS provider with ML-KEM. The RHEL
+    FIPS provider (Red Hat's validated 3.0.7 module) has none, so in FIPS
+    mode a hybrid user gets a clear error and the file still opens with
+    the password or key file.
+  - Each hybrid user takes about 2.3 KB of the key slot area (16384
+    bytes by default, --static-data-size): about 6 hybrid users per file
+    with a password slot.
+  - New tests: console/linux/run_pq_tests.sh [old_build_dir ...]
+    (SC_MODULE/SC_PIN/SC_CERT for a SoftHSM2 smart card user).
+* Adding a user is all or nothing: --add-rsa-key and --add-smartcard-cert
+  write the file to a temp file, check that it decrypts to the same data
+  and rename it over the original, as --remove-user does, and take the
+  same file lock (--lock-timeout, exit 4). They used to rewrite the key
+  slot area in place.
 * OpenSSL 3.5 LTS on every platform: every build is made with OpenSSL
   3.5 LTS or later, on RHEL 8, 9 and 10 (the operating system's OpenSSL)
   and on Windows (an OpenSSL 3.5.x LTS release). The build stops with an
@@ -519,6 +559,39 @@ Run console/linux/run_security_tests.sh, run_compat_tests.sh and
 run_migrate_tests.sh to test a build. Give run_compat_tests.sh and
 run_migrate_tests.sh the console/linux directories of older release
 builds. Set FCRYPT_FIPS=1 to run them in FIPS mode.
+
+QUANTUM-RESISTANT USERS (2026.110)
+----------------------------------
+A hybrid user's key slot needs both the user's RSA key (or smart card)
+and the user's ML-KEM-1024 key. The file key is wrapped with AES-256
+Key Wrap under KEK = KBKDF-HMAC-SHA384(ss || r, "fcrypt hybrid key
+slot", slot type || user name || SHA-384(RSA ciphertext || ML-KEM
+ciphertext)): ss is the ML-KEM-1024 shared secret, and r is 32 random
+bytes encrypted with RSA-OAEP (SHA-256) for the RSA key or card cert.
+The RSA and ML-KEM ciphertexts are kept in part slots of at most 1008
+bytes, so older releases can still read the key slot area. See
+include/fcfile.h.
+
+Example: give alice hybrid access to secret.enc.
+
+alice:
+$ fcrypt --generate-pq-key=$HOME/.keys/alice_pq --pq-key-passphrase-file=$HOME/.keys/pq_pass
+(gives $HOME/.keys/alice_pq and $HOME/.keys/alice_pq.pub.pem; send the
+.pub.pem and her RSA public key to the file owner)
+
+the file owner:
+$ fcrypt --password-file=$HOME/.keys/pw --add-rsa-key=alice.pub --rsa-key-username=alice --add-pq-public-key=alice_pq.pub.pem secret.enc
+
+alice:
+$ fdecrypt --rsa-key=$HOME/.keys/alice.pem --rsa-key-username=alice --pq-key=$HOME/.keys/alice_pq --pq-key-passphrase-file=$HOME/.keys/pq_pass secret.enc
+
+Move every RSA user of a file to a hybrid user:
+$ printf 'rsa:alice=alice.pub,pq=alice_pq.pub.pem\nrsa:bob=bob.pub,pq=bob_pq.pub.pem\n' | fcrypt --password-file=$HOME/.keys/pw --rekey secret.enc
+
+Smart cards (DoD CAC, PIV) hold RSA keys only, so the card is the RSA
+half and the ML-KEM key comes from the user's key file:
+$ fcrypt --password-file=$HOME/.keys/pw --add-smartcard-cert --smartcard-username=alice --smartcard-cert-id=03 --add-pq-public-key=alice_pq.pub.pem secret.enc
+$ fdecrypt --smartcard-cert --smartcard-username=alice --smartcard-cert-id=03 --pq-key=$HOME/.keys/alice_pq secret.enc
 
 TO BUILD THE FCRYPT AND FDECRYPT PROGRAMS FOR WINDOWS
 -----------------------------------------------------

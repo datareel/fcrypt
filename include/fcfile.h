@@ -52,7 +52,9 @@ Fixed header, 128 bytes, not encrypted:
      88 "FCX1"  4, 92 key generation  4, 96 rekey time, UTC seconds  8
 
 Key slot area, key slot area length bytes, not encrypted. Each slot:
-  type (1 = password or key file, 2 = RSA key, 3 = smart card)  4
+  type (1 = password or key file, 2 = RSA key, 3 = smart card;
+        since 2026.110: 4 = RSA key + ML-KEM-1024, 5 = smart card +
+        ML-KEM-1024, 6 = hybrid part, see MakeHybridSlots())  4
   slot length, including these 12 bytes   4
   user name length                         4
   user name
