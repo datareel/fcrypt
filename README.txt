@@ -60,8 +60,12 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
   future quantum computer. Files keep the 2026102 format and still open
   with a password or key file in 2026.102 and later; --rekey moves users
   to hybrid slots. Design: claude_code_docs FCRYPT_2026_110_QUANTUM_DESIGN.md.
-  Not implemented yet. RHEL 8 (system OpenSSL 1.1.1k, no ML-KEM) is an
-  open decision: a static OpenSSL 3.5, no hybrid users, or no RHEL 8.
+  Not implemented yet.
+* RHEL 8: this release needs RHEL 8.10 with current updates, where the
+  operating system's OpenSSL is 3.5 (the RHEL 8.10 images get it when
+  patched). An unpatched RHEL 8 with OpenSSL 1.1.1 cannot build or run
+  it; the build and the programs say to apply the RHEL 8.10 updates.
+  Keep using 2026.109 on unpatched RHEL 8 systems.
 * Bug fixes and security updates found while upgrading to 2026.109 go
   into this release.
 
