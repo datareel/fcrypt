@@ -117,6 +117,18 @@ int quiet_mode = 0;
 unsigned lock_timeout = FC_DEF_LOCK_TIMEOUT;
 int exit_code = 0;
 void SetExit(int code) { if(!exit_code) exit_code = code; }
+// 11/18/2026: Hybrid (quantum-resistant) users, ML-KEM-1024
+gxString generate_pq_key_file;   // --generate-pq-key=file
+gxString pq_public_key_file;     // --add-pq-public-key=file
+gxString pq_key_file;            // --pq-key=file (hybrid user authentication)
+gxString pq_key_passphrase;      // --pq-key-passphrase-file/-fd
+int require_pq = 0;              // --require-pq
+EVP_PKEY *pq_private = 0;
+int GeneratePQKey();
+int LoadPQPrivateKey();
+int AddHybridUser(FCryptFile &nf, unsigned base_type, const char *username);
+int WrapForRekey(const FCRekeySlot &slot, const unsigned char key[FC_KEY_LEN],
+		 unsigned char *wrapped, unsigned *wrapped_len, gxString &err);
 #define NOTE if(!quiet_mode) cerr
 #ifdef __ENABLE_SMART_CARD__
 SmartCardOB sc;
@@ -258,6 +270,15 @@ void HelpMessage()
   cout << "          --lock-timeout=seconds (Wait this long for another writer of the file, default " << FC_DEF_LOCK_TIMEOUT << ")" << "\n" << flush;
   cout << "          Exit codes for --remove-user and --rekey: 0 ok, 1 usage or other error, 2 the credential did not" << "\n" << flush;
   cout << "          open the file, 3 file or user not found, 4 locked by another writer, 7 read or write error" << "\n" << flush;
+
+  cout << "Quantum-resistant (hybrid) users, RSA or smart card + ML-KEM-1024 (2026.110):" << "\n" << flush;
+  cout << "          --generate-pq-key=file (Make an ML-KEM-1024 key: file (mode 600, encrypted with a passphrase) and file.pub.pem)" << "\n" << flush;
+  cout << "          --add-pq-public-key=file.pub.pem (With --add-rsa-key or --add-smartcard-cert: add a hybrid user)" << "\n" << flush;
+  cout << "          --pq-key=file (The ML-KEM private key of a hybrid user, for --remove-user and --rekey)" << "\n" << flush;
+  cout << "          --pq-key-passphrase-file=file (Read the ML-KEM key passphrase from a file only you can read)" << "\n" << flush;
+  cout << "          --pq-key-passphrase-fd=n (Read the ML-KEM key passphrase from open file descriptor n)" << "\n" << flush;
+  cout << "          --require-pq (Refuse to add or keep an RSA or smart card user without an ML-KEM key)" << "\n" << flush;
+  cout << "          Rekey input: rsa:user=public_key.pem,pq=user_pq.pub.pem and smartcard:user=cert.pem,pq=user_pq.pub.pem" << "\n" << flush;
 
   cout << "\n"; // End of list
 }
@@ -522,6 +543,30 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     if(ReadSecretArg(arg, equal_arg, rsa_key_passphrase) != 0) return 0;
+    has_valid_args = 1;
+  }
+
+  // 11/18/2026: Hybrid (quantum-resistant) users
+  if(arg == "generate-pq-key" || arg == "add-pq-public-key" || arg == "pq-key") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires a file name" << "\n" << flush;
+      return 0;
+    }
+    if(arg == "generate-pq-key") generate_pq_key_file = equal_arg;
+    else if(arg == "add-pq-public-key") pq_public_key_file = equal_arg;
+    else pq_key_file = equal_arg;
+    has_valid_args = 1;
+  }
+  if((arg == "pq-key-passphrase-file") || (arg == "pq-key-passphrase-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(ReadSecretArg(arg, equal_arg, pq_key_passphrase) != 0) return 0;
+    has_valid_args = 1;
+  }
+  if(arg == "require-pq") {
+    require_pq = 1;
     has_valid_args = 1;
   }
 
@@ -837,6 +882,134 @@ int ListSmartCards()
 }
 #endif
 
+// 11/18/2026: Hybrid (quantum-resistant) users
+static int ReadPQPassphrase(const char *what, int twice)
+// The ML-KEM key passphrase from --pq-key-passphrase-file/-fd or a prompt
+{
+  if(!pq_key_passphrase.is_null()) return 1;
+  if(non_interactive) {
+    cerr << "ERROR: --non-interactive: give the ML-KEM key passphrase with --pq-key-passphrase-file or --pq-key-passphrase-fd" << "\n" << flush;
+    return 0;
+  }
+  cerr << what << " passphrase: " << flush;
+  if(!consoleGetString(pq_key_passphrase, 1)) {
+    pq_key_passphrase.Clear(1);
+    cerr << "\n" << "Invalid entry!" << "\n" << flush;
+    return 0;
+  }
+  cerr << "\n" << flush;
+  if(twice) {
+    gxString again;
+    cerr << "Enter the passphrase again: " << flush;
+    int ok = consoleGetString(again, 1);
+    cerr << "\n" << flush;
+    if(!ok || again != pq_key_passphrase) {
+      again.Clear(1);
+      pq_key_passphrase.Clear(1);
+      cerr << "ERROR: The passphrases do not match" << "\n" << flush;
+      return 0;
+    }
+    again.Clear(1);
+  }
+  return 1;
+}
+
+int GeneratePQKey()
+{
+  gxString err;
+  if(!FC_crypto_init(fips_request, err)) {
+    cerr << "ERROR: " << err.c_str() << "\n" << flush;
+    return 1;
+  }
+  if(!ReadPQPassphrase("ML-KEM key", 1)) return 1;
+  MemoryBuffer pass;
+  pass.Cat(pq_key_passphrase.GetSPtr(), pq_key_passphrase.length());
+  gxString pub;
+  int ok = FC_pq_generate_key(generate_pq_key_file.c_str(), pass, pub, err);
+  pass.Clear(1);
+  if(!ok) {
+    cerr << "ERROR: " << err.c_str() << "\n" << flush;
+    return 1;
+  }
+  NOTE << "ML-KEM-1024 private key written to " << generate_pq_key_file.c_str() << " (mode 600, keep it secret)" << "\n"
+       << "ML-KEM-1024 public key written to " << pub.c_str() << " (give it to the file owner)" << "\n" << flush;
+  return 0;
+}
+
+int LoadPQPrivateKey()
+{
+  if(!ReadPQPassphrase("ML-KEM key", 0)) return 0;
+  MemoryBuffer pass;
+  pass.Cat(pq_key_passphrase.GetSPtr(), pq_key_passphrase.length());
+  gxString err;
+  pq_private = FC_pq_load_private_key(pq_key_file.c_str(), pass, err);
+  pass.Clear(1);
+  if(!pq_private) {
+    cerr << "ERROR: " << err.c_str() << "\n" << flush;
+    SetExit(FC_EXIT_AUTH);
+    return 0;
+  }
+  return 1;
+}
+
+static int WrapHybridRSAHalf(unsigned base_type, const char *source, const unsigned char r[FC_HYBRID_SECRET_LEN],
+			     unsigned char *ct, unsigned *ct_len, gxString &err)
+// RSA-OAEP of r with an RSA public key file, a cert file or the card in
+// the reader (no PIN), like the plain slots
+{
+  FCRekeySlot s;
+  s.type = base_type;
+  s.username = "user";
+  s.source = source;
+  return WrapForRekey(s, r, ct, ct_len, err);
+}
+
+int AddHybridUser(FCryptFile &nf, unsigned base_type, const char *username)
+// --add-rsa-key or --add-smartcard-cert with --add-pq-public-key
+{
+  gxString err;
+  EVP_PKEY *kem = FC_pq_load_public_key(pq_public_key_file.c_str(), err);
+  if(!kem) {
+    cerr << "ERROR: " << err.c_str() << "\n" << flush;
+    return 0;
+  }
+  unsigned char r[FC_HYBRID_SECRET_LEN], ct[FC_MAX_WRAPPED_LEN];
+  unsigned ct_len = 0;
+  int ok = nf.FC_hybrid_random(r);
+  if(!ok) err = nf.err;
+  if(ok && base_type == FC_SLOT_RSA) {
+    // The public RSA key read from the file or stdin
+    EVP_PKEY *pkey = RSA_load_public_key((const unsigned char *)public_key, public_key_len, 0);
+    ok = pkey && EVP_PKEY_is_a(pkey, "RSA") && EVP_PKEY_get_bits(pkey) >= (int)FC_MIN_RSA_BITS;
+    if(ok) ok = (RSA_pkey_encrypt(pkey, r, FC_HYBRID_SECRET_LEN, ct, sizeof(ct), &ct_len,
+				  RSA_PKCS1_OAEP_PADDING) == RSA_NO_ERROR);
+    if(pkey) EVP_PKEY_free(pkey);
+    if(!ok) err << clear << "The public key must be an RSA key of at least " << FC_MIN_RSA_BITS << " bits";
+  }
+#ifdef __ENABLE_SMART_CARD__
+  else if(ok && base_type == FC_SLOT_SMARTCARD) {
+    int sc_rv = use_smartcard_cert_file ?
+      SC_cert_file_public_key_encrypt(&sc, r, FC_HYBRID_SECRET_LEN, ct, sizeof(ct), &ct_len, RSA_PKCS1_OAEP_PADDING) :
+      SC_public_key_encrypt(&sc, r, FC_HYBRID_SECRET_LEN, ct, sizeof(ct), &ct_len, RSA_PKCS1_OAEP_PADDING);
+    ok = (sc_rv == 0);
+    if(!ok) err << clear << sc.err_string;
+  }
+#endif
+  gxList<FCKeySlot> add;
+  if(ok) {
+    ok = nf.MakeHybridSlots(FC_hybrid_type(base_type), username, nf.FileKey(), ct, ct_len, r, kem, add);
+    if(!ok) err = nf.err;
+  }
+  OPENSSL_cleanse(r, sizeof(r));
+  EVP_PKEY_free(kem);
+  if(ok) {
+    ok = nf.AddSlots(add);
+    if(!ok) err = nf.err;
+  }
+  if(!ok) cerr << "ERROR: " << err.c_str() << "\n" << flush;
+  return ok;
+}
+
 int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret)
 // 10/27/2026: Read a secret for a --xxx-file or --xxx-fd argument.
 // Returns 0 if successful or 1 after printing an error.
@@ -971,7 +1144,7 @@ void ListNewFormatUsers(FCryptFile &fc)
   int n = 0;
   gxListNode<FCKeySlot> *list_ptr = fc.slots.GetHead();
   while(list_ptr) {
-    if(list_ptr->data.type != FC_SLOT_SECRET) {
+    if(list_ptr->data.type != FC_SLOT_SECRET && FC_slot_is_user(list_ptr->data.type)) {
       if(n++) cerr << ", ";
       cerr << list_ptr->data.username.c_str();
     }
@@ -1065,7 +1238,13 @@ int UnlockForKeyManagement(FCryptFile &nf, const char *fname, gxString &err)
   if(use_private_rsa_key) {
     char *passphrase = 0;
     if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
-    if(!nf.UnlockWithRSAKey(rsa_key_username.c_str(), private_key, private_key_len, passphrase)) {
+    int ok;
+    if(!nf.FindSlot(FC_SLOT_RSA, rsa_key_username.c_str()) &&
+       nf.FindSlot(FC_SLOT_RSA_HYBRID, rsa_key_username.c_str())) { // 11/18/2026
+      ok = nf.UnlockWithRSAHybrid(rsa_key_username.c_str(), private_key, private_key_len, passphrase, pq_private);
+    }
+    else ok = nf.UnlockWithRSAKey(rsa_key_username.c_str(), private_key, private_key_len, passphrase);
+    if(!ok) {
       err = nf.err;
       return 0;
     }
@@ -1074,19 +1253,34 @@ int UnlockForKeyManagement(FCryptFile &nf, const char *fname, gxString &err)
 #ifdef __ENABLE_SMART_CARD__
   if(use_smartcard_auth) {
     FCKeySlot *slot = nf.FindSlot(FC_SLOT_SMARTCARD, smartcard_cert_username.c_str());
-    if(!slot) {
+    int hybrid = 0;
+    MemoryBuffer ct;
+    if(!slot && nf.FindSlot(FC_SLOT_SMARTCARD_HYBRID, smartcard_cert_username.c_str())) { // 11/18/2026
+      if(!pq_private) {
+	err << clear << "User " << smartcard_cert_username << " is a hybrid user: give the ML-KEM key with --pq-key";
+	return 0;
+      }
+      if(!nf.HybridRSACiphertext(FC_SLOT_SMARTCARD_HYBRID, smartcard_cert_username.c_str(), ct)) {
+	err = nf.err;
+	return 0;
+      }
+      hybrid = 1;
+    }
+    else if(!slot) {
       err << clear << "No smart card slot for user " << smartcard_cert_username;
       return 0;
     }
+    else ct.Load(slot->wrapped.m_buf(), slot->wrapped.length());
     unsigned char file_key[FC_MAX_WRAPPED_LEN];
     unsigned file_key_len = 0;
-    int rv = SC_private_key_decrypt(&sc, slot->wrapped.m_buf(), slot->wrapped.length(),
+    int rv = SC_private_key_decrypt(&sc, (unsigned char *)ct.m_buf(), ct.length(),
 				    file_key, sizeof(file_key), &file_key_len, RSA_PKCS1_OAEP_PADDING);
     int ok = 0;
     if(rv != 0) err << clear << "Smart card private key decrypt failed for cert ID " << sc.cert_id << ": " << sc.err_string;
     else if(file_key_len != FC_KEY_LEN) err << clear << "Bad length for decrypted key";
     else {
-      ok = nf.UnlockWithFileKey(file_key);
+      if(hybrid) ok = nf.UnlockWithHybrid(FC_SLOT_SMARTCARD_HYBRID, smartcard_cert_username.c_str(), file_key, pq_private);
+      else ok = nf.UnlockWithFileKey(file_key);
       if(!ok) err = nf.err;
     }
     OPENSSL_cleanse(file_key, sizeof(file_key));
@@ -1187,8 +1381,10 @@ int RekeyFile(FCryptFile &nf, const char *fname, FCRekeyInput &in, const unsigne
       has_password_slot = 1;
       continue;
     }
+    if(!FC_slot_is_user(p->data.type)) continue; // 11/18/2026: Hybrid parts
     FCRekeySlot r;
-    r.type = p->data.type;
+    r.type = FC_slot_base_type(p->data.type);
+    r.hybrid = FC_slot_is_hybrid(p->data.type);
     r.username = p->data.username;
     existing.Add(r);
   }
@@ -1208,6 +1404,18 @@ int RekeyFile(FCryptFile &nf, const char *fname, FCRekeyInput &in, const unsigne
   if(rv != 0) {
     cerr << "ERROR: " << err.c_str() << "\n" << flush;
     return 0;
+  }
+  // 11/18/2026: A hybrid user stays hybrid, and --require-pq keeps no
+  // RSA-only or card-only user
+  for(gxListNode<FCRekeySlot> *p = keep.GetHead(); p; p = p->next) {
+    if(p->data.pq_source.is_null() && (p->data.hybrid || require_pq)) {
+      const char *kind = (p->data.type == FC_SLOT_RSA) ? "rsa" : "smartcard";
+      cerr << "ERROR: " << (p->data.hybrid ? "User " : "--require-pq: user ") << p->data.username.c_str()
+	   << (p->data.hybrid ? " is a hybrid user" : " has no ML-KEM key")
+	   << ", give its ML-KEM public key in the rekey input: " << kind << ":" << p->data.username.c_str()
+	   << "=" << p->data.source.c_str() << ",pq=<ML-KEM public key>, nothing was changed" << "\n" << flush;
+      return 0;
+    }
   }
 
   // The secret for the password slot
@@ -1260,6 +1468,23 @@ int RekeyFile(FCryptFile &nf, const char *fname, FCRekeyInput &in, const unsigne
   for(gxListNode<FCRekeySlot> *p = keep.GetHead(); ok && p; p = p->next) {
     unsigned char wrapped[FC_MAX_WRAPPED_LEN];
     unsigned wrapped_len = 0;
+    if(!p->data.pq_source.is_null()) { // 11/18/2026: Hybrid user
+      EVP_PKEY *kem = FC_pq_load_public_key(p->data.pq_source.c_str(), err);
+      unsigned char r[FC_HYBRID_SECRET_LEN];
+      ok = kem && nf.FC_hybrid_random(r);
+      if(kem && !ok) err = nf.err;
+      if(ok) ok = WrapForRekey(p->data, r, wrapped, &wrapped_len, err);
+      gxList<FCKeySlot> hs;
+      if(ok) {
+	ok = nf.MakeHybridSlots(FC_hybrid_type(p->data.type), p->data.username.c_str(), new_key,
+				wrapped, wrapped_len, r, kem, hs);
+	if(ok) ok = nf.AddRekeySlots(hs);
+	if(!ok) err = nf.err;
+      }
+      OPENSSL_cleanse(r, sizeof(r));
+      if(kem) EVP_PKEY_free(kem);
+      continue;
+    }
     ok = WrapForRekey(p->data, new_key, wrapped, &wrapped_len, err);
     if(ok) ok = nf.AddRekeySlot(p->data.type, p->data.username.c_str(), wrapped, wrapped_len);
     if(!ok && err.is_null()) err = nf.err;
@@ -1294,7 +1519,8 @@ int RekeyFile(FCryptFile &nf, const char *fname, FCRekeyInput &in, const unsigne
   }
   NOTE << "Rekeyed " << fname << ": new file key, every record encrypted again" << "\n" << flush;
   for(gxListNode<FCRekeySlot> *p = keep.GetHead(); p; p = p->next) {
-    cerr << "  kept " << (p->data.type == FC_SLOT_RSA ? "RSA key" : "smart card") << " user " << p->data.username.c_str() << "\n" << flush;
+    cerr << "  kept " << (p->data.type == FC_SLOT_RSA ? "RSA key" : "smart card")
+	 << (p->data.pq_source.is_null() ? "" : " + ML-KEM-1024") << " user " << p->data.username.c_str() << "\n" << flush;
   }
   if(pw_action == FC_REKEY_PW_KEEP) cerr << "  kept the password slot with the same password" << "\n" << flush;
   if(pw_action == FC_REKEY_PW_NEW) cerr << "  the password slot has the new password" << "\n" << flush;
@@ -1468,9 +1694,15 @@ int KeyManagement()
 
     if(remove_user) {
       unsigned type = remove_user_type;
+      // 11/18/2026: A hybrid user is removed by --remove-user-type=rsa or
+      // smartcard too, with its part slots
+      if(type && !nf.FindSlot(type, remove_username.c_str()) &&
+	 nf.FindSlot(FC_hybrid_type(type), remove_username.c_str())) type = FC_hybrid_type(type);
       if(!type) {
 	FCKeySlot *r = nf.FindSlot(FC_SLOT_RSA, remove_username.c_str());
+	if(!r) r = nf.FindSlot(FC_SLOT_RSA_HYBRID, remove_username.c_str());
 	FCKeySlot *c = nf.FindSlot(FC_SLOT_SMARTCARD, remove_username.c_str());
+	if(!c) c = nf.FindSlot(FC_SLOT_SMARTCARD_HYBRID, remove_username.c_str());
 	if(r && c) {
 	  cerr << "ERROR: User " << remove_username.c_str() << " has RSA key and smart card access to " << fname
 	       << ", give --remove-user-type=rsa or --remove-user-type=smartcard" << "\n" << flush;
@@ -1478,7 +1710,7 @@ int KeyManagement()
 	  OPENSSL_cleanse(log_key, sizeof(log_key));
 	  continue;
 	}
-	type = c ? FC_SLOT_SMARTCARD : FC_SLOT_RSA;
+	type = c ? c->type : (r ? r->type : FC_SLOT_RSA);
       }
       gxString backup;
       if(!nf.RemoveSlot(type, remove_username.c_str(), 1, backup, dry_run)) {
@@ -1632,6 +1864,7 @@ int main(int argc, char **argv)
 #ifdef __ENABLE_SMART_CARD__
   if(smartcard_list) return ExitProgram(ListSmartCards()); // 10/27/2026
 #endif
+  if(!generate_pq_key_file.is_null()) return ExitProgram(GeneratePQKey()); // 11/18/2026
 
   if(num_files == 0) {
     cerr << "Encountered fatal fcrypt error" << "\n";
@@ -1653,6 +1886,7 @@ int main(int argc, char **argv)
     return ExitProgram(1);
   }
   if(access_log && access_log_file.is_null()) access_log_file = FC_default_log_file(".fcrypt");
+  if(!pq_key_file.is_null() && !LoadPQPrivateKey()) return ExitProgram(1); // 11/18/2026
   if(remove_user || rekey) return ExitProgram(KeyManagement()); // 10/27/2026
 
   if(futils_chdir(top_pwd) != 0) {
@@ -1761,6 +1995,10 @@ int main(int argc, char **argv)
 
 #ifdef __ENABLE_SMART_CARD__
   if(add_smart_card) {
+    if(require_pq && pq_public_key_file.is_null()) {
+      cerr << "ERROR: --require-pq: give the user's ML-KEM public key with --add-pq-public-key" << "\n" << flush;
+      return ExitProgram(1);
+    }
     if(smartcard_cert_username.is_null()) {
       cerr << "ERROR: --add-smartcard-cert requires --smartcard-username" << "\n" << flush;
       return ExitProgram(1);
@@ -1798,6 +2036,13 @@ int main(int argc, char **argv)
 	if(!LockForAddUser(ptr->data.c_str(), lock)) return ExitProgram(exit_code ? exit_code : 1);
 	FCryptFile nf;
 	if(!OpenNewFormatFile(nf, ptr->data.c_str(), aes_file_encrypt_secret)) return ExitProgram(1);
+	if(!pq_public_key_file.is_null()) { // 11/18/2026: Hybrid user
+	  if(!AddHybridUser(nf, FC_SLOT_SMARTCARD, smartcard_cert_username.c_str())) return ExitProgram(1);
+	  cerr << "Smart card cert and ML-KEM-1024 key for user " << smartcard_cert_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+	  if(clientcfg->verbose_mode) ListNewFormatUsers(nf);
+	  ptr = ptr->next;
+	  continue;
+	}
 	unsigned char wrapped[FC_MAX_WRAPPED_LEN];
 	unsigned wrapped_len = 0;
 	int sc_rv;
@@ -1853,6 +2098,10 @@ int main(int argc, char **argv)
 #endif
   
   if(add_rsa_key) {
+    if(require_pq && pq_public_key_file.is_null()) {
+      cerr << "ERROR: --require-pq: give the user's ML-KEM public key with --add-pq-public-key" << "\n" << flush;
+      return ExitProgram(1);
+    }
     if(rsa_key_username.is_null()) {
       cerr << "ERROR: --add-rsa-key requires --rsa-key-username" << "\n" << flush;
       return ExitProgram(1);
@@ -1868,6 +2117,13 @@ int main(int argc, char **argv)
 	if(!LockForAddUser(ptr->data.c_str(), lock)) return ExitProgram(exit_code ? exit_code : 1);
 	FCryptFile nf;
 	if(!OpenNewFormatFile(nf, ptr->data.c_str(), aes_file_encrypt_secret)) return ExitProgram(1);
+	if(!pq_public_key_file.is_null()) { // 11/18/2026: Hybrid user
+	  if(!AddHybridUser(nf, FC_SLOT_RSA, rsa_key_username.c_str())) return ExitProgram(1);
+	  cerr << "Public RSA key and ML-KEM-1024 key " << rsa_key_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+	  if(clientcfg->verbose_mode) ListNewFormatUsers(nf);
+	  ptr = ptr->next;
+	  continue;
+	}
 	char *passphrase = 0;
 	if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
 	if(!nf.AddRSAKey(rsa_key_username.c_str(), public_key, public_key_len, passphrase)) {

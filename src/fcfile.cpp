@@ -46,6 +46,9 @@ fcrypt file format version 2026102. See fcfile.h for the layout.
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
 #include <openssl/kdf.h>
 #include <openssl/core_names.h>
+#include <openssl/pem.h>
+#include <openssl/encoder.h>
+#include <openssl/decoder.h>
 #endif
 
 static const unsigned char FC_FILE_MAGIC[FC_MAGIC_LEN] = { 'F', 'C', 'R', 'Y', 'P', 'T', 0x1A, 0x04 };
@@ -170,6 +173,48 @@ static int fc_kbkdf(const unsigned char key[FC_KEY_LEN], const char *label,
 #endif
 }
 
+// 11/18/2026: KBKDF in counter mode with HMAC-SHA384 (SP 800-108), one
+// 256-bit key from a key of any length, for the hybrid slots
+static int fc_kbkdf_sha384(const unsigned char *key, unsigned key_len, const char *label,
+			   const unsigned char *context, unsigned context_len,
+			   unsigned char out[FC_KEY_LEN])
+{
+  EVP_KDF *kdf = EVP_KDF_fetch(AES_get_libctx(), "KBKDF", 0);
+  if(!kdf) return 0;
+  EVP_KDF_CTX *kctx = EVP_KDF_CTX_new(kdf);
+  EVP_KDF_free(kdf);
+  if(!kctx) return 0;
+  char mode[] = "COUNTER";
+  char mac[] = "HMAC";
+  char digest[] = "SHA384";
+  OSSL_PARAM params[7];
+  params[0] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MODE, mode, 0);
+  params[1] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MAC, mac, 0);
+  params[2] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, digest, 0);
+  params[3] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, (void *)key, key_len);
+  params[4] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, (void *)label, strlen(label));
+  params[5] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, (void *)context, context_len);
+  params[6] = OSSL_PARAM_construct_end();
+  int ok = EVP_KDF_derive(kctx, out, FC_KEY_LEN, params) == 1;
+  EVP_KDF_CTX_free(kctx);
+  if(!ok) OPENSSL_cleanse(out, FC_KEY_LEN);
+  return ok;
+}
+
+static int fc_sha384(const unsigned char *a, unsigned a_len, const unsigned char *b, unsigned b_len,
+		     unsigned char out[48])
+{
+  EVP_MD *md = EVP_MD_fetch(AES_get_libctx(), "SHA384", 0);
+  if(!md) return 0;
+  EVP_MD_CTX *c = EVP_MD_CTX_new();
+  unsigned out_len = 0;
+  int ok = c && EVP_DigestInit_ex(c, md, 0) == 1 && EVP_DigestUpdate(c, a, a_len) == 1 &&
+    EVP_DigestUpdate(c, b, b_len) == 1 && EVP_DigestFinal_ex(c, out, &out_len) == 1 && out_len == 48;
+  if(c) EVP_MD_CTX_free(c);
+  EVP_MD_free(md);
+  return ok;
+}
+
 static EVP_CIPHER *fc_fetch_cipher(const char *name)
 {
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
@@ -286,9 +331,195 @@ const char *FC_slot_type_name(unsigned type)
     case FC_SLOT_SECRET: return "Password or key";
     case FC_SLOT_RSA: return "RSA key";
     case FC_SLOT_SMARTCARD: return "Smart Card";
+    case FC_SLOT_RSA_HYBRID: return "RSA key + ML-KEM-1024";
+    case FC_SLOT_SMARTCARD_HYBRID: return "Smart Card + ML-KEM-1024";
+    case FC_SLOT_HYBRID_PART: return "Hybrid part";
     default: break;
   }
   return "Unknown";
+}
+
+unsigned FC_slot_base_type(unsigned type)
+{
+  if(type == FC_SLOT_RSA || type == FC_SLOT_RSA_HYBRID) return FC_SLOT_RSA;
+  if(type == FC_SLOT_SMARTCARD || type == FC_SLOT_SMARTCARD_HYBRID) return FC_SLOT_SMARTCARD;
+  return 0;
+}
+
+int FC_slot_is_hybrid(unsigned type)
+{
+  return type == FC_SLOT_RSA_HYBRID || type == FC_SLOT_SMARTCARD_HYBRID;
+}
+
+unsigned FC_hybrid_type(unsigned base_type)
+{
+  if(base_type == FC_SLOT_RSA) return FC_SLOT_RSA_HYBRID;
+  if(base_type == FC_SLOT_SMARTCARD) return FC_SLOT_SMARTCARD_HYBRID;
+  return 0;
+}
+
+int FC_slot_is_user(unsigned type)
+{
+  return type == FC_SLOT_SECRET || type == FC_SLOT_RSA || type == FC_SLOT_SMARTCARD ||
+    FC_slot_is_hybrid(type);
+}
+
+// ----------------------------------------------------------- //
+// 11/18/2026: ML-KEM-1024 keys (NIST FIPS 203, OpenSSL 3.5)
+// ----------------------------------------------------------- //
+static const char *FC_MLKEM_NAME = "ML-KEM-1024";
+static const char *FC_HYBRID_LABEL = "fcrypt hybrid key slot";
+
+int FC_pq_available(gxString &err)
+{
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(AES_get_libctx(), FC_MLKEM_NAME, 0);
+  if(!ctx) {
+    err << clear << "This OpenSSL has no " << FC_MLKEM_NAME << " (OpenSSL 3.5 or later is needed"
+	<< (FC_fips_mode() ? ", and a FIPS provider that includes ML-KEM" : "") << ")";
+    return 0;
+  }
+  EVP_PKEY_CTX_free(ctx);
+  return 1;
+}
+
+static int fc_write_private_bytes(const char *fname, const char *data, long len, gxString &err)
+{
+  if(!cryptdb_create_private_file(fname)) {
+    err << clear << "Cannot create " << fname << " (it must not exist yet)";
+    return 0;
+  }
+  FILE *fp = fopen(fname, "wb");
+  int ok = fp && fwrite(data, 1, (size_t)len, fp) == (size_t)len;
+  if(fp && fclose(fp) != 0) ok = 0;
+  if(!ok) {
+    err << clear << "Error writing " << fname;
+    futils_remove(fname);
+  }
+  return ok;
+}
+
+static int fc_encode_key(EVP_PKEY *pkey, int selection, const char *structure,
+			 const MemoryBuffer *passphrase, BIO *bio)
+{
+  OSSL_ENCODER_CTX *ectx = OSSL_ENCODER_CTX_new_for_pkey(pkey, selection, "PEM", structure, 0);
+  if(!ectx || OSSL_ENCODER_CTX_get_num_encoders(ectx) == 0) {
+    if(ectx) OSSL_ENCODER_CTX_free(ectx);
+    return 0;
+  }
+  int ok = 1;
+  if(passphrase) {
+    ok = OSSL_ENCODER_CTX_set_cipher(ectx, "AES-256-CBC", 0) == 1 &&
+      OSSL_ENCODER_CTX_set_passphrase(ectx, (const unsigned char *)passphrase->m_buf(), passphrase->length()) == 1;
+  }
+  if(ok) ok = OSSL_ENCODER_to_bio(ectx, bio) == 1;
+  OSSL_ENCODER_CTX_free(ectx);
+  return ok;
+}
+
+int FC_pq_generate_key(const char *priv_file, const MemoryBuffer &passphrase, gxString &pub_file, gxString &err)
+{
+  pub_file << clear << priv_file << ".pub.pem";
+  if(passphrase.length() < AES_MIN_SECRET_LEN) {
+    err << clear << "The ML-KEM key passphrase must be at least " << AES_MIN_SECRET_LEN << " characters long";
+    return 0;
+  }
+  if(futils_exists(priv_file) || futils_exists(pub_file.c_str())) {
+    err << clear << priv_file << " or " << pub_file << " already exists, nothing was written";
+    return 0;
+  }
+  if(!FC_pq_available(err)) return 0;
+  EVP_PKEY *pkey = 0;
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(AES_get_libctx(), FC_MLKEM_NAME, 0);
+  int ok = ctx && EVP_PKEY_keygen_init(ctx) == 1 && EVP_PKEY_generate(ctx, &pkey) == 1;
+  if(ctx) EVP_PKEY_CTX_free(ctx);
+  if(!ok) {
+    err << clear << "Cannot generate an " << FC_MLKEM_NAME << " key";
+    return 0;
+  }
+  BIO *priv = BIO_new(BIO_s_mem());
+  BIO *pub = BIO_new(BIO_s_mem());
+  ok = priv && pub &&
+    fc_encode_key(pkey, EVP_PKEY_KEYPAIR, "PrivateKeyInfo", &passphrase, priv) &&
+    fc_encode_key(pkey, EVP_PKEY_PUBLIC_KEY, "SubjectPublicKeyInfo", 0, pub);
+  EVP_PKEY_free(pkey);
+  if(!ok) err << clear << "Cannot encode the " << FC_MLKEM_NAME << " key";
+  if(ok) {
+    char *d = 0;
+    long n = BIO_get_mem_data(priv, &d);
+    ok = fc_write_private_bytes(priv_file, d, n, err);
+  }
+  if(ok) {
+    char *d = 0;
+    long n = BIO_get_mem_data(pub, &d);
+    FILE *fp = fopen(pub_file.c_str(), "wb");
+    ok = fp && fwrite(d, 1, (size_t)n, fp) == (size_t)n;
+    if(fp && fclose(fp) != 0) ok = 0;
+    if(!ok) {
+      err << clear << "Error writing " << pub_file;
+      futils_remove(pub_file.c_str());
+      futils_remove(priv_file);
+    }
+  }
+  if(priv) BIO_free_all(priv);
+  if(pub) BIO_free_all(pub);
+  return ok;
+}
+
+static EVP_PKEY *fc_pq_check_key(EVP_PKEY *pkey, const char *fname, gxString &err)
+{
+  if(pkey && !EVP_PKEY_is_a(pkey, FC_MLKEM_NAME)) {
+    EVP_PKEY_free(pkey);
+    pkey = 0;
+    err << clear << fname << " is not an " << FC_MLKEM_NAME << " key";
+  }
+  return pkey;
+}
+
+EVP_PKEY *FC_pq_load_public_key(const char *fname, gxString &err)
+{
+  if(!FC_pq_available(err)) return 0;
+  BIO *bio = BIO_new_file(fname, "rb");
+  if(!bio) {
+    err << clear << "Cannot read the ML-KEM public key file " << fname;
+    return 0;
+  }
+  EVP_PKEY *pkey = PEM_read_bio_PUBKEY_ex(bio, 0, 0, 0, AES_get_libctx(), 0);
+  BIO_free_all(bio);
+  if(!pkey) {
+    err << clear << "Cannot read an ML-KEM public key from " << fname;
+    return 0;
+  }
+  return fc_pq_check_key(pkey, fname, err);
+}
+
+EVP_PKEY *FC_pq_load_private_key(const char *fname, const MemoryBuffer &passphrase, gxString &err)
+{
+  if(!FC_pq_available(err)) return 0;
+  if(check_private_key_file(fname, err) != 0) return 0;
+  BIO *bio = BIO_new_file(fname, "rb");
+  if(!bio) {
+    err << clear << "Cannot read the ML-KEM key file " << fname;
+    return 0;
+  }
+  // The default PEM callback takes the passphrase as a C string
+  unsigned n = passphrase.length();
+  char *pass = new char[n+1];
+  if(!pass) {
+    BIO_free_all(bio);
+    err << clear << "Out of memory";
+    return 0;
+  }
+  if(n) memmove(pass, passphrase.m_buf(), n);
+  pass[n] = 0;
+  EVP_PKEY *pkey = PEM_read_bio_PrivateKey_ex(bio, 0, 0, pass, AES_get_libctx(), 0);
+  OPENSSL_cleanse(pass, n+1);
+  delete[] pass;
+  BIO_free_all(bio);
+  if(!pkey) {
+    err << clear << "Cannot read the ML-KEM private key " << fname << " (wrong passphrase?)";
+    return 0;
+  }
+  return fc_pq_check_key(pkey, fname, err);
 }
 
 // ----------------------------------------------------------- //
@@ -1008,9 +1239,12 @@ int FCryptFile::AddSlots(gxList<FCKeySlot> &new_slots)
       err << clear << "Bad wrapped key length";
       return 0;
     }
-    if(FindSlot(s.type, s.username.c_str())) {
-      err << clear << "User " << s.username.c_str() << " already has " << FC_slot_type_name(s.type)
-	  << " access to " << filename;
+    unsigned base = FC_slot_base_type(s.type);
+    if(s.type != FC_SLOT_HYBRID_PART &&
+       (FindSlot(s.type, s.username.c_str()) ||
+	(base && (FindSlot(base, s.username.c_str()) || FindSlot(FC_hybrid_type(base), s.username.c_str()))))) {
+      err << clear << "User " << s.username.c_str() << " already has " << FC_slot_type_name(base ? base : s.type)
+	  << " access to " << filename << " (remove the user first, or use --rekey to move the user to a hybrid slot)";
       return 0;
     }
     n++;
@@ -1403,7 +1637,8 @@ public:
 static unsigned fc_count_slots(gxList<FCKeySlot> &l)
 {
   unsigned n = 0;
-  for(gxListNode<FCKeySlot> *p = l.GetHead(); p; p = p->next) n++;
+  // 11/18/2026: Hybrid parts are not ways into the file
+  for(gxListNode<FCKeySlot> *p = l.GetHead(); p; p = p->next) if(FC_slot_is_user(p->data.type)) n++;
   return n;
 }
 
@@ -1510,7 +1745,7 @@ int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup,
     err << clear << "The encrypted file is not unlocked";
     return 0;
   }
-  if(type != FC_SLOT_RSA && type != FC_SLOT_SMARTCARD) {
+  if(FC_slot_base_type(type) == 0) {
     err << clear << "Only RSA key and smart card users can be removed";
     return 0;
   }
@@ -1526,11 +1761,27 @@ int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup,
     return 0;
   }
 
-  FCKeySlot removed = node->data;
+  // 11/18/2026: A hybrid user's part slots go with it
+  gxList<FCKeySlot> removed;
+  removed.Add(node->data);
   slots.Remove(node);
+  if(FC_slot_is_hybrid(type)) {
+    gxListNode<FCKeySlot> *p = slots.GetHead();
+    while(p) {
+      gxListNode<FCKeySlot> *next = p->next;
+      if(p->data.type == FC_SLOT_HYBRID_PART && p->data.username == username &&
+	 p->data.wrapped.length() >= 4 && fc_get32((const unsigned char *)p->data.wrapped.m_buf()) == type) {
+	removed.Add(p->data);
+	slots.Remove(p);
+      }
+      p = next;
+    }
+  }
   gxString e;
   int ok = CommitSlotArea("remove-user", keep_backup, backup_file, dry_run, e);
-  if(!ok || dry_run) slots.Add(removed); // The original file is unchanged
+  if(!ok || dry_run) { // The original file is unchanged
+    for(gxListNode<FCKeySlot> *p = removed.GetHead(); p; p = p->next) slots.Add(p->data);
+  }
   if(!ok) {
     err << clear << "The file was not changed: " << e;
     return 0;
@@ -1772,3 +2023,265 @@ int FC_aes256_cbc(int enc, const unsigned char key[FC_KEY_LEN], const unsigned c
 // ------------------------------- //
 // --------- End of File --------- //
 // ------------------------------- //
+
+// ----------------------------------------------------------- //
+// 11/18/2026: Hybrid (quantum-resistant) users, release 2026.110
+// ----------------------------------------------------------- //
+// Hybrid user slot (type 4 or 5), wrapped data:
+//   version (1) 4, KEM ID (1024 = ML-KEM-1024) 4, RSA ciphertext length 4,
+//   ML-KEM ciphertext length 4, wrapped key length 4, wrapped key
+//   (AES-256 Key Wrap of the file key, 40 bytes), number of parts 4
+// Part slot (type 6), same user name, wrapped data:
+//   owner slot type 4, part number 4, up to FC_HYBRID_PART_LEN bytes of
+//   (RSA ciphertext || ML-KEM ciphertext)
+// Every integer is little endian, like the rest of the header. The header
+// MAC covers every slot.
+
+int FCryptFile::FC_hybrid_random(unsigned char r[FC_HYBRID_SECRET_LEN])
+{
+  if(!fc_rand(r, FC_HYBRID_SECRET_LEN, 1)) {
+    err << clear << "Random number generator failed";
+    return 0;
+  }
+  return 1;
+}
+
+static int fc_hybrid_kek(unsigned type, const char *username,
+			 const unsigned char *ss, unsigned ss_len, const unsigned char r[FC_HYBRID_SECRET_LEN],
+			 const unsigned char *ct_rsa, unsigned ct_rsa_len,
+			 const unsigned char *ct_kem, unsigned ct_kem_len, unsigned char kek[FC_KEY_LEN])
+{
+  unsigned char ikm[64 + FC_HYBRID_SECRET_LEN], h[48];
+  if(ss_len > 64) return 0;
+  memmove(ikm, ss, ss_len);
+  memmove(ikm + ss_len, r, FC_HYBRID_SECRET_LEN);
+  if(!fc_sha384(ct_rsa, ct_rsa_len, ct_kem, ct_kem_len, h)) {
+    OPENSSL_cleanse(ikm, sizeof(ikm));
+    return 0;
+  }
+  MemoryBuffer ctx;
+  unsigned char t4[4];
+  fc_put32(t4, type);
+  ctx.Cat(t4, 4);
+  ctx.Cat(username, strlen(username));
+  ctx.Cat(h, sizeof(h));
+  int ok = fc_kbkdf_sha384(ikm, ss_len + FC_HYBRID_SECRET_LEN, FC_HYBRID_LABEL,
+			   (const unsigned char *)ctx.m_buf(), ctx.length(), kek);
+  OPENSSL_cleanse(ikm, sizeof(ikm));
+  return ok;
+}
+
+int FCryptFile::MakeHybridSlots(unsigned type, const char *username, const unsigned char key[FC_KEY_LEN],
+				const unsigned char *ct_rsa, unsigned ct_rsa_len,
+				const unsigned char r[FC_HYBRID_SECRET_LEN], EVP_PKEY *kem_public,
+				gxList<FCKeySlot> &out)
+{
+  if(!FC_slot_is_hybrid(type) || !username || !*username || strlen(username) > FC_MAX_USERNAME_LEN ||
+     !ct_rsa || ct_rsa_len == 0 || ct_rsa_len > FC_MAX_WRAPPED_LEN || !kem_public) {
+    err << clear << "Bad hybrid key slot";
+    return 0;
+  }
+  // ML-KEM-1024 encapsulation
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(AES_get_libctx(), kem_public, 0);
+  size_t ct_len = 0, ss_len = 0;
+  int ok = ctx && EVP_PKEY_encapsulate_init(ctx, 0) == 1 &&
+    EVP_PKEY_encapsulate(ctx, 0, &ct_len, 0, &ss_len) == 1 &&
+    ct_len == FC_MLKEM1024_CT_LEN && ss_len <= 64;
+  unsigned char ct_kem[FC_MLKEM1024_CT_LEN], ss[64];
+  if(ok) ok = EVP_PKEY_encapsulate(ctx, ct_kem, &ct_len, ss, &ss_len) == 1;
+  if(ctx) EVP_PKEY_CTX_free(ctx);
+  if(!ok) {
+    err << clear << "ML-KEM-1024 encapsulation failed for user " << username;
+    return 0;
+  }
+  unsigned char kek[FC_KEY_LEN], wrapped[FC_KEY_LEN + 8];
+  unsigned wrapped_len = 0;
+  ok = fc_hybrid_kek(type, username, ss, (unsigned)ss_len, r, ct_rsa, ct_rsa_len, ct_kem, (unsigned)ct_len, kek) &&
+    fc_key_wrap(1, kek, key, FC_KEY_LEN, wrapped, &wrapped_len) && wrapped_len == sizeof(wrapped);
+  OPENSSL_cleanse(ss, sizeof(ss));
+  OPENSSL_cleanse(kek, sizeof(kek));
+  if(!ok) {
+    err << clear << "Cannot wrap the file key for hybrid user " << username;
+    return 0;
+  }
+  MemoryBuffer blob;
+  blob.Cat(ct_rsa, ct_rsa_len);
+  blob.Cat(ct_kem, (unsigned)ct_len);
+  unsigned nparts = (blob.length() + FC_HYBRID_PART_LEN - 1) / FC_HYBRID_PART_LEN;
+
+  unsigned char main[24 + sizeof(wrapped) + 4];
+  fc_put32(main, FC_HYBRID_VERSION);
+  fc_put32(main+4, FC_HYBRID_KEM_MLKEM1024);
+  fc_put32(main+8, ct_rsa_len);
+  fc_put32(main+12, (unsigned)ct_len);
+  fc_put32(main+16, wrapped_len);
+  memmove(main+20, wrapped, wrapped_len);
+  fc_put32(main+20+wrapped_len, nparts);
+  FCKeySlot s;
+  s.type = type;
+  s.username = username;
+  s.wrapped.Load(main, 24 + wrapped_len);
+  out.Add(s);
+  for(unsigned i = 0; i < nparts; i++) {
+    unsigned off = i * FC_HYBRID_PART_LEN;
+    unsigned n = blob.length() - off;
+    if(n > FC_HYBRID_PART_LEN) n = FC_HYBRID_PART_LEN;
+    unsigned char hdr[8];
+    fc_put32(hdr, type);
+    fc_put32(hdr+4, i);
+    FCKeySlot p;
+    p.type = FC_SLOT_HYBRID_PART;
+    p.username = username;
+    p.wrapped.Load(hdr, 8);
+    p.wrapped.Cat((unsigned char *)blob.m_buf() + off, n);
+    out.Add(p);
+  }
+  return 1;
+}
+
+static int fc_get_hybrid(gxList<FCKeySlot> &slots, unsigned type, const char *username,
+			 MemoryBuffer &ct_rsa, MemoryBuffer &ct_kem, unsigned char wrapped[FC_KEY_LEN + 8],
+			 gxString &err)
+// Finds a hybrid user's slot and its parts and checks every length. The
+// slots are not authenticated before the unlock, so nothing is trusted.
+{
+  FCKeySlot *main = 0;
+  for(gxListNode<FCKeySlot> *p = slots.GetHead(); p; p = p->next) {
+    if(p->data.type == type && p->data.username == username) { main = &p->data; break; }
+  }
+  if(!main) {
+    err << clear << "No " << FC_slot_type_name(type) << " slot for user " << username;
+    return 0;
+  }
+  const unsigned char *m = (const unsigned char *)main->wrapped.m_buf();
+  unsigned mlen = main->wrapped.length();
+  if(mlen != 24 + FC_KEY_LEN + 8 || fc_get32(m) != FC_HYBRID_VERSION ||
+     fc_get32(m+4) != FC_HYBRID_KEM_MLKEM1024 || fc_get32(m+16) != FC_KEY_LEN + 8) {
+    err << clear << "Bad hybrid key slot for user " << username << " (made by a newer release?)";
+    return 0;
+  }
+  unsigned rsa_len = fc_get32(m+8), kem_len = fc_get32(m+12), nparts = fc_get32(m+20+FC_KEY_LEN+8);
+  if(rsa_len == 0 || rsa_len > FC_MAX_WRAPPED_LEN || kem_len != FC_MLKEM1024_CT_LEN ||
+     nparts != (rsa_len + kem_len + FC_HYBRID_PART_LEN - 1) / FC_HYBRID_PART_LEN) {
+    err << clear << "Bad hybrid key slot for user " << username;
+    return 0;
+  }
+  memmove(wrapped, m+20, FC_KEY_LEN + 8);
+  MemoryBuffer blob;
+  for(unsigned i = 0; i < nparts; i++) {
+    FCKeySlot *part = 0;
+    for(gxListNode<FCKeySlot> *p = slots.GetHead(); p; p = p->next) {
+      const unsigned char *w = (const unsigned char *)p->data.wrapped.m_buf();
+      if(p->data.type == FC_SLOT_HYBRID_PART && p->data.username == username &&
+	 p->data.wrapped.length() > 8 && fc_get32(w) == type && fc_get32(w+4) == i) {
+	if(part) {
+	  err << clear << "Bad hybrid key slot for user " << username << " (part " << i << " twice)";
+	  return 0;
+	}
+	part = &p->data;
+      }
+    }
+    if(!part) {
+      err << clear << "Bad hybrid key slot for user " << username << " (part " << i << " missing)";
+      return 0;
+    }
+    blob.Cat((unsigned char *)part->wrapped.m_buf() + 8, part->wrapped.length() - 8);
+  }
+  if(blob.length() != rsa_len + kem_len) {
+    err << clear << "Bad hybrid key slot for user " << username;
+    return 0;
+  }
+  ct_rsa.Load(blob.m_buf(), rsa_len);
+  ct_kem.Load((unsigned char *)blob.m_buf() + rsa_len, kem_len);
+  return 1;
+}
+
+int FCryptFile::HybridRSACiphertext(unsigned type, const char *username, MemoryBuffer &ct_rsa)
+{
+  MemoryBuffer ct_kem;
+  unsigned char wrapped[FC_KEY_LEN + 8];
+  return fc_get_hybrid(slots, type, username, ct_rsa, ct_kem, wrapped, err);
+}
+
+int FCryptFile::UnlockWithHybrid(unsigned type, const char *username, const unsigned char r[FC_HYBRID_SECRET_LEN],
+				 EVP_PKEY *kem_private)
+{
+  MemoryBuffer ct_rsa, ct_kem;
+  unsigned char wrapped[FC_KEY_LEN + 8];
+  if(!fc_get_hybrid(slots, type, username, ct_rsa, ct_kem, wrapped, err)) return 0;
+  if(!kem_private) {
+    err << clear << "User " << username << " is a hybrid user: give the ML-KEM key with --pq-key";
+    return 0;
+  }
+  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(AES_get_libctx(), kem_private, 0);
+  unsigned char ss[64];
+  size_t ss_len = sizeof(ss);
+  int ok = ctx && EVP_PKEY_decapsulate_init(ctx, 0) == 1 &&
+    EVP_PKEY_decapsulate(ctx, ss, &ss_len, (const unsigned char *)ct_kem.m_buf(), ct_kem.length()) == 1 &&
+    ss_len <= 64;
+  if(ctx) EVP_PKEY_CTX_free(ctx);
+  unsigned char kek[FC_KEY_LEN], key[FC_KEY_LEN + 8];
+  unsigned key_len = 0;
+  if(ok) ok = fc_hybrid_kek(type, username, ss, (unsigned)ss_len, r, (const unsigned char *)ct_rsa.m_buf(),
+			    ct_rsa.length(), (const unsigned char *)ct_kem.m_buf(), ct_kem.length(), kek);
+  // ML-KEM decapsulation of a wrong key gives a random secret, so a wrong
+  // RSA or ML-KEM key fails the key unwrap check here
+  if(ok) ok = fc_key_wrap(0, kek, wrapped, sizeof(wrapped), key, &key_len) && key_len == FC_KEY_LEN;
+  OPENSSL_cleanse(ss, sizeof(ss));
+  OPENSSL_cleanse(kek, sizeof(kek));
+  if(!ok) {
+    OPENSSL_cleanse(key, sizeof(key));
+    err << clear << "The RSA key or card and the ML-KEM key of user " << username << " cannot open this file";
+    return 0;
+  }
+  ok = UnlockWithFileKey(key);
+  OPENSSL_cleanse(key, sizeof(key));
+  return ok;
+}
+
+int FCryptFile::UnlockWithRSAHybrid(const char *username, const char *private_key, unsigned private_key_len,
+				    char *passphrase, EVP_PKEY *kem_private)
+{
+  MemoryBuffer ct_rsa;
+  if(!HybridRSACiphertext(FC_SLOT_RSA_HYBRID, username, ct_rsa)) return 0;
+  EVP_PKEY *pkey = RSA_load_private_key((const unsigned char *)private_key, private_key_len, passphrase);
+  if(!pkey) {
+    err << clear << "Cannot read the private RSA key";
+    if(passphrase && FC_fips_mode()) {
+      err << ". In FIPS mode a private key with a passphrase must be in PKCS#8 format, see README.txt";
+    }
+    return 0;
+  }
+  unsigned char r[FC_MAX_WRAPPED_LEN];
+  unsigned r_len = 0;
+  int rv = RSA_pkey_decrypt(pkey, (const unsigned char *)ct_rsa.m_buf(), ct_rsa.length(),
+			    r, sizeof(r), &r_len, RSA_PKCS1_OAEP_PADDING);
+  EVP_PKEY_free(pkey);
+  int ok = (rv == RSA_NO_ERROR && r_len == FC_HYBRID_SECRET_LEN);
+  if(!ok) err << clear << "The private RSA key for user " << username << " cannot open this file";
+  if(ok) ok = UnlockWithHybrid(FC_SLOT_RSA_HYBRID, username, r, kem_private);
+  OPENSSL_cleanse(r, sizeof(r));
+  return ok;
+}
+
+int FCryptFile::AddRekeySlots(gxList<FCKeySlot> &new_slots)
+{
+  if(!rekey_started) {
+    err << clear << "The rekey was not started";
+    return 0;
+  }
+  for(gxListNode<FCKeySlot> *p = new_slots.GetHead(); p; p = p->next) {
+    if(!FC_slot_is_hybrid(p->data.type) && p->data.type != FC_SLOT_HYBRID_PART &&
+       FC_slot_base_type(p->data.type) == 0) {
+      err << clear << "Bad key slot for the rekey";
+      return 0;
+    }
+    if(p->data.username.is_null() || p->data.username.length() > FC_MAX_USERNAME_LEN ||
+       p->data.wrapped.length() == 0 || p->data.wrapped.length() > FC_MAX_WRAPPED_LEN) {
+      err << clear << "Bad key slot for the rekey";
+      return 0;
+    }
+  }
+  for(gxListNode<FCKeySlot> *p = new_slots.GetHead(); p; p = p->next) rekey_slots.Add(p->data);
+  return 1;
+}

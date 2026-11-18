@@ -662,6 +662,19 @@ int FC_parse_rekey_input(gxList<FCNameValue> &list, FCRekeyInput &in, gxString &
       }
       slot.username = user;
       slot.source = p->data.value;
+      // 11/18/2026: "file,pq=pq_public_key" makes a hybrid user
+      if(!slot.drop) {
+	int c = slot.source.Find(",pq=");
+	if(c != -1) {
+	  slot.pq_source = slot.source.c_str() + c + 4;
+	  slot.source.DeleteAt(c, slot.source.length() - c);
+	  if(slot.source.is_null() || slot.pq_source.is_null()) {
+	    err << clear << "Line " << p->data.line << ": give the key or cert file and the ML-KEM public key as "
+		<< "file,pq=pq_public_key.pem for " << user;
+	    return 1;
+	  }
+	}
+      }
       in.slots.Add(slot);
     }
     p = p->next;
@@ -708,6 +721,7 @@ int FC_rekey_plan(gxList<FCRekeySlot> &existing, int has_password_slot, int pass
     if(s->drop) continue;
     FCRekeySlot k = p->data; // Keep the stored spelling of the name
     k.source = s->source;
+    k.pq_source = s->pq_source;
     keep.Add(k);
   }
   int choices = (!in.new_password.is_null()) + (generate ? 1 : 0) + (in.drop_password ? 1 : 0);

@@ -79,6 +79,10 @@ unsigned rsa_ciphertext_len;
 char private_key[RSA_max_keybuf_len];
 unsigned private_key_len = 0;
 gxString rsa_key_passphrase;
+// 11/18/2026: Hybrid (quantum-resistant) users, the ML-KEM-1024 private key
+gxString pq_key_file;
+gxString pq_key_passphrase;
+EVP_PKEY *pq_private = 0;
 int has_passphrase = 0;
 gxString rsa_key_username;
 int list_users = 0;
@@ -190,6 +194,9 @@ void HelpMessage()
   cout << "          --rsa-key-passphrase-file=file (Read the private RSA key passphrase from a file only you can read)" << "\n" << flush;
   cout << "          --rsa-key-passphrase-fd=n (Read the private RSA key passphrase from open file descriptor n)" << "\n" << flush;
   cout << "          --rsa-key-username=name (Username that owns the private RSA key)" << "\n" << flush;
+  cout << "          --pq-key=file (ML-KEM-1024 private key of a hybrid user, with --rsa-key or --smartcard-cert)" << "\n" << flush;
+  cout << "          --pq-key-passphrase-file=file (Read the ML-KEM key passphrase from a file only you can read)" << "\n" << flush;
+  cout << "          --pq-key-passphrase-fd=n (Read the ML-KEM key passphrase from open file descriptor n)" << "\n" << flush;
   cout << "          --stdout (Write decrypted output to the console)" << "\n" << flush;
   cout << "          --verbose (Turn on verbose output)" << "\n" << flush;
   cout << "          --version (Display program version number)" << "\n" << flush;
@@ -342,6 +349,23 @@ int ProcessDashDashArg(gxString &arg)
       return 0;
     }
     if(ReadSecretArg(arg, equal_arg, rsa_key_passphrase) != 0) return 0;
+    has_valid_args = 1;
+  }
+  // 11/18/2026: Hybrid users
+  if(arg == "pq-key") {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --pq-key requires a file name" << "\n" << flush;
+      return 0;
+    }
+    pq_key_file = equal_arg;
+    has_valid_args = 1;
+  }
+  if((arg == "pq-key-passphrase-file") || (arg == "pq-key-passphrase-fd")) {
+    if(equal_arg.is_null()) {
+      cerr << "ERROR: --" << arg.c_str() << " requires an input argument" << "\n" << flush;
+      return 0;
+    }
+    if(ReadSecretArg(arg, equal_arg, pq_key_passphrase) != 0) return 0;
     has_valid_args = 1;
   }
   if((arg == "password-file") || (arg == "password-fd")) {
@@ -717,10 +741,11 @@ int ListNewFormatUsers(const char *fname)
     cout << "{\"file\": " << FC_json_string(gxString(fname)).c_str() << ", \"users\": [";
     gxListNode<FCKeySlot> *jp = fc.slots.GetHead();
     while(jp) {
-      if(jp->data.type != FC_SLOT_SECRET) {
+      if(jp->data.type != FC_SLOT_SECRET && FC_slot_is_user(jp->data.type)) {
 	if(n++) cout << ", ";
 	cout << "{\"username\": " << FC_json_string(jp->data.username).c_str() << ", \"access\": \""
-	     << FC_slot_type_name(jp->data.type) << "\"}";
+	     << FC_slot_type_name(jp->data.type) << "\", \"quantum_resistant\": "
+	     << (FC_slot_is_hybrid(jp->data.type) ? "true" : "false") << "}";
       }
       jp = jp->next;
     }
@@ -729,7 +754,7 @@ int ListNewFormatUsers(const char *fname)
   }
   gxListNode<FCKeySlot> *list_ptr = fc.slots.GetHead();
   while(list_ptr) {
-    if(list_ptr->data.type != FC_SLOT_SECRET) {
+    if(list_ptr->data.type != FC_SLOT_SECRET && FC_slot_is_user(list_ptr->data.type)) {
       if(n++ == 0) cout << "Encrypted file username inventory " << "\n" << flush;
       cout << "Username: " << list_ptr->data.username.c_str() << " Access: "
 	   << FC_slot_type_name(list_ptr->data.type) << "\n" << flush;
@@ -863,7 +888,11 @@ int DecryptNewFormatFile(const char *fname)
   if(use_private_rsa_key) {
     char *passphrase = 0;
     if(!rsa_key_passphrase.is_null()) passphrase = (char *)rsa_key_passphrase.GetSPtr();
-    ok = fc.UnlockWithRSAKey(rsa_key_username.c_str(), private_key, private_key_len, passphrase);
+    if(!fc.FindSlot(FC_SLOT_RSA, rsa_key_username.c_str()) &&
+       fc.FindSlot(FC_SLOT_RSA_HYBRID, rsa_key_username.c_str())) { // 11/18/2026
+      ok = fc.UnlockWithRSAHybrid(rsa_key_username.c_str(), private_key, private_key_len, passphrase, pq_private);
+    }
+    else ok = fc.UnlockWithRSAKey(rsa_key_username.c_str(), private_key, private_key_len, passphrase);
     if(!ok) {
       cerr << "ERROR: The private RSA key provided for user " << rsa_key_username.c_str() << " does not have access to decrypt file " << fname << "\n" << flush;
     }
@@ -871,19 +900,34 @@ int DecryptNewFormatFile(const char *fname)
 #ifdef __ENABLE_SMART_CARD__
   else if(use_smartcard_cert) {
     FCKeySlot *slot = fc.FindSlot(FC_SLOT_SMARTCARD, smartcard_cert_username.c_str());
-    if(!slot) {
-      fc.err << clear << "No smart card slot for user " << smartcard_cert_username;
+    int hybrid = 0, have_ct = 0;
+    MemoryBuffer ct;
+    if(!slot && fc.FindSlot(FC_SLOT_SMARTCARD_HYBRID, smartcard_cert_username.c_str())) { // 11/18/2026
+      hybrid = 1;
+      // Check the ML-KEM key is there before the card login
+      if(!pq_private) fc.err << clear << "User " << smartcard_cert_username << " is a hybrid user: give the ML-KEM key with --pq-key";
+      else have_ct = fc.HybridRSACiphertext(FC_SLOT_SMARTCARD_HYBRID, smartcard_cert_username.c_str(), ct);
+    }
+    else if(slot) {
+      ct.Load(slot->wrapped.m_buf(), slot->wrapped.length());
+      have_ct = 1;
     }
     else {
+      fc.err << clear << "No smart card slot for user " << smartcard_cert_username;
+    }
+    if(have_ct) {
       unsigned char file_key[FC_MAX_WRAPPED_LEN];
       unsigned file_key_len = 0;
-      int rv = SC_private_key_decrypt(&sc, slot->wrapped.m_buf(), slot->wrapped.length(),
+      int rv = SC_private_key_decrypt(&sc, (unsigned char *)ct.m_buf(), ct.length(),
 				      file_key, sizeof(file_key), &file_key_len, RSA_PKCS1_OAEP_PADDING);
       if(rv != 0) {
 	fc.err << clear << "Smart card private key decrypt failed for cert ID " << sc.cert_id << ": " << sc.err_string;
       }
       else if(file_key_len != FC_KEY_LEN) {
 	fc.err << clear << "Bad length for decrypted key";
+      }
+      else if(hybrid) {
+	ok = fc.UnlockWithHybrid(FC_SLOT_SMARTCARD_HYBRID, smartcard_cert_username.c_str(), file_key, pq_private);
       }
       else {
 	ok = fc.UnlockWithFileKey(file_key);
@@ -1088,6 +1132,33 @@ int main(int argc, char **argv)
   if(check_version) return ExitProgram(CheckVersions());
   if(verify_access_log && !access_log) access_log = 1;
   if(access_log && access_log_file.is_null()) access_log_file = FC_default_log_file(".fcrypt");
+
+  // 11/18/2026: The ML-KEM key of a hybrid user
+  if(!pq_key_file.is_null()) {
+    if(pq_key_passphrase.is_null()) {
+      if(non_interactive) {
+	cerr << "ERROR: --non-interactive: give the ML-KEM key passphrase with --pq-key-passphrase-file or --pq-key-passphrase-fd" << "\n" << flush;
+	return ExitProgram(1);
+      }
+      cerr << "ML-KEM key passphrase: " << flush;
+      if(!consoleGetString(pq_key_passphrase, 1)) {
+	pq_key_passphrase.Clear(1);
+	cerr << "\n" << "Invalid entry!" << "\n" << flush;
+	return ExitProgram(1);
+      }
+      cerr << "\n" << flush;
+    }
+    MemoryBuffer pass;
+    pass.Cat(pq_key_passphrase.GetSPtr(), pq_key_passphrase.length());
+    gxString perr;
+    pq_private = FC_pq_load_private_key(pq_key_file.c_str(), pass, perr);
+    pass.Clear(1);
+    pq_key_passphrase.Clear(1);
+    if(!pq_private) {
+      cerr << "ERROR: " << perr.c_str() << "\n" << flush;
+      return ExitProgram(FC_EXIT_AUTH);
+    }
+  }
 
   if(use_key_file) {
     if(clientcfg->verbose_mode) cerr << "Using key file for decryption" << "\n" << flush;

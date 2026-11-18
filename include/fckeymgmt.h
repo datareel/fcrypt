@@ -210,11 +210,16 @@ enum { // What happens to the password slot
 
 struct GXDLCODE_API FCRekeySlot
 {
-  FCRekeySlot() { type = 0; drop = 0; }
+  FCRekeySlot() { type = 0; drop = 0; hybrid = 0; }
   unsigned type;      // FC_SLOT_RSA or FC_SLOT_SMARTCARD (fcfile.h)
   gxString username;
   gxString source;    // Public key or cert file, or "card"
   int drop;
+  // 11/18/2026: For a slot of the file: the user is a hybrid user (RSA or
+  // card + ML-KEM-1024). From the input: ",pq=file" after the source,
+  // the user's ML-KEM public key, makes or keeps a hybrid user.
+  int hybrid;
+  gxString pq_source;
 };
 
 struct GXDLCODE_API FCRekeyInput
