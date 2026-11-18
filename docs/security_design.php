@@ -332,7 +332,7 @@ old file cannot be carried over, because the old file holds only their wrapped k
 fmigrate lists them so they can be added again.</li>
 <li><b>Older releases:</b> they have security problems and are no longer offered for download; only release
 2026.109 is.</li>
-<li><b>Linux:</b> RHEL 8, 9 and 10 (RHEL 10 is the default build), using the operating system's OpenSSL: release 2026.109 is built with OpenSSL 3.5.8 on RHEL 10, 3.5.9 on RHEL 9 and 1.1.1k on RHEL 8. The next release, 2026.110, is built only with OpenSSL 3.5 LTS or later on every platform; its RHEL 8 build needs RHEL 8.10 with current updates, where the operating system's OpenSSL is 3.5.</li>
+<li><b>Linux:</b> RHEL 8, 9 and 10 (RHEL 10 is the default build), using the operating system's OpenSSL: release 2026.109 is built with OpenSSL 3.5.8 on RHEL 10, 3.5.9 on RHEL 9 and 1.1.1k on RHEL 8. The next release, 2026.110, is built with OpenSSL 3.5 LTS on every platform, with one exception: RHEL 8 hosts in FIPS mode get a build on Red Hat's FIPS-validated system OpenSSL 1.1.1k (RHEL 8's OpenSSL 3.5 packages come from EPEL, not Red Hat, and have no FIPS provider); other RHEL 8 hosts get a build with OpenSSL 3.5 LTS built in, and the installer picks the build by the host's FIPS mode.</li>
 <li><b>Windows:</b> Windows 11, Windows Server 2022 and Windows Server 2025, 64-bit by default with a 32-bit
 build kept for legacy systems. Windows builds use only an OpenSSL 3.5.x LTS release, built from source with
 its FIPS provider; the build stops with an error for any other OpenSSL version. The 32-bit and 64-bit builds
