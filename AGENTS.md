@@ -191,9 +191,11 @@ or write error, or not an encrypted file.
 Build on RHEL 10: `cd console/linux && make` (needs gcc-c++, make and
 openssl-devel; RHEL 8 and 9 use `make -f makefile_rhel8` or
 `makefile_rhel9`, and `make clean` when you switch). Linux builds use the
-operating system's OpenSSL, which must be 3.5 LTS or later from release
-2026.110 (RHEL 8: RHEL 8.10 with current updates); the build stops with
-an error for an older OpenSSL. Windows: Visual Studio 2022 or 2026 and only
+operating system's OpenSSL 3.5 (RHEL 9 and 10). RHEL 8 has two builds:
+`makefile_rhel8_openssl35` (OpenSSL 3.5 built in, `build_openssl35.sh`)
+and `makefile_rhel8` (the FIPS-validated system OpenSSL 1.1.1 for FIPS
+mode hosts); see the README. Other builds stop with an error for an
+OpenSSL older than 3.5. Windows: Visual Studio 2022 or 2026 and only
 an OpenSSL 3.5.x LTS release (the build stops for any other version);
 in `console\msvc` run `msvc.bat` (64-bit, the default) or
 `msvc32_vs2026.bat` (32-bit, legacy), then `nmake` (see `README.txt`,
@@ -222,10 +224,13 @@ release section to `README.txt`.
    `sha256sum -c <file>.sha256sum` (Windows: `certutil -hashfile <file>
    SHA256` and compare). Stop if it does not match.
 2. **RHEL 8, 9, 10:** unpack `fcrypt_<version>_rhel_8_9_10_binaries.tar.gz`
-   and copy the three programs from the folder for the RHEL release
-   (`rhel8`, `rhel9` or `rhel10`) to a bin folder, for one user
-   (`~/bin`) or, with the person's OK, for all users (`/usr/local/bin`).
-   Check them with `sha256sum -c sha256sum.txt` in that folder first.
+   and run `./install_fcrypt.sh` (a dry run that shows the build it picks
+   and checks the sha256 files), then `./install_fcrypt.sh --install` for
+   `~/bin`, or with the person's OK `--system` for `/usr/local/bin`. From
+   2026.110 it picks the RHEL 8 build by FIPS mode: `rhel8` (Red Hat's
+   FIPS-validated system OpenSSL 1.1.1, no hybrid users) on a host in
+   FIPS mode, `rhel8_openssl35` (OpenSSL 3.5 built in) otherwise. Do not
+   suggest EPEL's openssl3 packages (not Red Hat, no FIPS provider).
 3. **Windows 11, Windows Server 2022 and 2025:** unzip
    `fcrypt_<version>_windows_binaries.zip` (64-bit, the default; the
    `windows_32bit` package is for legacy 32-bit Windows) to a program

@@ -47,8 +47,10 @@ fcrypt file format version 2026102. See fcfile.h for the layout.
 #include <openssl/kdf.h>
 #include <openssl/core_names.h>
 #include <openssl/pem.h>
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
 #include <openssl/encoder.h>
 #include <openssl/decoder.h>
+#endif
 #endif
 
 static const unsigned char FC_FILE_MAGIC[FC_MAGIC_LEN] = { 'F', 'C', 'R', 'Y', 'P', 'T', 0x1A, 0x04 };
@@ -173,6 +175,7 @@ static int fc_kbkdf(const unsigned char key[FC_KEY_LEN], const char *label,
 #endif
 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
 // 11/18/2026: KBKDF in counter mode with HMAC-SHA384 (SP 800-108), one
 // 256-bit key from a key of any length, for the hybrid slots
 static int fc_kbkdf_sha384(const unsigned char *key, unsigned key_len, const char *label,
@@ -214,6 +217,8 @@ static int fc_sha384(const unsigned char *a, unsigned a_len, const unsigned char
   EVP_MD_free(md);
   return ok;
 }
+
+#endif
 
 static EVP_CIPHER *fc_fetch_cipher(const char *name)
 {
@@ -364,6 +369,7 @@ int FC_slot_is_user(unsigned type)
     FC_slot_is_hybrid(type);
 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
 // ----------------------------------------------------------- //
 // 11/18/2026: ML-KEM-1024 keys (NIST FIPS 203, OpenSSL 3.5)
 // ----------------------------------------------------------- //
@@ -521,6 +527,29 @@ EVP_PKEY *FC_pq_load_private_key(const char *fname, const MemoryBuffer &passphra
   }
   return fc_pq_check_key(pkey, fname, err);
 }
+
+#else // No ML-KEM: the RHEL 8 FIPS build on the system OpenSSL 1.1.1
+int FC_pq_available(gxString &err)
+{
+  err << clear << "This fcrypt build has no ML-KEM-1024 (the RHEL 8 FIPS build on the system OpenSSL 1.1.1): "
+      << "hybrid users need the OpenSSL 3.5 build of fcrypt on a host that is not in FIPS mode";
+  return 0;
+}
+int FC_pq_generate_key(const char *, const MemoryBuffer &, gxString &, gxString &err)
+{
+  return FC_pq_available(err);
+}
+EVP_PKEY *FC_pq_load_public_key(const char *, gxString &err)
+{
+  FC_pq_available(err);
+  return 0;
+}
+EVP_PKEY *FC_pq_load_private_key(const char *, const MemoryBuffer &, gxString &err)
+{
+  FC_pq_available(err);
+  return 0;
+}
+#endif
 
 // ----------------------------------------------------------- //
 // FCryptFile
@@ -2046,6 +2075,7 @@ int FCryptFile::FC_hybrid_random(unsigned char r[FC_HYBRID_SECRET_LEN])
   return 1;
 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
 static int fc_hybrid_kek(unsigned type, const char *username,
 			 const unsigned char *ss, unsigned ss_len, const unsigned char r[FC_HYBRID_SECRET_LEN],
 			 const unsigned char *ct_rsa, unsigned ct_rsa_len,
@@ -2285,3 +2315,31 @@ int FCryptFile::AddRekeySlots(gxList<FCKeySlot> &new_slots)
   for(gxListNode<FCKeySlot> *p = new_slots.GetHead(); p; p = p->next) rekey_slots.Add(p->data);
   return 1;
 }
+#else // No ML-KEM (RHEL 8 FIPS build): hybrid users are refused clearly
+int FCryptFile::MakeHybridSlots(unsigned, const char *, const unsigned char *, const unsigned char *, unsigned,
+				const unsigned char *, EVP_PKEY *, gxList<FCKeySlot> &)
+{
+  FC_pq_available(err);
+  return 0;
+}
+int FCryptFile::HybridRSACiphertext(unsigned, const char *, MemoryBuffer &)
+{
+  FC_pq_available(err);
+  return 0;
+}
+int FCryptFile::UnlockWithHybrid(unsigned, const char *username, const unsigned char *, EVP_PKEY *)
+{
+  FC_pq_available(err);
+  err << ". User " << username << " is a hybrid user, open the file with the password or key file";
+  return 0;
+}
+int FCryptFile::UnlockWithRSAHybrid(const char *username, const char *, unsigned, char *, EVP_PKEY *)
+{
+  return UnlockWithHybrid(FC_SLOT_RSA_HYBRID, username, 0, 0);
+}
+int FCryptFile::AddRekeySlots(gxList<FCKeySlot> &)
+{
+  FC_pq_available(err);
+  return 0;
+}
+#endif

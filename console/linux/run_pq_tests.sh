@@ -70,6 +70,26 @@ openh() { # file user pq_key pq_passphrase_file fdecrypt
     ${5} --rsa-key=$2.pem --rsa-key-username=$2 --pq-key=$3 --pq-key-passphrase-file=$4 --non-interactive --stdout $1 2>>${logFILE} | cmp -s - data.bin
 }
 
+# ---- A build without ML-KEM (the RHEL 8 FIPS build on the system OpenSSL 1.1.1) ----
+if ${FC} --version 2>&1 | grep -q "no ML-KEM hybrid users"; then
+    ${FC} --generate-pq-key=nokem_pq --pq-key-passphrase-file=a_pp.txt > out.txt 2>&1
+    [ $? -ne 0 ] && grep -q "ML-KEM" out.txt && [ ! -f nokem_pq ]
+    check $? "a build without ML-KEM refuses --generate-pq-key with a clear message"
+    newfile nk
+    ${FC} ${A} --add-rsa-key=alice.pub --rsa-key-username=alice --add-pq-public-key=nokem.pub.pem nk.enc > out.txt 2>&1
+    [ $? -ne 0 ] && grep -q "ML-KEM" out.txt
+    check $? "a build without ML-KEM refuses --add-pq-public-key with a clear message"
+    ${FC} ${A} --add-rsa-key=alice.pub --rsa-key-username=alice nk.enc >>${logFILE} 2>&1 && \
+      ${FD} --rsa-key=alice.pem --rsa-key-username=alice --non-interactive --stdout nk.enc 2>>${logFILE} | cmp -s - data.bin
+    check $? "a build without ML-KEM still adds and opens RSA users"
+    echo "" | tee -a ${logFILE}
+    echo "This build has no ML-KEM: run run_pq_tests.sh of an OpenSSL 3.5 build with this build's directory" | tee -a ${logFILE}
+    echo "as an old_build_dir to test that it reads files with hybrid users." | tee -a ${logFILE}
+    echo "${passed} passed, ${failed} failed" | tee -a ${logFILE}
+    [ ${failed} -ne 0 ] && exit 1
+    exit 0
+fi
+
 # ---- ML-KEM-1024 keys ----
 ${FC} --generate-pq-key=alice_pq --pq-key-passphrase-file=a_pp.txt >>${logFILE} 2>&1
 [ $? -eq 0 ] && [ -f alice_pq ] && [ -f alice_pq.pub.pem ] && [ "$(stat -c %a alice_pq)" = "600" ]

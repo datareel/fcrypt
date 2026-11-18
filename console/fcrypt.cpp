@@ -968,6 +968,11 @@ int AddHybridUser(FCryptFile &nf, unsigned base_type, const char *username)
 // --add-rsa-key or --add-smartcard-cert with --add-pq-public-key
 {
   gxString err;
+#if !defined (FC_HAVE_MLKEM)
+  FC_pq_available(err);
+  cerr << "ERROR: " << err.c_str() << "\n" << flush;
+  return 0;
+#else
   EVP_PKEY *kem = FC_pq_load_public_key(pq_public_key_file.c_str(), err);
   if(!kem) {
     cerr << "ERROR: " << err.c_str() << "\n" << flush;
@@ -1008,6 +1013,7 @@ int AddHybridUser(FCryptFile &nf, unsigned base_type, const char *username)
   }
   if(!ok) cerr << "ERROR: " << err.c_str() << "\n" << flush;
   return ok;
+#endif
 }
 
 int ReadSecretArg(const gxString &arg, const gxString &value, gxString &secret)

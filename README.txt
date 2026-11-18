@@ -109,18 +109,28 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
   and rename it over the original, as --remove-user does, and take the
   same file lock (--lock-timeout, exit 4). They used to rewrite the key
   slot area in place.
-* OpenSSL 3.5 LTS on every platform: every build is made with OpenSSL
-  3.5 LTS or later, on RHEL 8, 9 and 10 (the operating system's OpenSSL)
-  and on Windows (an OpenSSL 3.5.x LTS release). The build stops with an
-  error for an older OpenSSL, and the programs refuse to run with an
-  older OpenSSL library. RHEL 8 needs RHEL 8.10 with current updates,
-  where OpenSSL 3.5 is the operating system packages openssl3-libs and
-  openssl3-devel (3.5.5 on 11/18/2026, next to the system OpenSSL
-  1.1.1k); makefile_rhel8 builds with /usr/include/openssl3 and
-  /usr/lib64/openssl3, and the programs run with libssl.so.3 and
-  libcrypto.so.3. An unpatched RHEL 8 without openssl3-libs is told to
-  apply the RHEL 8.10 updates. Each package README and these release
-  notes state the OpenSSL version every build was made with.
+* OpenSSL 3.5 LTS (dougg 11/18/2026: nothing is distributed on an
+  OpenSSL older than the 3.5 LTS line, with one exception for FIPS on
+  RHEL 8). RHEL 9 and 10 use the system OpenSSL 3.5 and Windows an
+  OpenSSL 3.5.x LTS release. RHEL 8 has two builds in the Linux package:
+  - rhel8_openssl35: OpenSSL 3.5 LTS (3.5.9) built in statically, for
+    hosts not in FIPS mode, with hybrid users. Built with
+    makefile_rhel8_openssl35 (OPENSSL35_PREFIX, see build_openssl35.sh).
+  - rhel8: Red Hat's FIPS-validated system OpenSSL 1.1.1k, for hosts in
+    FIPS mode (the exception). It has no hybrid (ML-KEM) users: the
+    hybrid options give a clear error, and files with hybrid users still
+    open with the password, key file or an RSA user. On a host in FIPS
+    mode the system OpenSSL runs in FIPS mode, so FIPS mode is on and old
+    format files are refused, as with the OpenSSL 3 FIPS mode.
+  console/scripts/install_fcrypt.sh (in the Linux package) picks the build
+  from /etc/redhat-release and /proc/sys/crypto/fips_enabled; dry run by
+  default, --install to copy (~/bin, --system for /usr/local/bin).
+  RHEL 8's openssl3 packages (3.5.5) come from EPEL, not Red Hat, and have
+  no FIPS provider, so they are not used. The builds stop with an error
+  for an OpenSSL older than 3.5 (except the rhel8 build), the programs
+  refuse an older OpenSSL library at run time, and fcrypt --version shows
+  the OpenSSL build. Each package README and these release notes state
+  the OpenSSL version of every build.
 * Bug fixes and security updates found while upgrading to 2026.109 go
   into this release.
 
@@ -512,9 +522,10 @@ FIPS mode needs OpenSSL 3.0 or later with a FIPS provider:
 * RHEL 9 and 10: enable FIPS mode with "fips-mode-setup --enable" and
   reboot. The system OpenSSL FIPS provider is used.
 
-* RHEL 8: OpenSSL 1.1.1 has no FIPS provider, and the RHEL 8.10
-  openssl3 packages (OpenSSL 3.5) have none either. RHEL 8 builds refuse
-  --fips, and run outside FIPS mode on a host in FIPS mode.
+* RHEL 8: install the rhel8 build (install_fcrypt.sh picks it on a host
+  in FIPS mode). It uses Red Hat's FIPS-validated system OpenSSL 1.1.1,
+  which runs in FIPS mode on a host in FIPS mode; --fips is refused on a
+  host that is not. The rhel8_openssl35 build has no FIPS mode.
 
 * Windows: build the OpenSSL 3.5.x LTS FIPS provider, see FIPS MODE ON
   WINDOWS in README_windows_openssl.txt.
@@ -705,12 +716,23 @@ RHEL release use the makefile for that release:
 $ make -f makefile_rhel9     (or makefile_rhel8)
 
 Since 2026.110 every build needs OpenSSL 3.5 LTS or later. RHEL 9 and
-10 have it as the system OpenSSL (openssl-devel). RHEL 8.10 has it as
-the operating system packages openssl3-libs and openssl3-devel, next
-to the system OpenSSL 1.1.1k; makefile_rhel8 builds with them:
+10 have it as the system OpenSSL (openssl-devel). RHEL 8 has two builds:
 
-$ sudo dnf install gcc-c++ make openssl3-devel
+For hosts not in FIPS mode, OpenSSL 3.5 LTS built in. Build the static
+OpenSSL 3.5.9 once (the tarball's sha256 is pinned in the script), then
+fcrypt:
+
+$ sudo dnf install gcc-c++ make perl perl-IPC-Cmd perl-Time-Piece curl
+$ bash build_openssl35.sh $HOME/openssl-3.5.9
+$ make -f makefile_rhel8_openssl35 OPENSSL35_PREFIX=$HOME/openssl-3.5.9
+
+For hosts in FIPS mode, Red Hat's FIPS-validated system OpenSSL 1.1.1
+(no hybrid ML-KEM users):
+
+$ sudo dnf install gcc-c++ make openssl-devel
 $ make -f makefile_rhel8
+
+Use a separate copy of the source for each, or make clean between them.
 
 RHEL 6 and 7 builds are no longer supported, see REMOVED RHEL 6 AND 7
 SUPPORT below.

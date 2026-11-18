@@ -122,13 +122,16 @@ int FC_crypto_init(int fips_request, gxString &err)
   fc_system_fips = FC_system_fips_requested();
 
   // 11/18/2026: The shared library must be OpenSSL 3.5 LTS or later too,
-  // not only the headers the program was built with.
+  // not only the headers the program was built with (except the RHEL 8
+  // FIPS build on the system OpenSSL 1.1.1k).
+#if !defined (FC_RHEL8_SYSTEM_OPENSSL)
   if(OpenSSL_version_num() < (unsigned long)FC_MIN_OPENSSL_VERSION) {
     err << clear << "This release needs OpenSSL 3.5 or later, but the OpenSSL library is "
-	<< OpenSSL_version(OPENSSL_VERSION) << ". On RHEL 8 apply the RHEL 8.10 updates, "
-	<< "which update the OS OpenSSL to 3.5.";
+	<< OpenSSL_version(OPENSSL_VERSION) << ". Install the fcrypt build for this system "
+	<< "(install_fcrypt.sh in the Linux package picks it).";
     return 0;
   }
+#endif
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
   int want_fips = 0;
@@ -218,13 +221,17 @@ int FC_crypto_init(int fips_request, gxString &err)
   AES_set_libctx(fc_libctx);
   return 1;
 #else
-  // Builds for older systems, such as RHEL 8, keep working on a
-  // host in FIPS mode. Only an explicit --fips is refused.
-  if(fips_request == FC_FIPS_ON) {
-    err << clear << "FIPS mode needs OpenSSL 3.0 or later, this build uses " << OPENSSL_VERSION_TEXT;
+  // 11/18/2026: The RHEL 8 FIPS build links Red Hat's FIPS-validated
+  // system OpenSSL 1.1.1k, which runs in FIPS mode by itself on a host in
+  // FIPS mode (fips-mode-setup --enable). FC_fips_mode() follows it, so old
+  // format files are refused there like in the OpenSSL 3 FIPS mode.
+  int sys_fips = FIPS_mode() ? 1 : 0;
+  if(fips_request == FC_FIPS_ON && !sys_fips) {
+    err << clear << "--fips: this host is not in FIPS mode. The RHEL 8 FIPS build of fcrypt uses the FIPS mode "
+	<< "of the system OpenSSL (" << OPENSSL_VERSION_TEXT << "), turned on with fips-mode-setup --enable";
     return 0;
   }
-  fc_fips_mode = 0;
+  fc_fips_mode = (fips_request != FC_FIPS_OFF) && sys_fips;
   return 1;
 #endif
 }
@@ -272,7 +279,18 @@ gxString FC_crypto_status()
     s << "FIPS mode off, crypto not initialized";
   }
 #else
-  s << "FIPS mode not available with " << OPENSSL_VERSION_TEXT;
+  s << (fc_fips_mode ? "FIPS mode on" : "FIPS mode off") << ", Red Hat system OpenSSL FIPS module ("
+    << OPENSSL_VERSION_TEXT << ")" << (FIPS_mode() ? "" : ", the host is not in FIPS mode");
+#endif
+  // 11/18/2026: Which OpenSSL this build uses
+#if defined (FC_RHEL8_SYSTEM_OPENSSL)
+  s << "\nOpenSSL build: RHEL 8 system OpenSSL 1.1.1 (the build for FIPS mode hosts, no ML-KEM hybrid users)";
+#elif defined (FC_OPENSSL_STATIC)
+  s << "\nOpenSSL build: OpenSSL " << OPENSSL_VERSION_STR << " LTS built in (the build for hosts not in FIPS mode)";
+#elif defined (__WIN32__)
+  s << "\nOpenSSL build: OpenSSL " << OPENSSL_VERSION_STR << " LTS built in";
+#else
+  s << "\nOpenSSL build: the system " << OPENSSL_VERSION_TEXT;
 #endif
   return s;
 }

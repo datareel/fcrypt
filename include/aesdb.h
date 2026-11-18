@@ -53,17 +53,31 @@ AES encryption routes used generate encryption certificates.
 // See README_windows_openssl.txt.
 // 11/18/2026: Release 2026.110 and later are built only with OpenSSL 3.5
 // LTS or later on every platform (dougg: nothing is distributed on an
-// OpenSSL older than the 3.5 long term support release). RHEL 8 needs
-// RHEL 8.10 with current updates, which has the OS OpenSSL 3.5.
+// OpenSSL older than the 3.5 long term support release), with the one
+// RHEL 8 FIPS exception below.
 #define FC_MIN_OPENSSL_VERSION 0x30500000L
 #if defined (__WIN32__)
 #if (OPENSSL_VERSION_NUMBER < 0x30500000L) || (OPENSSL_VERSION_NUMBER >= 0x30600000L)
 #error Windows builds require an OpenSSL 3.5.x LTS release, see README_windows_openssl.txt
 #endif
 #else
-#if OPENSSL_VERSION_NUMBER < 0x30500000L
-#error fcrypt needs OpenSSL 3.5 LTS or later (openssl-devel 3.5). On RHEL 8 apply the RHEL 8.10 updates, which update the OS OpenSSL to 3.5.
+// 11/18/2026 (dougg): one exception, the RHEL 8 build for hosts in FIPS
+// mode links Red Hat's FIPS-validated system OpenSSL 1.1.1k
+// (makefile_rhel8, FC_RHEL8_SYSTEM_OPENSSL). It has no hybrid (ML-KEM)
+// users. The RHEL 8 build for other hosts has OpenSSL 3.5 LTS built in
+// (makefile_rhel8_openssl35), and install_fcrypt.sh picks the build by
+// the host's FIPS mode.
+#if defined (FC_RHEL8_SYSTEM_OPENSSL)
+#if OPENSSL_VERSION_NUMBER < 0x10101000L
+#error The RHEL 8 FIPS build needs the RHEL 8 system OpenSSL 1.1.1
 #endif
+#elif OPENSSL_VERSION_NUMBER < 0x30500000L
+#error fcrypt needs OpenSSL 3.5 LTS or later. On RHEL 8 use makefile_rhel8_openssl35 (OpenSSL 3.5 built in) or makefile_rhel8 (the system OpenSSL, for FIPS mode hosts).
+#endif
+#endif
+// 1 when this build has ML-KEM-1024 for hybrid users (OpenSSL 3.5 or later)
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+#define FC_HAVE_MLKEM 1
 #endif
 
 // Constants
