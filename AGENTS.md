@@ -5,7 +5,8 @@ utility (`fcrypt`, `fdecrypt` and `fmigrate`): it tells an AI agent
 (Gemini CLI, Claude Code, GitHub Copilot, Codex and others) how to assist
 a site's own administrators and developers to install fcrypt, build it
 from source, upgrade older releases to the current release, 2026.109,
-maintain a fork, and troubleshoot. The agent assists; it does not replace
+maintain a fork, and troubleshoot (2026.110, next: quantum-resistant
+hybrid users and OpenSSL 3.5 LTS on every build). The agent assists; it does not replace
 the administrators or DataReel support, and it never acts autonomously
 (section 0). The people review and approve every step, and problems the
 agent cannot solve go to DataReel (section 8.4). `GEMINI.md` and
@@ -98,6 +99,9 @@ task:
    for an explicit yes for that one command (section 0).
 3. **Back up before changing.** Before any change to an encrypted file,
    the person copies it to a dated backup folder only they can read.
+   An ML-KEM key file (`--generate-pq-key`) is a private key like an RSA
+   key: never read it, and make sure the person keeps a backup, because a
+   hybrid user cannot open the file without it.
    `--remove-user` and `--rekey` also keep a
    `name.backup-YYYYMMDD-HHMMSS.enc` copy: never delete it. Never delete an
    encrypted file, a backup, a key file or a `.lock` file; move aside only
@@ -143,8 +147,11 @@ AES-256-CBC with an HMAC-SHA256 on every record, and the header (with the
 list of users) is authenticated too. The file key is wrapped for each way
 in: a password or key file (PBKDF2-HMAC-SHA256, 600000 iterations by
 default), RSA or SSH-RSA public keys of other users, and smart cards
-(PKCS#11: DoD CAC, PIV, YubiKey). With `--fips`, `FCRYPT_FIPS=1` or a
-host in FIPS mode, only the OpenSSL FIPS provider is used. The design is
+(PKCS#11: DoD CAC, PIV, YubiKey). Since 2026.110 an RSA or card user
+can be a quantum-resistant hybrid user: the RSA key or card and an
+ML-KEM-1024 key file (`--pq-key`) are both needed (README section
+QUANTUM-RESISTANT USERS). With `--fips`, `FCRYPT_FIPS=1` or a host in
+FIPS mode, only the OpenSSL FIPS provider is used. The design is
 at https://datareel.com/fcrypt/security_design.php.
 
 | Item | Linux | Windows |
@@ -160,7 +167,7 @@ Read-only commands (they decrypt nothing and need no credential):
 ```
 fcrypt --version                    # release, OpenSSL version, FIPS mode and provider
 fdecrypt --check-version file.enc   # v1 (old) or v2 (2026102); exit 5 for v1
-fdecrypt --list-users file.enc      # RSA and smart card users
+fdecrypt --list-users file.enc      # RSA, smart card and hybrid (+ ML-KEM-1024) users
 fdecrypt -l file.enc                # the stored file name
 fmigrate --check *.enc              # which files are old format
 fcrypt --smartcard-list             # cards, slots, cert IDs and PIN status, no login and no PIN
@@ -184,7 +191,9 @@ or write error, or not an encrypted file.
 Build on RHEL 10: `cd console/linux && make` (needs gcc-c++, make and
 openssl-devel; RHEL 8 and 9 use `make -f makefile_rhel8` or
 `makefile_rhel9`, and `make clean` when you switch). Linux builds use the
-operating system's OpenSSL. Windows: Visual Studio 2022 or 2026 and only
+operating system's OpenSSL, which must be 3.5 LTS or later from release
+2026.110 (RHEL 8: RHEL 8.10 with current updates); the build stops with
+an error for an older OpenSSL. Windows: Visual Studio 2022 or 2026 and only
 an OpenSSL 3.5.x LTS release (the build stops for any other version);
 in `console\msvc` run `msvc.bat` (64-bit, the default) or
 `msvc32_vs2026.bat` (32-bit, legacy), then `nmake` (see `README.txt`,
@@ -196,8 +205,9 @@ files by name: never commit binaries or `.o` files.
 Tests (Linux, after the build, in `console/linux`): `run_build_tests.sh`,
 `run_keymgmt_tests.sh`, `run_security_tests.sh [old_build [2026.101_build]]`,
 `run_compat_tests.sh <old_build>`, `run_migrate_tests.sh <old_build> ...`,
-`run_smartcard_list_tests.sh` and `run_smartcard_tests.sh` (only with a
-SoftHSM2 token, rule 7). They make their own test files and keys under
+`run_smartcard_list_tests.sh`, `run_smartcard_tests.sh` (only with a
+SoftHSM2 token, rule 7) and, from 2026.110, `run_pq_tests.sh
+[old_build ...]` for the hybrid users. They make their own test files and keys under
 `~/tmp` and never use any other file. `FCRYPT_FIPS=1` runs them in FIPS
 mode.
 
