@@ -2,7 +2,8 @@ File encryption and decryption utility
 
 Release 2026.109
 
-Supports Window 10, Windows 11, and Windows 2025 server
+Supports Windows 11, Windows Server 2022 and Windows Server 2025
+(64-bit by default; 32-bit builds for legacy systems)
 Supports Red Hat Enterprise Linux 8, 9, and 10 (RHEL 10 is the default
 Linux build). RHEL 6 and 7 are no longer supported.
 
@@ -42,6 +43,20 @@ FEATURES:
 	DataReel 6.3 security fixes (2026.108)
 	DataReel 6.4.1 (2026.109)
 	
+NEXT RELEASE 2026.110 (NOT RELEASED YET)
+---------------------------------------
+* AI-assisted install, build, upgrade and support: AGENTS.md (with
+  CLAUDE.md and GEMINI.md, which only import it) lets an approved
+  enterprise AI agent assist a site's administrators, human in the loop
+  and never autonomous; the agent never sees a password, key, PIN or
+  decrypted file. Also at https://datareel.com/fcrypt/ai_assisted_guide.php.
+* docs/security_design.php: the security design white paper (the file
+  format, the key slots, FIPS 140-3 mode, smart cards, key management, the
+  access log and the limits), published at
+  https://datareel.com/fcrypt/security_design.php.
+* Bug fixes and security updates found while upgrading to 2026.109 go
+  into this release.
+
 RELEASE 2026.109: DATAREEL 6.4.1
 --------------------------------
 * The bundled DataReel library is updated to version 6.4.1 (the 6.4
