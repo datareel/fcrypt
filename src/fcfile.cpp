@@ -309,6 +309,8 @@ FCryptFile::FCryptFile()
   data_offset = (FAU_t)0;
   unlocked = 0;
   data_sink = 0;
+  add_keep_backup = 0;
+  add_dry_run = 0;
   enc_out = 0;
   enc_pend = 0;
   enc_pend_len = 0;
@@ -970,53 +972,69 @@ int FCryptFile::UnlockWithRSAKey(const char *username, const char *private_key, 
 
 int FCryptFile::AddWrappedKey(unsigned type, const char *username, const unsigned char *wrapped, unsigned wrapped_len)
 {
-  if(!unlocked) {
-    err << clear << "The encrypted file is not unlocked";
-    return 0;
-  }
-  if(!username || !*username || strlen(username) > FC_MAX_USERNAME_LEN) {
-    err << clear << "User names must be 1 to " << FC_MAX_USERNAME_LEN << " characters";
-    return 0;
-  }
   if(wrapped_len == 0 || wrapped_len > FC_MAX_WRAPPED_LEN) {
     err << clear << "Bad wrapped key length";
     return 0;
   }
-  if(FindSlot(type, username)) {
-    err << clear << "User " << username << " already has " << FC_slot_type_name(type) << " access to " << filename;
-    return 0;
-  }
+  gxList<FCKeySlot> one;
   FCKeySlot slot;
   slot.type = type;
-  slot.username = username;
+  if(username) slot.username = username;
   slot.wrapped.Load(wrapped, wrapped_len);
-  slots.Add(slot);
+  one.Add(slot);
+  return AddSlots(one);
+}
 
-  // Check it fits before touching the file
-  unsigned char *area = new unsigned char[file_slot_area_len];
-  if(!area) {
-    err << clear << "Out of memory";
+int FCryptFile::AddSlots(gxList<FCKeySlot> &new_slots)
+// 11/18/2026: Was an in-place rewrite of the header and key slot area
+// (fopen "r+b", no temp file, backup or lock): a crash or a second writer
+// could leave a file nothing opens. Now the same checked temp file path as
+// RemoveSlot() and the rekey.
+{
+  last_backup_file.Clear();
+  if(!unlocked) {
+    err << clear << "The encrypted file is not unlocked";
     return 0;
   }
-  int ok = BuildSlotArea(area, err);
-  if(ok) memmove(slot_area, area, file_slot_area_len);
-  delete[] area;
+  unsigned n = 0;
+  gxListNode<FCKeySlot> *np = new_slots.GetHead();
+  while(np) {
+    FCKeySlot &s = np->data;
+    if(s.username.is_null() || s.username.length() > FC_MAX_USERNAME_LEN) {
+      err << clear << "User names must be 1 to " << FC_MAX_USERNAME_LEN << " characters";
+      return 0;
+    }
+    if(s.wrapped.length() == 0 || s.wrapped.length() > FC_MAX_WRAPPED_LEN) {
+      err << clear << "Bad wrapped key length";
+      return 0;
+    }
+    if(FindSlot(s.type, s.username.c_str())) {
+      err << clear << "User " << s.username.c_str() << " already has " << FC_slot_type_name(s.type)
+	  << " access to " << filename;
+      return 0;
+    }
+    n++;
+    np = np->next;
+  }
+  if(n == 0) {
+    err << clear << "No key slot to add";
+    return 0;
+  }
+  np = new_slots.GetHead();
+  while(np) {
+    slots.Add(np->data);
+    np = np->next;
+  }
+  gxString e;
+  int ok = CommitSlotArea("add-user", add_keep_backup, last_backup_file, add_dry_run, e);
+  if(!ok || add_dry_run) {
+    for(unsigned i = 0; i < n; i++) slots.Remove(slots.GetTail());
+  }
   if(!ok) {
-    slots.Remove(slots.GetTail());
+    err << clear << "The file was not changed: " << e;
     return 0;
   }
-
-  FILE *fp = fopen(filename.c_str(), "r+b");
-  if(!fp) {
-    err << clear << "Error opening " << filename << " for writing";
-    return 0;
-  }
-  ofname = filename;
-  ok = WriteHeader(fp);
-  if(fflush(fp) != 0) ok = 0;
-  if(fclose(fp) != 0) ok = 0;
-  if(!ok && err.is_null()) err << clear << "Error writing " << filename;
-  return ok;
+  return 1;
 }
 
 int FCryptFile::AddRSAKey(const char *username, const char *public_key, unsigned public_key_len,
@@ -1508,10 +1526,25 @@ int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup,
     return 0;
   }
 
+  FCKeySlot removed = node->data;
+  slots.Remove(node);
+  gxString e;
+  int ok = CommitSlotArea("remove-user", keep_backup, backup_file, dry_run, e);
+  if(!ok || dry_run) slots.Add(removed); // The original file is unchanged
+  if(!ok) {
+    err << clear << "The file was not changed: " << e;
+    return 0;
+  }
+  return 1;
+}
+
+int FCryptFile::CommitSlotArea(const char *tag, int keep_backup, gxString &backup_file, int dry_run, gxString &e)
+{
+  backup_file.Clear();
   // Digest of the data before the change
-  unsigned char hkey[FC_KEY_LEN], tag[FC_TAG_LEN];
+  unsigned char hkey[FC_KEY_LEN], dtag[FC_TAG_LEN];
   if(!fc_rand(hkey, sizeof(hkey), 0)) {
-    err << clear << "Random number generator failed";
+    e << clear << "Random number generator failed";
     return 0;
   }
   MemoryBuffer digest;
@@ -1521,29 +1554,37 @@ int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup,
     data_sink = &sink;
     int ok = DecryptFile(0);
     data_sink = keep;
-    if(!ok || !sink.Final(tag)) {
+    if(!ok || !sink.Final(dtag)) {
       OPENSSL_cleanse(hkey, sizeof(hkey));
+      e = err;
       return 0;
     }
     digest.Cat(hkey, sizeof(hkey));
-    digest.Cat(tag, sizeof(tag));
+    digest.Cat(dtag, sizeof(dtag));
   }
   OPENSSL_cleanse(hkey, sizeof(hkey));
 
-  FCKeySlot removed = node->data;
-  slots.Remove(node);
+  unsigned char *old_area = new unsigned char[file_slot_area_len];
   unsigned char *area = new unsigned char[file_slot_area_len];
-  int ok = BuildSlotArea(area, err);
+  if(!old_area || !area) {
+    if(old_area) delete[] old_area;
+    if(area) delete[] area;
+    e << clear << "Out of memory";
+    return 0;
+  }
+  memmove(old_area, slot_area, file_slot_area_len);
+  int ok = BuildSlotArea(area, e);
   if(ok) memmove(slot_area, area, file_slot_area_len);
   delete[] area;
-  gxString tmp, e;
-  tmp << filename << ".remove-user.tmp";
+  gxString tmp;
+  tmp << filename << "." << tag << ".tmp";
   if(ok) ok = WriteCopy(tmp.c_str(), e);
   if(ok) ok = VerifyCopy(tmp.c_str(), file_key, &digest, e);
   if(ok && dry_run) {
     futils_remove(tmp.c_str());
+    memmove(slot_area, old_area, file_slot_area_len);
+    delete[] old_area;
     digest.Clear(1);
-    slots.Add(removed);
     return 1;
   }
   if(ok && keep_backup) {
@@ -1556,11 +1597,10 @@ int FCryptFile::RemoveSlot(unsigned type, const char *username, int keep_backup,
     futils_remove(tmp.c_str());
     if(!backup_file.is_null()) futils_remove(backup_file.c_str());
     backup_file.Clear();
-    slots.Add(removed); // The original file is unchanged
-    err << clear << "The file was not changed: " << e;
-    return 0;
+    memmove(slot_area, old_area, file_slot_area_len);
   }
-  return 1;
+  delete[] old_area;
+  return ok;
 }
 
 int FCryptFile::BeginRekey()

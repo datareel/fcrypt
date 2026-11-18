@@ -207,10 +207,16 @@ public: // After an Unlock
   // With data_sink set the data goes to the sink instead.
   int DecryptFile(const char *outfile_name = 0);
   int DecryptStoredName(gxString &name);
-  // Give another user access. The key slot area is rewritten in place.
+  // Give another user access. 11/18/2026: The file is rewritten to a
+  // temp file, checked, flushed and renamed over the original, as for
+  // RemoveSlot(); with add_keep_backup set a backup copy is kept in
+  // last_backup_file. The caller takes the file lock.
   int AddRSAKey(const char *username, const char *public_key, unsigned public_key_len,
 		char *passphrase = 0);
   int AddWrappedKey(unsigned type, const char *username, const unsigned char *wrapped, unsigned wrapped_len);
+  // Adds several slots in one checked rewrite (a hybrid user). Each slot
+  // must not hold more than FC_MAX_WRAPPED_LEN bytes.
+  int AddSlots(gxList<FCKeySlot> &new_slots);
   // The file key, for wrapping it with a smart card
   const unsigned char *FileKey() const { return unlocked ? file_key : 0; }
   const unsigned char *FileID() const { return file_id; }
@@ -249,6 +255,9 @@ public: // Settings
   gxString output_file_name;
   gxString stored_name_override; // fcrypt --decrypted-outfile
   CryptDataSink *data_sink;      // Decrypt to this instead of a file
+  int add_keep_backup;           // AddSlots(): keep a backup copy (default 0: the
+                                 // temp file and rename already make it all or nothing)
+  int add_dry_run;               // AddSlots(): check the change, leave the file
 
 public: // Results
   gxString err;
@@ -258,6 +267,7 @@ public: // Results
   gxString stored_name;
   gxList<FCKeySlot> slots;
   unsigned file_iterations; // Iterations stored in the loaded file
+  gxString last_backup_file; // Backup copy kept by AddSlots()
 
 private:
   int MakeEncryptOutputName();
@@ -304,6 +314,12 @@ private: // 10/27/2026: Key management
   int WriteCopy(const char *out_name, gxString &e); // New header, same records
   int VerifyCopy(const char *fname, const unsigned char key[FC_KEY_LEN], MemoryBuffer *digest, gxString &e);
   int KeepBackup(gxString &backup_file);
+  // Writes the current slots to a temp file with the records unchanged,
+  // checks that it decrypts to the same data, keeps a backup and renames
+  // it over the original. With dry_run the temp file is checked and
+  // removed. On failure (or a dry run) slot_area is restored; the caller
+  // restores the slot list. Returns 1 if successful.
+  int CommitSlotArea(const char *tag, int keep_backup, gxString &backup_file, int dry_run, gxString &e);
 
 private: // Disallow copying
   FCryptFile(const FCryptFile &ob) { }

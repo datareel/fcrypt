@@ -232,6 +232,31 @@ ${FC} ${A} --lock-timeout=1 --remove-user=alice lk.enc >>${logFILE} 2>&1
 check $? "a held lock makes fcrypt --remove-user exit 4"
 wait
 
+# ---- 2026.110: adding a user is a checked temp file rewrite ----
+newfile ad "alice"
+( flock -x 9; sleep 4 ) 9>ad.enc.lock &
+sleep 0.5
+before=$(sum ad.enc)
+${FC} --password-file=pw.txt --lock-timeout=1 --add-rsa-key=bob.pub --rsa-key-username=bob ad.enc >>${logFILE} 2>&1
+rv=$?
+[ ${rv} -eq 4 ] && [ "$(sum ad.enc)" = "${before}" ]
+check $? "a held lock makes fcrypt --add-rsa-key exit 4 and leaves the file as it was"
+wait
+${FC} --password-file=pw.txt --add-rsa-key=bob.pub --rsa-key-username=bob ad.enc >>${logFILE} 2>&1
+[ $? -eq 0 ] && opens ad.enc bob bob && opens ad.enc alice alice && [ ! -e ad.enc.add-user.tmp ]
+check $? "adding a user rewrites the file through a checked temp file (both users open it, no temp file left)"
+newfile af ""
+rm -f af.enc; cp data.bin af.bin
+${FC} --password-file=pw.txt --static-data-size=2048 --outfile=af.enc af.bin >>${logFILE} 2>&1
+n=0; while [ ${n} -lt 20 ]; do
+    ${FC} --password-file=pw.txt --add-rsa-key=alice.pub --rsa-key-username=u${n} af.enc >>${logFILE} 2>&1 || break
+    n=$((n+1))
+done
+before=$(sum af.enc)
+${FC} --password-file=pw.txt --add-rsa-key=bob.pub --rsa-key-username=full af.enc > out.txt 2>&1
+[ $? -ne 0 ] && grep -q "No space left in the key slot area" out.txt && [ "$(sum af.enc)" = "${before}" ] && [ ! -e af.enc.add-user.tmp ]
+check $? "a full key slot area refuses the new user and leaves the file as it was"
+
 # ---- KMS style pipe, with a local stand-in ----
 fake_kms() { printf '%s' "${PW}" | base64; }
 fake_kms | base64 -d | ${FD} --password-fd=0 --non-interactive --stdout s1.enc 2>/dev/null | cmp -s - data.bin

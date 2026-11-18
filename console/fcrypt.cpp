@@ -980,6 +980,27 @@ void ListNewFormatUsers(FCryptFile &fc)
   cerr << "\n" << flush;
 }
 
+int LockForAddUser(const char *fname, FCLock &lock)
+// 11/18/2026: Adding a user takes the same advisory lock as --remove-user
+// and --rekey (file.lock, --lock-timeout seconds)
+{
+  gxString lerr;
+  int lrv = FC_lock_file(fname, lock_timeout, lock, lerr);
+  if(lrv != 0) {
+    cerr << "ERROR: " << lerr.c_str() << "\n" << flush;
+    SetExit(lrv == 1 ? FC_EXIT_LOCKED : FC_EXIT_IO);
+    return 0;
+  }
+  return 1;
+}
+
+void ReportAddBackup(FCryptFile &nf)
+{
+  if(!nf.last_backup_file.is_null())
+    cerr << "The original file was saved to " << nf.last_backup_file.c_str()
+	 << ", delete it when you no longer need it" << "\n" << flush;
+}
+
 int OpenNewFormatFile(FCryptFile &fc, const char *fname, const MemoryBuffer &secret)
 {
   if(!fc.LoadHeader(fname) || !fc.UnlockWithSecret(secret)) {
@@ -1773,6 +1794,8 @@ int main(int argc, char **argv)
       int fmt;
       if(!CheckLegacyFile(ptr->data.c_str(), fmt)) return ExitProgram(1);
       if(fmt == FC_FORMAT_2026102) {
+	FCLock lock; // 11/18/2026: Two writers of one file wait for each other
+	if(!LockForAddUser(ptr->data.c_str(), lock)) return ExitProgram(exit_code ? exit_code : 1);
 	FCryptFile nf;
 	if(!OpenNewFormatFile(nf, ptr->data.c_str(), aes_file_encrypt_secret)) return ExitProgram(1);
 	unsigned char wrapped[FC_MAX_WRAPPED_LEN];
@@ -1795,6 +1818,7 @@ int main(int argc, char **argv)
 	  return ExitProgram(1);
 	}
 	cerr << "Smart card cert for user " << smartcard_cert_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+	ReportAddBackup(nf);
 	if(clientcfg->verbose_mode) ListNewFormatUsers(nf);
 	ptr = ptr->next;
 	continue;
@@ -1840,6 +1864,8 @@ int main(int argc, char **argv)
       int fmt;
       if(!CheckLegacyFile(ptr->data.c_str(), fmt)) return ExitProgram(1);
       if(fmt == FC_FORMAT_2026102) {
+	FCLock lock; // 11/18/2026: Two writers of one file wait for each other
+	if(!LockForAddUser(ptr->data.c_str(), lock)) return ExitProgram(exit_code ? exit_code : 1);
 	FCryptFile nf;
 	if(!OpenNewFormatFile(nf, ptr->data.c_str(), aes_file_encrypt_secret)) return ExitProgram(1);
 	char *passphrase = 0;
@@ -1849,6 +1875,7 @@ int main(int argc, char **argv)
 	  return ExitProgram(1);
 	}
 	cerr << "Public RSA key " << rsa_key_username.c_str() << " added to " << ptr->data.c_str() << "\n" << flush;
+	ReportAddBackup(nf);
 	if(clientcfg->verbose_mode) ListNewFormatUsers(nf);
 	ptr = ptr->next;
 	continue;
