@@ -1764,7 +1764,17 @@ int main(int argc, char **argv)
   for(int i = 1; i < argc; i++) {
     if(strcmp(argv[i], "--add-rsa-key") == 0) stdin_key = 1;
   }
-  int selectRetVal = stdin_key ? select(1, &readfds, &writefds, &exceptfds, &timeout) : 0;
+  // 11/18/2026: A pipe is read to the end. The 5 ms select() alone missed
+  // a key from a slow producer (ssh-keygen ... | fcrypt --add-rsa-key on a
+  // busy host gave "--add-rsa-key missing filename").
+  int selectRetVal = 0;
+  if(stdin_key) {
+#if defined (__UNIX__)
+    if(!isatty(fileno(stdin))) selectRetVal = 1;
+    else
+#endif
+      selectRetVal = select(1, &readfds, &writefds, &exceptfds, &timeout);
+  }
   char buf[1];
   unsigned bytes_read = 0;
   

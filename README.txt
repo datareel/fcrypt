@@ -96,6 +96,10 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
     with a password slot.
   - New tests: console/linux/run_pq_tests.sh [old_build_dir ...]
     (SC_MODULE/SC_PIN/SC_CERT for a SoftHSM2 smart card user).
+* fcrypt --add-rsa-key with the key on stdin (ssh-keygen -e ... |
+  fcrypt --add-rsa-key) reads the whole pipe. It waited only 5 ms for
+  the first bytes, so a slow producer gave "--add-rsa-key missing
+  filename".
 * Adding a user is all or nothing: --add-rsa-key and --add-smartcard-cert
   write the file to a temp file, check that it decrypts to the same data
   and rename it over the original, as --remove-user does, and take the
@@ -106,8 +110,11 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
   and on Windows (an OpenSSL 3.5.x LTS release). The build stops with an
   error for an older OpenSSL, and the programs refuse to run with an
   older OpenSSL library. RHEL 8 needs RHEL 8.10 with current updates,
-  where the operating system's OpenSSL is 3.5 (the RHEL 8.10 images get
-  it when patched); an unpatched RHEL 8 with OpenSSL 1.1.1 is told to
+  where OpenSSL 3.5 is the operating system packages openssl3-libs and
+  openssl3-devel (3.5.5 on 11/18/2026, next to the system OpenSSL
+  1.1.1k); makefile_rhel8 builds with /usr/include/openssl3 and
+  /usr/lib64/openssl3, and the programs run with libssl.so.3 and
+  libcrypto.so.3. An unpatched RHEL 8 without openssl3-libs is told to
   apply the RHEL 8.10 updates. Each package README and these release
   notes state the OpenSSL version every build was made with.
 * Bug fixes and security updates found while upgrading to 2026.109 go
@@ -501,7 +508,8 @@ FIPS mode needs OpenSSL 3.0 or later with a FIPS provider:
 * RHEL 9 and 10: enable FIPS mode with "fips-mode-setup --enable" and
   reboot. The system OpenSSL FIPS provider is used.
 
-* RHEL 8: OpenSSL 1.1.1 has no FIPS provider. RHEL 8 builds refuse
+* RHEL 8: OpenSSL 1.1.1 has no FIPS provider, and the RHEL 8.10
+  openssl3 packages (OpenSSL 3.5) have none either. RHEL 8 builds refuse
   --fips, and run outside FIPS mode on a host in FIPS mode.
 
 * Windows: build the OpenSSL 3.5.x LTS FIPS provider, see FIPS MODE ON
@@ -691,6 +699,14 @@ OpenSSL (sudo dnf install gcc-c++ make openssl-devel). For an older
 RHEL release use the makefile for that release:
 
 $ make -f makefile_rhel9     (or makefile_rhel8)
+
+Since 2026.110 every build needs OpenSSL 3.5 LTS or later. RHEL 9 and
+10 have it as the system OpenSSL (openssl-devel). RHEL 8.10 has it as
+the operating system packages openssl3-libs and openssl3-devel, next
+to the system OpenSSL 1.1.1k; makefile_rhel8 builds with them:
+
+$ sudo dnf install gcc-c++ make openssl3-devel
+$ make -f makefile_rhel8
 
 RHEL 6 and 7 builds are no longer supported, see REMOVED RHEL 6 AND 7
 SUPPORT below.

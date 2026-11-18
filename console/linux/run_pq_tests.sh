@@ -76,7 +76,11 @@ ${FC} --generate-pq-key=alice_pq --pq-key-passphrase-file=a_pp.txt >>${logFILE} 
 check $? "--generate-pq-key writes the private key (mode 600) and file.pub.pem"
 grep -q "ENCRYPTED PRIVATE KEY" alice_pq && ! grep -q "BEGIN PRIVATE KEY" alice_pq
 check $? "the ML-KEM private key file is encrypted with the passphrase"
-openssl pkey -pubin -in alice_pq.pub.pem -noout -text 2>/dev/null | grep -q "ML-KEM-1024"
+if openssl version 2>/dev/null | grep -q "^OpenSSL 3\.[5-9]\|^OpenSSL [4-9]"; then
+    openssl pkey -pubin -in alice_pq.pub.pem -noout -text 2>/dev/null | grep -q "ML-KEM-1024"
+else # RHEL 8: the openssl command is 1.1.1k, the OS OpenSSL 3.5 has no command
+    grep -q "BEGIN PUBLIC KEY" alice_pq.pub.pem && [ $(stat -c %s alice_pq.pub.pem) -gt 2100 ]
+fi
 check $? "the public key file holds an ML-KEM-1024 key"
 ${FC} --generate-pq-key=bob_pq --pq-key-passphrase-file=b_pp.txt >>${logFILE} 2>&1
 ${FC} --generate-pq-key=alice_pq --pq-key-passphrase-file=a_pp.txt >>${logFILE} 2>&1
