@@ -374,6 +374,13 @@ only with a password or a key file uses no public-key cryptography.</li>
 break RSA could recover the file key from any of those slots, so a copy of a file taken today could be
 attacked once such a computer exists. For the most sensitive files, rely on long random passwords or key
 files.</li>
+<li><b>The plan:</b> the next release (2026.110) is required to add quantum-resistant user access: hybrid key
+slots that wrap the file key with both RSA-OAEP and ML-KEM-1024 (NIST FIPS 203, available in OpenSSL 3.5), so
+an attacker must break both. Files keep the 2026102 format: they still open with a password or key file in
+2026.102 and later, and RSA and smart card users can be moved to hybrid slots with <code>--rekey</code>. This
+follows the NSA CNSA 2.0 and NIST guidance to move from RSA to ML-KEM with AES-256.</li>
+<li><b>Smart cards:</b> today&apos;s CAC and PIV cards hold RSA and elliptic-curve keys only. Until post-quantum
+cards are issued, a smart card user can be protected by a hybrid slot that also needs an ML-KEM key file.</li>
 </ul>
 
 <h2 id="report">14. Reporting a security issue</h2>

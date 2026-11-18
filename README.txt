@@ -54,6 +54,14 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
   format, the key slots, FIPS 140-3 mode, smart cards, key management, the
   access log and the limits), published at
   https://datareel.com/fcrypt/security_design.php.
+* Required for this release: quantum-resistant user access. Hybrid key
+  slots wrap the file key with both RSA-OAEP and ML-KEM-1024 (NIST FIPS
+  203, OpenSSL 3.5), so RSA and smart card users are protected against a
+  future quantum computer. Files keep the 2026102 format and still open
+  with a password or key file in 2026.102 and later; --rekey moves users
+  to hybrid slots. Design: claude_code_docs FCRYPT_2026_110_QUANTUM_DESIGN.md.
+  Not implemented yet. RHEL 8 (system OpenSSL 1.1.1k, no ML-KEM) is an
+  open decision: a static OpenSSL 3.5, no hybrid users, or no RHEL 8.
 * Bug fixes and security updates found while upgrading to 2026.109 go
   into this release.
 
