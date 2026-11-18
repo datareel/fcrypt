@@ -121,6 +121,15 @@ int FC_crypto_init(int fips_request, gxString &err)
   FC_crypto_cleanup();
   fc_system_fips = FC_system_fips_requested();
 
+  // 11/18/2026: The shared library must be OpenSSL 3.5 LTS or later too,
+  // not only the headers the program was built with.
+  if(OpenSSL_version_num() < (unsigned long)FC_MIN_OPENSSL_VERSION) {
+    err << clear << "This release needs OpenSSL 3.5 or later, but the OpenSSL library is "
+	<< OpenSSL_version(OPENSSL_VERSION) << ". On RHEL 8 apply the RHEL 8.10 updates, "
+	<< "which update the OS OpenSSL to 3.5.";
+    return 0;
+  }
+
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
   int want_fips = 0;
   if(fips_request == FC_FIPS_ON) want_fips = 1;

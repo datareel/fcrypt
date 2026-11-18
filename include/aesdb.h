@@ -51,9 +51,18 @@ AES encryption routes used generate encryption certificates.
 
 // 10/24/2026: Windows builds must use an OpenSSL 3.5.x LTS release.
 // See README_windows_openssl.txt.
+// 11/18/2026: Release 2026.110 and later are built only with OpenSSL 3.5
+// LTS or later on every platform (dougg: nothing is distributed on an
+// OpenSSL older than the 3.5 long term support release). RHEL 8 needs
+// RHEL 8.10 with current updates, which has the OS OpenSSL 3.5.
+#define FC_MIN_OPENSSL_VERSION 0x30500000L
 #if defined (__WIN32__)
 #if (OPENSSL_VERSION_NUMBER < 0x30500000L) || (OPENSSL_VERSION_NUMBER >= 0x30600000L)
 #error Windows builds require an OpenSSL 3.5.x LTS release, see README_windows_openssl.txt
+#endif
+#else
+#if OPENSSL_VERSION_NUMBER < 0x30500000L
+#error fcrypt needs OpenSSL 3.5 LTS or later (openssl-devel 3.5). On RHEL 8 apply the RHEL 8.10 updates, which update the OS OpenSSL to 3.5.
 #endif
 #endif
 

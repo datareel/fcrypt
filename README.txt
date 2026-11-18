@@ -61,11 +61,15 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
   with a password or key file in 2026.102 and later; --rekey moves users
   to hybrid slots. Design: claude_code_docs FCRYPT_2026_110_QUANTUM_DESIGN.md.
   Not implemented yet.
-* RHEL 8: this release needs RHEL 8.10 with current updates, where the
-  operating system's OpenSSL is 3.5 (the RHEL 8.10 images get it when
-  patched). An unpatched RHEL 8 with OpenSSL 1.1.1 cannot build or run
-  it; the build and the programs say to apply the RHEL 8.10 updates.
-  Keep using 2026.109 on unpatched RHEL 8 systems.
+* OpenSSL 3.5 LTS on every platform: every build is made with OpenSSL
+  3.5 LTS or later, on RHEL 8, 9 and 10 (the operating system's OpenSSL)
+  and on Windows (an OpenSSL 3.5.x LTS release). The build stops with an
+  error for an older OpenSSL, and the programs refuse to run with an
+  older OpenSSL library. RHEL 8 needs RHEL 8.10 with current updates,
+  where the operating system's OpenSSL is 3.5 (the RHEL 8.10 images get
+  it when patched); an unpatched RHEL 8 with OpenSSL 1.1.1 is told to
+  apply the RHEL 8.10 updates. Each package README and these release
+  notes state the OpenSSL version every build was made with.
 * Bug fixes and security updates found while upgrading to 2026.109 go
   into this release.
 
