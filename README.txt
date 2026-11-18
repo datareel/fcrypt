@@ -54,7 +54,11 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
 * docs/security_design.php: the security design white paper (the file
   format, the key slots, FIPS 140-3 mode, smart cards, key management, the
   access log and the limits), published at
-  https://datareel.com/fcrypt/security_design.php.
+  https://datareel.com/fcrypt/security_design.php, and
+  docs/security_design.html, a standalone copy made by
+  docs/make_docs_html.py. The release packages carry the documents in a
+  docs folder: README.txt, AGENTS.md, CLAUDE.md, GEMINI.md and
+  security_design.html, the same text as the website.
 * Quantum-resistant (hybrid) users. An RSA key or smart card user can
   also get an ML-KEM-1024 key (NIST FIPS 203, OpenSSL 3.5): the file key
   is then wrapped so that both the RSA key or card and the ML-KEM key
