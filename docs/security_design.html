@@ -47,7 +47,8 @@ h1 { font-size: 1.7em; margin-top: 0; }
 <p>The current copy is at <a href="https://datareel.com/fcrypt/security_design.php">https://datareel.com/fcrypt/security_design.php</a>.</p>
 
 
-<p><b>Release:</b> 2026.109 (file format 2026102), built with the DataReel C++ library 6.4.1.
+<p><b>Release:</b> 2026.110 (file format 2026102), built with the DataReel C++ library 6.4.1 and OpenSSL
+3.5 LTS (on RHEL 8 hosts in FIPS mode, Red Hat&apos;s FIPS-validated system OpenSSL 1.1.1; section 11).
 <b>Audience:</b> security reviewers, administrators and anyone deciding whether to trust fcrypt with their
 files. The source code is published, so everything on this page can be checked against it; the design does
 not depend on keeping it secret. The <a href="https://datareel.com/fcrypt/index.php">README</a> has the commands, and the
@@ -145,11 +146,19 @@ the count is stored in the header. A password or key must be at least 8 bytes. K
 check, so a wrong password is found when the key is unwrapped.</li>
 <li><b>RSA and SSH-RSA keys:</b> the file key is encrypted to the user's RSA public key with RSA-OAEP, using
 SHA-256 for both the hash and MGF1. Adding a user needs only their public key (an SSH-RSA key is converted
-to a PEM public key with ssh-keygen). fcrypt refuses an RSA user key under 2048 bits; slots hold RSA keys
-up to 8192 bits. The user decrypts with their private key file.</li>
+to a PEM public key with ssh-keygen). fcrypt refuses an RSA user key under 2048 bits, or under 3072 bits when the RHEL crypto
+policy is FUTURE (fcrypt reads the policy itself, section 11); slots hold RSA keys up to 8192 bits. The user decrypts with their private key file.</li>
 <li><b>Smart cards:</b> the file key is encrypted with RSA-OAEP SHA-256 to the public key of a card
 certificate, read from the card (no PIN) or from an exported certificate file. The card decrypts it with a
 private key that never leaves the card (section 7).</li>
+<li><b>Quantum-resistant (hybrid) users, 2026.110:</b> an RSA or smart card user can also have an ML-KEM-1024 key
+(NIST FIPS 203). The file key is then wrapped with AES-256 Key Wrap under a key derived with KBKDF-HMAC-SHA384
+from both the ML-KEM-1024 shared secret and 32 random bytes encrypted with RSA-OAEP SHA-256 for the user&apos;s
+RSA key or card; the derivation also binds the slot type, the user name and a SHA-384 of both ciphertexts.
+Opening the file as that user needs both the RSA private key (or the card) and the ML-KEM private key file, a
+PKCS#8 file encrypted with the user&apos;s passphrase. The hybrid user&apos;s slot (type 4 for RSA, 5 for a card)
+keeps its ciphertexts in part slots (type 6) of at most 1,008 bytes, so releases 2026.102 to 2026.109, which
+refuse longer slots, still open the file with the password, key file or an RSA-only user.</li>
 <li><b>Derived keys:</b> KBKDF in counter mode with HMAC-SHA256 (SP 800-108) derives three keys from the file
 key, each with its own label and the file ID as context: the header MAC key, the data encryption key and the
 data MAC key. No key is used for two purposes.</li>
@@ -233,15 +242,21 @@ in use.</li>
 provider cannot be loaded or fails its self-test, the program stops and nothing is encrypted or
 decrypted.</li>
 <li><b>Algorithms:</b> format 2026102 uses only PBKDF2-HMAC-SHA256, AES-256 Key Wrap, RSA-OAEP with SHA-256,
-KBKDF with HMAC-SHA256, AES-256-CBC and HMAC-SHA256, all fetched from that library context.</li>
+KBKDF with HMAC-SHA256, AES-256-CBC and HMAC-SHA256, all fetched from that library context. Hybrid users add
+ML-KEM-1024 and KBKDF-HMAC-SHA384, which need a FIPS provider that includes ML-KEM: the RHEL FIPS provider
+(Red Hat&apos;s validated 3.0.7 module) does not yet, so in FIPS mode a hybrid user gets a clear error and the
+file still opens with the password, key file or an RSA-only user.</li>
 <li><b>Refused in FIPS mode:</b> files from releases before 2026.102, whose key derivation is not an approved
 algorithm; decrypt them with <code>fdecrypt --no-fips</code> or convert them with <code>fmigrate
 --no-fips</code>. A private RSA key with a passphrase in the traditional PEM format, which derives its key
 with MD5, cannot be read; convert it to PKCS#8 (the README shows the command, also for SSH-RSA keys).</li>
-<li><b>Requirements:</b> FIPS mode needs OpenSSL 3.0 or later. RHEL 9 and 10 use the operating system's FIPS
-provider (<code>fips-mode-setup --enable</code>). RHEL 8 has OpenSSL 1.1.1 without a FIPS provider: its builds
-refuse <code>--fips</code> and run outside FIPS mode on a host in FIPS mode. Windows builds use the FIPS
-provider (<code>fips.dll</code>) of the OpenSSL 3.5.x LTS release they were built with.</li>
+<li><b>Requirements:</b> RHEL 9 and 10 use the operating system&apos;s FIPS provider (<code>fips-mode-setup
+--enable</code>). On RHEL 8, hosts in FIPS mode use the <code>rhel8</code> build, which links Red Hat&apos;s
+FIPS-validated system OpenSSL 1.1.1k; that library runs in FIPS mode by itself on a host in FIPS mode, and
+fcrypt then reports FIPS mode on and refuses old formats (tested on RHEL 8.10 in FIPS mode). The preferred
+RHEL 8 build, <code>rhel8_openssl35</code>, has OpenSSL 3.5 built in without a FIPS provider: it refuses to run
+on a host in FIPS mode, and the installer does not choose it there. Windows builds use the FIPS provider
+(<code>fips.dll</code>) of the OpenSSL 3.5.x LTS release they were built with.</li>
 <li><b>Compliance:</b> for FIPS 140-3 compliance the FIPS provider version in use must have a CMVP
 certificate. Check the provider version against the validated list before relying on FIPS mode, and check
 your site's policy with your security office.</li>
@@ -251,9 +266,10 @@ OpenSSL FIPS provider (section 7).</li>
 
 <h2 id="smartcard">7. Smart cards (PKCS#11)</h2>
 <ul>
-<li><b>No OpenSSL engine on OpenSSL 3:</b> builds that use OpenSSL 3 (RHEL 9, RHEL 10 and Windows) load the
-card's PKCS#11 module directly; the deprecated OpenSSL ENGINE API and the pkcs11 engine are not used. RHEL 8
-builds (OpenSSL 1.1.1) still use the pkcs11 engine. The default module is OpenSC; on Windows the ActivClient
+<li><b>No OpenSSL engine on OpenSSL 3:</b> builds that use OpenSSL 3 (RHEL 9, RHEL 10, Windows and the RHEL 8
+<code>rhel8_openssl35</code> build) load the card&apos;s PKCS#11 module directly; the deprecated OpenSSL ENGINE
+API and the pkcs11 engine are not used. The RHEL 8 FIPS build (system OpenSSL 1.1.1) still uses the pkcs11
+engine. The default module is OpenSC; on Windows the ActivClient
 module is used when it is installed. <code>--smartcard-provider</code> picks another module.</li>
 <li><b>Adding a card user</b> needs no PIN: the public key is read from the card or from an exported
 certificate file, and the file key is wrapped in software with RSA-OAEP SHA-256. The card key must be RSA;
@@ -273,6 +289,9 @@ OAEP padding (SHA-256, MGF1-SHA256), checking every byte before it reports a sin
   checks is not a promise that tries are left.</li>
   <li>After a wrong PIN the error says one try was used and what the card reports about the tries left.</li>
   </ul></li>
+<li><b>Hybrid card users (2026.110):</b> CAC and PIV cards hold RSA keys only, so a card user is made
+quantum-resistant by also giving it an ML-KEM-1024 key file: the card decrypts its RSA half and the key file
+gives the ML-KEM half. Without the key file the card is not used at all (no login).</li>
 <li><b>Choosing the card:</b> <code>--smartcard-slot</code> uses only one PKCS#11 slot. Without it, a cert ID
 found on more than one inserted card, or on none, is refused and no PIN is sent.</li>
 <li><b>Listing without a PIN:</b> <code>fcrypt --smartcard-list</code> shows the cards, cert IDs, key types
@@ -280,14 +299,22 @@ and sizes and PIN status, and <code>--smartcard-match</code> finds the card that
 public PKCS#11 calls: no login, no PIN.</li>
 </ul>
 
-<h2 id="keymgmt">8. Removing users and rekeying</h2>
+<h2 id="keymgmt">8. Adding and removing users, and rekeying</h2>
 <ul>
-<li><b><code>--remove-user</code></b> deletes the RSA key or smart card slot of one user. The last slot is never
+<li><b>Adding a user</b> (<code>--add-rsa-key</code>, <code>--add-smartcard-cert</code>, with
+<code>--add-pq-public-key</code> for a hybrid user) writes the file to a temp file with the new slots and the
+records unchanged, checks that it decrypts to the same data, and renames it over the original, under the
+same file lock as the changes below (since 2026.110; it used to rewrite the key slot area in place).
+<code>--require-pq</code> refuses users without an ML-KEM key.</li>
+<li><b><code>--remove-user</code></b> deletes the RSA key or smart card slot of one user (with a hybrid
+user&apos;s part slots). The last slot is never
 removed. Removing a user does not change the file key, so a user who already recovered it could still use
 it; the follow-up is <code>--rekey</code>.</li>
 <li><b><code>--rekey</code></b> gives the file a new random file key, a new salt and a new file ID, encrypts every
 record again and rewraps the key for every slot that is kept. RSA and smart card slots are rewrapped with
-their public keys, so no card login is needed. Every existing slot needs a choice (keep, change or drop) in
+their public keys, so no card login is needed; a hybrid user is rewrapped with its ML-KEM public key too
+(<code>pq=</code> in the rekey input) and is never silently turned into an RSA-only user. Every existing slot
+needs a choice (keep, change or drop) in
 the rekey input, or the rekey stops and lists what is missing; nothing is dropped silently, and a rekey that
 would leave no slot is refused. The password slot can be kept, changed, dropped or given a generated
 random password (64 hex digits) written to a private file or descriptor.</li>
@@ -306,7 +333,8 @@ smart card (one card login, with the PIN safeguards above).</li>
 <ul>
 <li><b>Secrets from files and descriptors:</b> <code>--password-file</code>, <code>--password-fd</code>,
 <code>--rsa-key-passphrase-file</code>, <code>--rsa-key-passphrase-fd</code>, <code>--smartcard-pin-file</code> and
-<code>--smartcard-pin-fd</code> in fcrypt, fdecrypt and fmigrate. The secret is the first line, at most 4,096
+<code>--smartcard-pin-fd</code> in fcrypt, fdecrypt and fmigrate, and <code>--pq-key-passphrase-file</code> and
+<code>--pq-key-passphrase-fd</code> for the ML-KEM key of a hybrid user (2026.110). The secret is the first line, at most 4,096
 bytes. On Linux the file must be a regular file, not a symbolic link, owned by you with no group or other
 access. The buffers are wiped after use.</li>
 <li><b>Secrets on the command line:</b> <code>--password=</code>, <code>--rsa-key-passphrase=</code> and
@@ -350,9 +378,21 @@ the plaintext is never written to disk. The new file is written to a private tem
 checked against a SHA-256 hash of the data before it replaces the old file. RSA and smart card users of the
 old file cannot be carried over, because the old file holds only their wrapped key, not their public key;
 fmigrate lists them so they can be added again.</li>
-<li><b>Older releases:</b> they have security problems and are no longer offered for download; only release
-2026.109 is.</li>
-<li><b>Linux:</b> RHEL 8, 9 and 10 (RHEL 10 is the default build), using the operating system's OpenSSL: release 2026.109 is built with OpenSSL 3.5.8 on RHEL 10, 3.5.9 on RHEL 9 and 1.1.1k on RHEL 8. The next release, 2026.110, is built with OpenSSL 3.5 LTS on every platform, with one exception: RHEL 8 hosts in FIPS mode get a build on Red Hat's FIPS-validated system OpenSSL 1.1.1k (RHEL 8's OpenSSL 3.5 packages come from EPEL, not Red Hat, and have no FIPS provider); other RHEL 8 hosts get a build with OpenSSL 3.5 LTS built in, and the installer picks the build by the host's FIPS mode.</li>
+<li><b>Older releases:</b> they have security problems and are no longer offered for download; only the current
+release is.</li>
+<li><b>Linux:</b> RHEL 8, 9 and 10 (RHEL 10 is the default build). From 2026.110 every build uses OpenSSL 3.5
+LTS or later, with one exception: RHEL 9 and 10 use the operating system&apos;s OpenSSL 3.5; RHEL 8 has two
+builds, <code>rhel8_openssl35</code> (preferred, OpenSSL 3.5.9 LTS built in, for hosts not in FIPS mode) and
+<code>rhel8</code> (Red Hat&apos;s FIPS-validated system OpenSSL 1.1.1k, only for hosts in FIPS mode, no hybrid
+users). RHEL 8&apos;s OpenSSL 3.5 packages come from EPEL, not Red Hat, and have no FIPS provider, so they are
+not used. <code>install_fcrypt.sh</code> in the Linux package picks the build from the RHEL release and the
+host&apos;s FIPS mode, and <code>fcrypt --version</code> shows the OpenSSL build. The builds stop with an error
+for an OpenSSL older than 3.5 (except the <code>rhel8</code> build), and the programs refuse an older library at
+run time.</li>
+<li><b>Crypto policy:</b> the OpenSSL built into <code>rhel8_openssl35</code> does not read the RHEL system
+crypto policy, so fcrypt reads <code>/etc/crypto-policies/state/current</code> itself in every Linux build and
+shows it in <code>--version</code>. With FUTURE, new RSA access needs keys of at least 3072 bits (existing
+2048-bit users still decrypt). fcrypt&apos;s other algorithms are fixed and allowed by every policy.</li>
 <li><b>Windows:</b> Windows 11, Windows Server 2022 and Windows Server 2025, 64-bit by default with a 32-bit
 build kept for legacy systems. Windows builds use only an OpenSSL 3.5.x LTS release, built from source with
 its FIPS provider; the build stops with an error for any other OpenSSL version. The 32-bit and 64-bit builds
@@ -376,8 +416,8 @@ open with the old credentials.</li>
 changed part way through gives some output before the error. Scripts must check the exit code.</li>
 <li>The checks of private files, key files and secret files (owner, mode, no symbolic links) are made on
 Linux. On Windows, files get the permissions of the folder they are in.</li>
-<li>Adding an RSA or smart card user rewrites the key slot area in place, without a temp file, backup or lock.
-Keep a copy of an important file before adding users.</li>
+<li>Hybrid users need fcrypt 2026.110 or later, and a FIPS provider with ML-KEM in FIPS mode. Losing the ML-KEM
+key file locks the hybrid user out like losing the RSA key does; keep a backup of it.</li>
 <li>Removing whole entries from the end of the access log, and entries after the last tagged one, cannot be
 detected.</li>
 <li>While a file is being encrypted or decrypted, its keys are in the program's memory.</li>
@@ -390,17 +430,17 @@ Convert them with fmigrate.</li>
 <li><b>Quantum-resistant today:</b> AES-256 record encryption (the best known quantum attack roughly halves its
 strength, which leaves about 128 bits), HMAC-SHA256, PBKDF2, AES Key Wrap and the key derivation. A file opened
 only with a password or a key file uses no public-key cryptography.</li>
-<li><b>Not quantum-resistant:</b> the RSA-OAEP slots of RSA and smart card users. A quantum computer that can
+<li><b>Not quantum-resistant:</b> the RSA-OAEP slots of RSA-only and card-only users. A quantum computer that can
 break RSA could recover the file key from any of those slots, so a copy of a file taken today could be
-attacked once such a computer exists. For the most sensitive files, rely on long random passwords or key
-files.</li>
-<li><b>The plan:</b> the next release (2026.110) is required to add quantum-resistant user access: hybrid key
-slots that wrap the file key with both RSA-OAEP and ML-KEM-1024 (NIST FIPS 203, available in OpenSSL 3.5), so
-an attacker must break both. Files keep the 2026102 format: they still open with a password or key file in
-2026.102 and later, and RSA and smart card users can be moved to hybrid slots with <code>--rekey</code>. This
-follows the NSA CNSA 2.0 and NIST guidance to move from RSA to ML-KEM with AES-256.</li>
+attacked once such a computer exists.</li>
+<li><b>Hybrid users (2026.110):</b> RSA and smart card users can be given an ML-KEM-1024 key (NIST FIPS 203,
+OpenSSL 3.5), and the file key is then wrapped so that an attacker must break both RSA and ML-KEM-1024
+(section 3). <code>--rekey</code> moves existing users to hybrid slots, and <code>--require-pq</code> refuses
+RSA-only users. Files keep the 2026102 format. This follows the NSA CNSA 2.0 and NIST guidance to move from
+RSA to ML-KEM with AES-256. Hybrid users need an OpenSSL 3.5 build: not the RHEL 8 FIPS build, and not FIPS mode
+until the RHEL FIPS provider includes ML-KEM.</li>
 <li><b>Smart cards:</b> today&apos;s CAC and PIV cards hold RSA and elliptic-curve keys only. Until post-quantum
-cards are issued, a smart card user can be protected by a hybrid slot that also needs an ML-KEM key file.</li>
+cards are issued, a smart card user is protected by a hybrid slot that also needs an ML-KEM key file.</li>
 </ul>
 
 <h2 id="report">14. Reporting a security issue</h2>
