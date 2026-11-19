@@ -179,6 +179,18 @@ const unsigned FC_MLKEM1024_CT_LEN = 1568;
 const unsigned FC_HYBRID_PART_LEN = 1000;   // Ciphertext bytes per part slot
 const unsigned FC_HYBRID_VERSION = 1;
 const unsigned FC_HYBRID_KEM_MLKEM1024 = 1024;
+// 11/19/2026 (dougg): the RHEL system crypto policy. The OpenSSL 3.5
+// built into the RHEL 8 rhel8_openssl35 build does not read it, so fcrypt
+// reads /etc/crypto-policies/state/current itself (FC_CRYPTO_POLICY_FILE
+// in the environment overrides it, for tests). FUTURE asks for RSA keys of
+// at least 3072 bits. Empty when there is no policy (Windows, other Linux).
+gxString FC_crypto_policy();
+// The smallest RSA key fcrypt gives new access to: FC_MIN_RSA_BITS, or
+// more when the crypto policy asks for it
+unsigned FC_min_rsa_bits();
+// "Crypto policy: NAME (...)" for --version, empty without a policy
+gxString FC_crypto_policy_status();
+
 // 1 if this OpenSSL can make ML-KEM-1024 keys (OpenSSL 3.5 and later)
 int FC_pq_available(gxString &err);
 // Writes priv_file (mode 600) and priv_file.pub.pem. Returns 1 if successful.

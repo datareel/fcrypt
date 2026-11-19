@@ -104,6 +104,18 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
   fcrypt --add-rsa-key) reads the whole pipe. It waited only 5 ms for
   the first bytes, so a slow producer gave "--add-rsa-key missing
   filename".
+* The RHEL crypto policy (dougg 11/19/2026). The OpenSSL 3.5 built into
+  the rhel8_openssl35 build does not read the system crypto policy, so
+  fcrypt reads /etc/crypto-policies/state/current itself, in every Linux
+  build. fcrypt --version shows it. With the FUTURE policy, new RSA access
+  (--add-rsa-key, hybrid users, rekey rewraps) needs RSA keys of at least
+  3072 bits, and the error names the policy; existing users with 2048-bit
+  keys can still decrypt, so nobody is locked out. DEFAULT, FIPS and LEGACY
+  keep fcrypt's own 2048-bit minimum. fcrypt's algorithms are fixed and
+  allowed by every policy (AES-256, HMAC-SHA256, PBKDF2-SHA256, RSA-OAEP
+  SHA-256, ML-KEM-1024). FIPS mode is read from
+  /proc/sys/crypto/fips_enabled, not from the policy, and the
+  rhel8_openssl35 build refuses to run on a host in FIPS mode.
 * Adding a user is all or nothing: --add-rsa-key and --add-smartcard-cert
   write the file to a temp file, check that it decrypts to the same data
   and rename it over the original, as --remove-user does, and take the

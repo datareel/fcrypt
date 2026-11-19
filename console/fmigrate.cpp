@@ -203,6 +203,8 @@ void DisplayVersion()
   gxString fips_err;
   if(FC_crypto_init(fips_request, fips_err)) {
     cout << FC_crypto_status().c_str() << "\n" << flush;
+    gxString cps = FC_crypto_policy_status(); // 11/19/2026
+    if(!cps.is_null()) cout << cps.c_str() << "\n" << flush;
   }
   else {
     cout << fips_err.c_str() << "\n" << flush;

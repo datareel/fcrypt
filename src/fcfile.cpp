@@ -344,6 +344,59 @@ const char *FC_slot_type_name(unsigned type)
   return "Unknown";
 }
 
+gxString FC_crypto_policy()
+{
+  gxString name;
+#if defined (__UNIX__)
+  const char *fname = getenv("FC_CRYPTO_POLICY_FILE");
+  if(!fname || !*fname) fname = "/etc/crypto-policies/state/current";
+  FILE *fp = fopen(fname, "rb");
+  if(!fp) return name;
+  char buf[256];
+  memset(buf, 0, sizeof(buf));
+  size_t n = fread(buf, 1, sizeof(buf) - 1, fp);
+  fclose(fp);
+  for(size_t i = 0; i < n; i++) {
+    char c = buf[i];
+    if(c == '\n' || c == '\r' || c == ' ' || c == '\t') break;
+    if(!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+	 c == ':' || c == '-' || c == '_')) break;
+    name << c;
+  }
+#endif
+  return name;
+}
+
+static gxString fc_policy_base(const gxString &policy)
+// "FUTURE:AD-SUPPORT" -> "FUTURE"
+{
+  gxString base = policy;
+  int c = base.Find(":");
+  if(c != -1) base.DeleteAt(c, base.length() - c);
+  base.ToUpper();
+  return base;
+}
+
+unsigned FC_min_rsa_bits()
+{
+  unsigned bits = FC_MIN_RSA_BITS;
+  gxString base = fc_policy_base(FC_crypto_policy());
+  // RHEL crypto-policies: FUTURE sets min_rsa_size = 3072 (DEFAULT,
+  // FIPS and LEGACY allow 2048, which fcrypt keeps as its own minimum)
+  if(base == "FUTURE" && bits < 3072) bits = 3072;
+  return bits;
+}
+
+gxString FC_crypto_policy_status()
+{
+  gxString s;
+  gxString policy = FC_crypto_policy();
+  if(policy.is_null()) return s;
+  s << "Crypto policy: " << policy << " (fcrypt reads it itself; new RSA access needs keys of at least "
+    << FC_min_rsa_bits() << " bits)";
+  return s;
+}
+
 unsigned FC_slot_base_type(unsigned type)
 {
   if(type == FC_SLOT_RSA || type == FC_SLOT_RSA_HYBRID) return FC_SLOT_RSA;
@@ -1319,9 +1372,10 @@ int FCryptFile::AddRSAKey(const char *username, const char *public_key, unsigned
   int bits = EVP_PKEY_bits(pkey);
   int is_rsa = (EVP_PKEY_base_id(pkey) == EVP_PKEY_RSA);
 #endif
-  if(!is_rsa || bits < (int)FC_MIN_RSA_BITS) {
+  if(!is_rsa || bits < (int)FC_min_rsa_bits()) {
     EVP_PKEY_free(pkey);
-    err << clear << "The public key must be an RSA key of at least " << FC_MIN_RSA_BITS << " bits";
+    err << clear << "The public key must be an RSA key of at least " << FC_min_rsa_bits() << " bits";
+    if(FC_min_rsa_bits() > FC_MIN_RSA_BITS) err << " (crypto policy " << FC_crypto_policy() << ")";
     return 0;
   }
   unsigned char wrapped[FC_MAX_WRAPPED_LEN];

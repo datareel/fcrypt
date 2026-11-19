@@ -173,6 +173,8 @@ void DisplayVersion()
   gxString fips_err;
   if(FC_crypto_init(fips_request, fips_err)) {
     cout << FC_crypto_status().c_str() << "\n" << flush;
+    gxString cps = FC_crypto_policy_status(); // 11/19/2026
+    if(!cps.is_null()) cout << cps.c_str() << "\n" << flush;
   }
   else {
     cout << fips_err.c_str() << "\n" << flush;
@@ -985,11 +987,14 @@ int AddHybridUser(FCryptFile &nf, unsigned base_type, const char *username)
   if(ok && base_type == FC_SLOT_RSA) {
     // The public RSA key read from the file or stdin
     EVP_PKEY *pkey = RSA_load_public_key((const unsigned char *)public_key, public_key_len, 0);
-    ok = pkey && EVP_PKEY_is_a(pkey, "RSA") && EVP_PKEY_get_bits(pkey) >= (int)FC_MIN_RSA_BITS;
+    ok = pkey && EVP_PKEY_is_a(pkey, "RSA") && EVP_PKEY_get_bits(pkey) >= (int)FC_min_rsa_bits();
     if(ok) ok = (RSA_pkey_encrypt(pkey, r, FC_HYBRID_SECRET_LEN, ct, sizeof(ct), &ct_len,
 				  RSA_PKCS1_OAEP_PADDING) == RSA_NO_ERROR);
     if(pkey) EVP_PKEY_free(pkey);
-    if(!ok) err << clear << "The public key must be an RSA key of at least " << FC_MIN_RSA_BITS << " bits";
+    if(!ok) {
+      err << clear << "The public key must be an RSA key of at least " << FC_min_rsa_bits() << " bits";
+      if(FC_min_rsa_bits() > FC_MIN_RSA_BITS) err << " (crypto policy " << FC_crypto_policy() << ")";
+    }
   }
 #ifdef __ENABLE_SMART_CARD__
   else if(ok && base_type == FC_SLOT_SMARTCARD) {
@@ -1320,15 +1325,17 @@ int WrapForRekey(const FCRekeySlot &slot, const unsigned char key[FC_KEY_LEN],
       return 0;
     }
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
-    int ok = EVP_PKEY_is_a(pkey, "RSA") && EVP_PKEY_get_bits(pkey) >= (int)FC_MIN_RSA_BITS;
+    int ok = EVP_PKEY_is_a(pkey, "RSA") && EVP_PKEY_get_bits(pkey) >= (int)FC_min_rsa_bits();
 #else
-    int ok = (EVP_PKEY_base_id(pkey) == EVP_PKEY_RSA) && EVP_PKEY_bits(pkey) >= (int)FC_MIN_RSA_BITS;
+    int ok = (EVP_PKEY_base_id(pkey) == EVP_PKEY_RSA) && EVP_PKEY_bits(pkey) >= (int)FC_min_rsa_bits();
 #endif
     if(ok) ok = (RSA_pkey_encrypt(pkey, key, FC_KEY_LEN, wrapped, FC_MAX_WRAPPED_LEN, wrapped_len,
 				  RSA_PKCS1_OAEP_PADDING) == RSA_NO_ERROR);
     EVP_PKEY_free(pkey);
     if(!ok) err << clear << "Cannot wrap the new key with the RSA key of user " << slot.username
-		<< " (it must be an RSA key of at least " << FC_MIN_RSA_BITS << " bits)";
+		<< " (it must be an RSA key of at least " << FC_min_rsa_bits() << " bits"
+		<< (FC_min_rsa_bits() > FC_MIN_RSA_BITS ? ", crypto policy " : "")
+		<< (FC_min_rsa_bits() > FC_MIN_RSA_BITS ? FC_crypto_policy().c_str() : "") << ")";
     return ok;
   }
 #ifdef __ENABLE_SMART_CARD__

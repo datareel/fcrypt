@@ -261,6 +261,28 @@ ${FC} --password-file=pw.txt --add-rsa-key=bob.pub --rsa-key-username=full af.en
 [ $? -ne 0 ] && grep -q "No space left in the key slot area" out.txt && [ "$(sum af.enc)" = "${before}" ] && [ ! -e af.enc.add-user.tmp ]
 check $? "a full key slot area refuses the new user and leaves the file as it was"
 
+# ---- 2026.110: the RHEL crypto policy (fcrypt reads it itself) ----
+printf 'FUTURE\n' > policy_future
+openssl genrsa -out dave.pem 3072 >/dev/null 2>&1
+openssl rsa -in dave.pem -pubout -out dave.pub >/dev/null 2>&1
+chmod 600 dave.pem
+FC_CRYPTO_POLICY_FILE=${testDIR}/policy_future ${FC} --version 2>&1 | grep -q "Crypto policy: FUTURE.*3072 bits"
+check $? "--version shows the crypto policy (FUTURE: RSA keys of at least 3072 bits)"
+newfile cp ""
+before=$(sum cp.enc)
+FC_CRYPTO_POLICY_FILE=${testDIR}/policy_future ${FC} ${A} --add-rsa-key=alice.pub --rsa-key-username=alice cp.enc > out.txt 2>&1
+[ $? -ne 0 ] && grep -q "3072 bits (crypto policy FUTURE)" out.txt && [ "$(sum cp.enc)" = "${before}" ]
+check $? "the FUTURE crypto policy refuses a 2048-bit RSA user and leaves the file as it was"
+FC_CRYPTO_POLICY_FILE=${testDIR}/policy_future ${FC} ${A} --add-rsa-key=dave.pub --rsa-key-username=dave cp.enc >>${logFILE} 2>&1
+[ $? -eq 0 ] && opens cp.enc dave dave
+check $? "the FUTURE crypto policy accepts a 3072-bit RSA user"
+${FC} ${A} --add-rsa-key=alice.pub --rsa-key-username=alice cp.enc >>${logFILE} 2>&1
+printf 'rsa:alice=alice.pub\nrsa:dave=dave.pub\n' | FC_CRYPTO_POLICY_FILE=${testDIR}/policy_future ${FC} ${A} --rekey cp.enc > out.txt 2>&1
+[ $? -ne 0 ] && grep -q "crypto policy FUTURE" out.txt && opens cp.enc alice alice
+check $? "the FUTURE crypto policy refuses a rekey that rewraps a 2048-bit RSA user"
+FC_CRYPTO_POLICY_FILE=${testDIR}/policy_future ${FD} --rsa-key=alice.pem --rsa-key-username=alice --non-interactive --stdout cp.enc 2>>${logFILE} | cmp -s - data.bin
+check $? "the FUTURE crypto policy still lets a 2048-bit RSA user decrypt (no lockout)"
+
 # ---- KMS style pipe, with a local stand-in ----
 fake_kms() { printf '%s' "${PW}" | base64; }
 fake_kms | base64 -d | ${FD} --password-fd=0 --non-interactive --stdout s1.enc 2>/dev/null | cmp -s - data.bin
