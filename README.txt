@@ -112,7 +112,9 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
 * OpenSSL 3.5 LTS (dougg 11/18/2026: nothing is distributed on an
   OpenSSL older than the 3.5 LTS line, with one exception for FIPS on
   RHEL 8). RHEL 9 and 10 use the system OpenSSL 3.5 and Windows an
-  OpenSSL 3.5.x LTS release. RHEL 8 has two builds in the Linux package:
+  OpenSSL 3.5.x LTS release. RHEL 8 has two builds in the Linux package;
+  rhel8_openssl35 is the preferred build, and rhel8 is only for hosts that
+  must run in FIPS mode:
   - rhel8_openssl35: OpenSSL 3.5 LTS (3.5.9) built in statically, for
     hosts not in FIPS mode, with hybrid users. Built with
     makefile_rhel8_openssl35 (OPENSSL35_PREFIX, see build_openssl35.sh).

@@ -60,8 +60,8 @@ fi
 
 echo "Host: $(cat /etc/redhat-release), FIPS mode $([ ${FIPS} -eq 1 ] && echo on || echo off)"
 case "${BUILD}" in
-    rhel8) echo "Build: ${BUILD} (Red Hat's FIPS-validated system OpenSSL 1.1.1, no ML-KEM hybrid users)" ;;
-    rhel8_openssl35) echo "Build: ${BUILD} (OpenSSL 3.5 LTS built in, for hosts not in FIPS mode)" ;;
+    rhel8) echo "Build: ${BUILD} (Red Hat's FIPS-validated system OpenSSL 1.1.1, only for FIPS mode hosts, no ML-KEM hybrid users)" ;;
+    rhel8_openssl35) echo "Build: ${BUILD} (OpenSSL 3.5 LTS built in, the preferred RHEL 8 build, for hosts not in FIPS mode)" ;;
     *) echo "Build: ${BUILD} (the system OpenSSL 3.5)" ;;
 esac
 if [ "${REL}" = "8" ] && [ ${FIPS} -eq 1 ] && [ "${BUILD}" = "rhel8_openssl35" ]; then
