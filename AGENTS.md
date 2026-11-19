@@ -4,9 +4,9 @@ This file is for AI-assisted work on fcrypt, the DataReel file encryption
 utility (`fcrypt`, `fdecrypt` and `fmigrate`): it tells an AI agent
 (Gemini CLI, Claude Code, GitHub Copilot, Codex and others) how to assist
 a site's own administrators and developers to install fcrypt, build it
-from source, upgrade older releases to the current release, 2026.109,
-maintain a fork, and troubleshoot (2026.110, next: quantum-resistant
-hybrid users and OpenSSL 3.5 LTS on every build). The agent assists; it does not replace
+from source, upgrade older releases to the current release, 2026.110
+(quantum-resistant hybrid users, OpenSSL 3.5 LTS builds), maintain a
+fork, and troubleshoot. The agent assists; it does not replace
 the administrators or DataReel support, and it never acts autonomously
 (section 0). The people review and approve every step, and problems the
 agent cannot solve go to DataReel (section 8.4). `GEMINI.md` and
@@ -243,13 +243,25 @@ release section to `README.txt`.
    the FIPS mode. The person encrypts and decrypts a test file of their
    own; the agent never sees the password or the file (rule 1).
 
-## 5. AI-assisted upgrade to 2026.109
+## 5. AI-assisted upgrade to 2026.110
 
 ### 5.1 What changes, and what does not
 
-- **File format:** 2026.102 and later write the 2026102 format. 2026.109
-  writes the same format as 2026.102 to 2026.108, so those releases and
-  2026.109 decrypt each other's files.
+- **File format:** 2026.102 and later write the 2026102 format, and
+  2026.110 writes the same format, so 2026.102 to 2026.110 decrypt each
+  other's files with a password, key file or RSA-only user. Opening a
+  file as a hybrid (RSA or card + ML-KEM-1024) user needs 2026.110:
+  upgrade every computer that opens a file as a hybrid user, or rekeys
+  it, before adding hybrid users.
+- **RHEL 8 (2026.110):** two builds, `rhel8_openssl35` (preferred, OpenSSL
+  3.5 built in) and `rhel8` (the FIPS-validated system OpenSSL 1.1.1, only
+  for hosts in FIPS mode, no hybrid users). `install_fcrypt.sh` picks one
+  by the host's FIPS mode. The `rhel8_openssl35` build refuses to run on a
+  host in FIPS mode. RSA keys with a passphrase must be PKCS#8 in FIPS
+  mode.
+- **Crypto policy (2026.110):** with the RHEL FUTURE policy, new RSA
+  access needs keys of at least 3072 bits; existing 2048-bit users still
+  decrypt.
 - **Old files** (made by 2023.x and 2025.x releases, format v1) still
   decrypt with `fdecrypt` outside FIPS mode, with a warning that names
   `fmigrate`. Releases before 2026.102 cannot decrypt 2026102 files:
@@ -269,15 +281,17 @@ release section to `README.txt`.
 2. **Back up** the old programs and the encrypted files the person uses
    (rule 3).
 3. **Install** the new release (section 4), replacing the old programs.
-4. **Check:** `fcrypt --version` says 2026.109; `fdecrypt --check-version`
+4. **Check:** `fcrypt --version` says 2026.110 and shows the OpenSSL
+   build and the FIPS mode; `fdecrypt --check-version`
    for the person's files (exit 0 = v2, exit 5 = v1).
 5. **Decrypt a test file once** (the person) and compare it with the
    original; do not paste the contents back.
 6. Optional, a separate change with its own OK: `fmigrate` for v1 files
    (`fmigrate --check` first, then with `--outdir` or after a backup).
 
-Roll back: copy the previous programs back. Files written by 2026.109
-decrypt with 2026.102 and later; v1 files converted by `fmigrate` do not
+Roll back: copy the previous programs back (`install_fcrypt.sh` keeps
+them as name.backup-<time>). Files written by 2026.110 decrypt with
+2026.102 and later, except as a hybrid user; v1 files converted by `fmigrate` do not
 decrypt with releases before 2026.102, so keep the old copies until every
 computer is upgraded.
 

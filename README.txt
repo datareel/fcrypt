@@ -1,6 +1,6 @@
 File encryption and decryption utility
 
-Release 2026.109
+Release 2026.110
 
 Supports Windows 11, Windows Server 2022 and Windows Server 2025
 (64-bit by default; 32-bit builds for legacy systems)
@@ -44,8 +44,8 @@ FEATURES:
 	DataReel 6.4.1 (2026.109)
 	Quantum-resistant users, RSA or smart card + ML-KEM-1024 (2026.110)
 	
-NEXT RELEASE 2026.110 (NOT RELEASED YET)
----------------------------------------
+RELEASE 2026.110: QUANTUM-RESISTANT USERS AND OPENSSL 3.5 LTS
+-------------------------------------------------------------
 * AI-assisted install, build, upgrade and support: AGENTS.md (with
   CLAUDE.md and GEMINI.md, which only import it) lets an approved
   enterprise AI agent assist a site's administrators, human in the loop
@@ -145,8 +145,9 @@ NEXT RELEASE 2026.110 (NOT RELEASED YET)
   refuse an older OpenSSL library at run time, and fcrypt --version shows
   the OpenSSL build. Each package README and these release notes state
   the OpenSSL version of every build.
-* Bug fixes and security updates found while upgrading to 2026.109 go
-  into this release.
+* The file format is still 2026102: files from every earlier release
+  decrypt with 2026.110, and 2026.102 and later decrypt files written by
+  2026.110 with the password, key file or an RSA-only user.
 
 RELEASE 2026.109: DATAREEL 6.4.1
 --------------------------------
