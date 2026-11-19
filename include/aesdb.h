@@ -52,7 +52,7 @@ AES encryption routes used generate encryption certificates.
 // 10/24/2026: Windows builds must use an OpenSSL 3.5.x LTS release.
 // See README_windows_openssl.txt.
 // 11/18/2026: Release 2026.110 and later are built only with OpenSSL 3.5
-// LTS or later on every platform (dougg: nothing is distributed on an
+// LTS or later on every platform (nothing is distributed on an
 // OpenSSL older than the 3.5 long term support release), with the one
 // RHEL 8 FIPS exception below.
 #define FC_MIN_OPENSSL_VERSION 0x30500000L
@@ -61,7 +61,7 @@ AES encryption routes used generate encryption certificates.
 #error Windows builds require an OpenSSL 3.5.x LTS release, see README_windows_openssl.txt
 #endif
 #else
-// 11/18/2026 (dougg): one exception, the RHEL 8 build for hosts in FIPS
+// 11/18/2026: one exception, the RHEL 8 build for hosts in FIPS
 // mode links Red Hat's FIPS-validated system OpenSSL 1.1.1k
 // (makefile_rhel8, FC_RHEL8_SYSTEM_OPENSSL). It has no hybrid (ML-KEM)
 // users. The RHEL 8 build for other hosts has OpenSSL 3.5 LTS built in

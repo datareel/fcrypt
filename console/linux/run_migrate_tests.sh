@@ -190,7 +190,8 @@ for OLD_DIR in "$@"; do
 	USER2_KEY=user2_pkcs8.pem
     fi
     ( ${OLD_FCRYPT} -r --key=temp.key text.txt && \
-	${OLD_ENV} ssh-keygen -f ${KEYS}/user2_id_rsa.pub -m PKCS8 -e | ${OLD_FCRYPT} --key=temp.key --add-rsa-key --rsa-key-username=user2 text.enc && \
+	${OLD_ENV} ssh-keygen -f ${KEYS}/user2_id_rsa.pub -m PKCS8 -e > user2_pub_pkcs8.pem && \
+	${OLD_FCRYPT} --key=temp.key --add-rsa-key --rsa-key-username=user2 text.enc < user2_pub_pkcs8.pem && \
 	rm temp.key && \
 	${FMIGRATE} ${MIG_OPTS} --rsa-key=${KEYS}/user2_id_rsa --rsa-key-passphrase=password --rsa-key-username=user2 text.enc && \
 	is_new_format text.enc && \

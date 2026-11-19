@@ -130,7 +130,8 @@ run_tests() {
     new_case_dir
     ( ${ENC} --key=${KEYS}/master.key big.bin && \
 	${ENC} --key=${KEYS}/master.key --add-rsa-key=${KEYS}/user1_public_key.pem --rsa-key-username=user1 big.enc && \
-	${OLD_ENV} ssh-keygen -f ${KEYS}/user2_id_rsa.pub -m PKCS8 -e | ${ENC} --key=${KEYS}/master.key --add-rsa-key --rsa-key-username=user2 big.enc && \
+	${OLD_ENV} ssh-keygen -f ${KEYS}/user2_id_rsa.pub -m PKCS8 -e > user2_pub_pkcs8.pem && \
+	${ENC} --key=${KEYS}/master.key --add-rsa-key --rsa-key-username=user2 big.enc < user2_pub_pkcs8.pem && \
 	rm big.bin && \
 	${DEC} ${DOPTS} --rsa-key=${KEYS}/user1_private_key.pem --rsa-key-username=user1 big.enc && \
 	cmp big.bin orig/big.bin && rm big.bin && \

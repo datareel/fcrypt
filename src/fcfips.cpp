@@ -231,6 +231,15 @@ int FC_crypto_init(int fips_request, gxString &err)
 	<< "of the system OpenSSL (" << OPENSSL_VERSION_TEXT << "), turned on with fips-mode-setup --enable";
     return 0;
   }
+  // 11/19/2026: FCRYPT_FIPS=1 asks for FIPS mode like --fips, so it is
+  // refused on a host not in FIPS mode too (--no-fips overrides it), as the
+  // OpenSSL 3 builds refuse it when the FIPS provider cannot load.
+  if(fips_request != FC_FIPS_OFF && fc_system_fips && !sys_fips) {
+    err << clear << "FCRYPT_FIPS=1: this host is not in FIPS mode. The RHEL 8 FIPS build of fcrypt uses the FIPS mode "
+	<< "of the system OpenSSL (" << OPENSSL_VERSION_TEXT << "), turned on with fips-mode-setup --enable. "
+	<< "Use --no-fips to run without FIPS mode";
+    return 0;
+  }
   fc_fips_mode = (fips_request != FC_FIPS_OFF) && sys_fips;
   return 1;
 #endif
