@@ -65,7 +65,22 @@ ${OLD_ENV} ssh-keygen -q -p -P password -N password -f ${KEYS}/user2_id_rsa -e -
 # its key derivation uses MD5. PKCS#8 with PBKDF2 and AES works.
 ${OLD_ENV} openssl pkcs8 -topk8 -v2 aes-256-cbc -v2prf hmacWithSHA256 -passin pass:password -passout pass:password \
     -in ${KEYS}/user2_id_rsa -out ${KEYS}/user2_pkcs8.pem &>> ${logFILE}
+if [ ! -s ${KEYS}/user2_pkcs8.pem ]; then
+    # 11/19/2026: On a RHEL 8 host in FIPS mode the OpenSSL 1.1.1 command
+    # cannot read the MD5 based PEM key ssh-keygen wrote: make user2's
+    # key without a passphrase and its PKCS#8 copy from that.
+    echo "Making user2's key without the traditional PEM passphrase (FIPS mode OpenSSL command)" >> ${logFILE}
+    mv ${KEYS}/user2_id_rsa ${KEYS}/user2_trad.pem # The traditional PEM key, for the FIPS refusal check
+    rm -f ${KEYS}/user2_id_rsa.pub
+    ${OLD_ENV} openssl genrsa -out ${KEYS}/user2_id_rsa 2048 &>> ${logFILE}
+    chmod 600 ${KEYS}/user2_id_rsa
+    ${OLD_ENV} ssh-keygen -y -f ${KEYS}/user2_id_rsa > ${KEYS}/user2_id_rsa.pub 2>> ${logFILE}
+    ${OLD_ENV} openssl pkcs8 -topk8 -v2 aes-256-cbc -v2prf hmacWithSHA256 -passout pass:password \
+	-in ${KEYS}/user2_id_rsa -out ${KEYS}/user2_pkcs8.pem &>> ${logFILE}
+fi
 chmod 600 ${KEYS}/user2_pkcs8.pem
+TRAD_KEY=${KEYS}/user2_id_rsa
+[ -f ${KEYS}/user2_trad.pem ] && TRAD_KEY=${KEYS}/user2_trad.pem
 
 result() {
     if [ $2 -eq 0 ]; then
@@ -139,7 +154,7 @@ if [ ${NEW_FIPS} -eq 1 ]; then
     new_case_dir
     ( ${NEW}/fcrypt -r ${PASSWORD} text.txt && \
 	${OLD_ENV} ssh-keygen -f ${KEYS}/user2_id_rsa.pub -m PKCS8 -e | ${NEW}/fcrypt ${PASSWORD} --add-rsa-key --rsa-key-username=user2 text.enc && \
-	! ${NEW}/fdecrypt --rsa-key=${KEYS}/user2_id_rsa --rsa-key-passphrase=password --rsa-key-username=user2 text.enc && \
+	! ${NEW}/fdecrypt --rsa-key=${TRAD_KEY} --rsa-key-passphrase=password --rsa-key-username=user2 text.enc && \
 	[ ! -e text.txt ] ) &>> ${logFILE}
     result "FIPS mode refuses a traditional PEM key with a passphrase" $?
 fi

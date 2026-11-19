@@ -42,8 +42,12 @@ for u in alice bob; do
     openssl rsa -in ${u}.pem -pubout -out ${u}.pub >/dev/null 2>&1
     chmod 600 ${u}.pem
 done
-openssl genrsa -aes256 -passout pass:Phrase-2026 -out carol.pem 2048 >/dev/null 2>&1
-openssl rsa -in carol.pem -passin pass:Phrase-2026 -pubout -out carol.pub >/dev/null 2>&1
+# 11/19/2026: PKCS#8 (PBKDF2, AES-256): the RHEL 8 OpenSSL command in FIPS
+# mode cannot make or read a traditional (MD5 based) PEM key with a passphrase
+openssl genrsa -out carol_plain.pem 2048 >/dev/null 2>&1
+openssl rsa -in carol_plain.pem -pubout -out carol.pub >/dev/null 2>&1
+openssl pkcs8 -topk8 -v2 aes-256-cbc -v2prf hmacWithSHA256 -passout pass:Phrase-2026 -in carol_plain.pem -out carol.pem >/dev/null 2>&1
+rm -f carol_plain.pem
 chmod 600 carol.pem
 printf 'Phrase-2026\n' > carol_pass.txt; chmod 600 carol_pass.txt
 head -c 300000 /dev/urandom > data.bin

@@ -144,8 +144,19 @@ echo "Passed" | tee -a ${logFILE}
 echo "" | tee -a ${logFILE}
 
 echo "Testing decryption SSH-RSA private key for ${USERNAME}" | tee -a ${logFILE}
-echo "${FDECRYPT} -v --debug=5 -o --absolute-path --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password ${testDIR}/testfile.enc" >> ${logFILE}
-${FDECRYPT} -v --debug=5 -o --absolute-path --rsa-key=${testDIR}/${USERNAME}_id_rsa --rsa-key-passphrase=password --rsa-key-username=${USERNAME} ${testDIR}/testfile.enc &>> ${logFILE}
+# 11/19/2026: FIPS mode cannot read a PEM key with an MD5 based passphrase
+# (README, FIPS section): there the key is converted to PKCS#8 first, as
+# the README tells users to. ssh-keygen -p -m PKCS8 does it without the
+# openssl command, which on RHEL 8 in FIPS mode cannot read the PEM key.
+USER_KEY=${testDIR}/${USERNAME}_id_rsa
+if ${FDECRYPT} --version 2>&1 | grep -q "FIPS mode on"; then
+    cp -p ${USER_KEY} ${USER_KEY}_pkcs8
+    echo "ssh-keygen -p -P password -N password -f ${USER_KEY}_pkcs8 -m PKCS8" >> ${logFILE}
+    ssh-keygen -p -P password -N password -f ${USER_KEY}_pkcs8 -m PKCS8 &>> ${logFILE}
+    USER_KEY=${USER_KEY}_pkcs8
+fi
+echo "${FDECRYPT} -v --debug=5 -o --absolute-path --rsa-key=${USER_KEY} --rsa-key-passphrase=password ${testDIR}/testfile.enc" >> ${logFILE}
+${FDECRYPT} -v --debug=5 -o --absolute-path --rsa-key=${USER_KEY} --rsa-key-passphrase=password --rsa-key-username=${USERNAME} ${testDIR}/testfile.enc &>> ${logFILE}
 if [ $? -ne 0 ]; then
     echo "ERROR: SSH-RSA private key decryption test failed"
     echo "ERROR: See log ${logFILE}"
